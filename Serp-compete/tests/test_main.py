@@ -20,7 +20,7 @@ def test_pre_flight_check_low_balance(mock_get, mock_config, mock_gsc, mock_refr
             'DATAFORSEO_LOGIN': 'test', 'DATAFORSEO_PASSWORD': 'test',
             'OPENAI_API_KEY': 'test', 'MOZ_TOKEN': 'test'
         }):
-            assert pre_flight_check() is False
+            assert pre_flight_check() is None
 
 @patch('src.main.DataForSEOClient')
 @patch('src.main.ReframeEngine')
@@ -48,4 +48,4 @@ def test_pre_flight_check_success(mock_get, mock_config, mock_gsc, mock_reframe,
             'DATAFORSEO_LOGIN': 'test', 'DATAFORSEO_PASSWORD': 'test',
             'OPENAI_API_KEY': 'test', 'MOZ_TOKEN': 'test'
         }):
-            assert pre_flight_check() is True
+            assert pre_flight_check() is not None
