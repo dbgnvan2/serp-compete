@@ -362,3 +362,24 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute('SELECT DISTINCT url FROM traffic_magnets WHERE run_id = ?', (run_id,))
             return [row[0] for row in cursor.fetchall()]
+
+    def was_audited_recently(self, url: str, days: int = 7) -> Dict[str, Any]:
+        """
+        Optimization: Check if this URL has been audited in the last X days to avoid re-scraping.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT medical_score, systems_score, systemic_label 
+                FROM semantic_audits 
+                WHERE url = ? AND timestamp > datetime('now', ?)
+                ORDER BY timestamp DESC LIMIT 1
+            ''', (url, f'-{days} days'))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "medical_score": row[0],
+                    "systems_score": row[1],
+                    "systemic_label": row[2]
+                }
+            return None

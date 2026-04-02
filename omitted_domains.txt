@@ -1,7 +1,13 @@
 psychologytoday.com
 yelp.ca
+m.yelp.com
+theralist.ca
+therapistpoint.ca
+therapists.therapymantra.co
 yellowpages.ca
+opencounseling.com
 healthgrades.com
+mindmapbc.ca
 counsellingbc.com
 therapytribe.com
 theravive.com
@@ -16,6 +22,7 @@ linkedin.com
 mapquest.com
 bing.com
 google.com
+bcacc.ca
 foundrybc.ca
 healthlinkbc.ca
 vancouver.pathwaysbc.ca
@@ -25,3 +32,6 @@ rcav.org
 canada.ca
 vancouver.ca
 gov.bc.ca
+lynnvalleycounselling.janeapp.com
+deepcove.cortico.ca
+colib.io

@@ -101,12 +101,18 @@ class ReportGenerator:
             ''', conn, params=(run_id,))
 
             def get_systemic_depth(row):
+                # Safety check for None values
+                max_med = row['max_med'] if row['max_med'] is not None else 0
+                max_sys = row['max_sys'] if row['max_sys'] is not None else 0
+                
                 if row['has_expert'] == 1:
                     return "High"
                 if row['has_surface'] == 1:
                     return "Surface"
-                if row['max_med'] > row['max_sys']:
+                if max_med > max_sys:
                     return "Medical"
+                if max_sys > 0:
+                    return "Systems"
                 return "Unknown"
 
             if not df_metrics.empty:

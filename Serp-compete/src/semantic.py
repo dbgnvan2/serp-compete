@@ -40,6 +40,10 @@ class SemanticAuditor:
             
             # Now fetch the target URL
             response = session.get(url, headers=headers, timeout=15)
+            if response.status_code == 429:
+                print(f"⚠️ 429 Blocked: {url}")
+                return "BLOCK"
+                
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
@@ -54,6 +58,12 @@ class SemanticAuditor:
             words = text.split()[:500]
             
             return " ".join(headers) + " " + " ".join(words)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                print(f"⚠️ 429 Blocked: {url}")
+                return "BLOCK"
+            print(f"Error scraping {url}: {e}")
+            return ""
         except Exception as e:
             print(f"Error scraping {url}: {e}")
             return ""
