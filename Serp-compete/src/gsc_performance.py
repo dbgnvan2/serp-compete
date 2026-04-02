@@ -159,6 +159,13 @@ class GSCManager:
         # 1. Position Filter: 11-25
         striking = df[(df['position'] >= 11) & (df['position'] <= 25)].copy()
 
+        # Debug: Print top 50 by impressions
+        print("\n--- DEBUG: Top 50 Keywords by Impressions ---")
+        top_50 = df.sort_values('impressions', ascending=False).head(50)
+        for _, r in top_50.iterrows():
+            print(f"Query: {r['query']} | Pos: {r['position']:.1f} | Imp: {r['impressions']}")
+        print("-------------------------------------------\n")
+
         # 2. Efficiency Filter: Sort by Impressions Descending
         striking = striking.sort_values('impressions', ascending=False)
 

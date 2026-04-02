@@ -47,6 +47,7 @@ A professional-grade competitive intelligence tool designed to serve a Bowen Fam
 | **Logic Layer** | `Feasibility = (Client_DA + 5) >= Competitor_DA`. If False, suggest Hyper-Local Pivot. |
 | **Persistence** | Save results to `competitor_history.db` with a timestamp column for trend analysis. |
 | **Module F: GSC Intel** | Pull 90 days of query data. Filter for "Striking Distance" (Pos 11-25). Cross-reference with clinical dictionary. Suggest systemic titles. |
+| **Strategic Assets** | Drafted `pillar_north_shore_draft.md` and `neighborhood_pivots_draft.md` using market-driven keyword mapping and Bowen reframes. |
 
 ## Development Standards
 - **Testing:** Comprehensive test suite updated with each new feature.
