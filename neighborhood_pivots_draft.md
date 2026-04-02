@@ -22,7 +22,7 @@ Our reframe: Instead of fixing a "communication problem," we help you observe th
     "streetAddress": "104-2411 Dollarton Hwy",
     "addressLocality": "North Vancouver",
     "addressRegion": "BC",
-    "postalCode": "V7H 1A3",
+    "postalCode": "V7H 0A3",
     "addressCountry": "CA"
   },
   "geo": {

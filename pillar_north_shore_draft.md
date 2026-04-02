@@ -32,6 +32,12 @@ These questions represent an **Anxiety Loop**. Seeking a diagnostic label provid
 | **Perspective** | "Fixing" what is broken | Observing the emotional system |
 | **Outcome** | Temporary relief from conflict | Long-term increase in functioning |
 
+## Couples Counselling North Vancouver: Observing the Reciprocal Pursuit-Distance Cycle
+## Relationship Therapy North Vancouver: From Individual Pathology to Systemic Process
+## Anxiety Clinic North Vancouver: Intercepting the Anxiety Loop through Differentiation
+## Marriage Therapist North Shore: Defining a Self in the Marriage System
+## Family Systems Therapy Bc: The Multigenerational Transmission of Anxiety
+
 ## [H2] Hyper-Local Support: Relationship Therapy Across the North Shore
 We understand that the environment you live in shapes the patterns you develop. Whether you are navigating the high-density urban stress of Lonsdale or the quiet isolation of Deep Cove, your relationship is functioning within a specific system.
 
