@@ -47,8 +47,13 @@ A professional-grade competitive intelligence tool designed to serve a Bowen Fam
 | **Logic Layer** | `Feasibility = (Client_DA + 5) >= Competitor_DA`. If False, suggest Hyper-Local Pivot. |
 | **Persistence** | Save results to `competitor_history.db` with a timestamp column for trend analysis. |
 | **Module F: GSC Intel** | Pull 90 days of query data. Filter for "Striking Distance" (Pos 11-25). Cross-reference with clinical dictionary. Suggest systemic titles. |
+| **Module I: Mining** | Extract top domains from `audit_results_run_4.xlsx`. Fetch top 20 keywords via Google Organic API. Filter against existing CSV. Generate `competitor_keyword_gap.md`. |
 | **Strategic Assets** | Drafted `pillar_north_shore_draft.md` and `neighborhood_pivots_draft.md` using market-driven keyword mapping and Bowen reframes. |
 
-## Development Standards
-- **Testing:** Comprehensive test suite updated with each new feature.
-- **Documentation:** `GEMINI.md` maintained with project-specific context.
+## Operational Sequence
+To ensure maximum effectiveness, the tools should be run in the following order:
+1. **Module I (Mining):** Identify hidden competitor keywords to expand the target list.
+2. **Module A (Audit):** Run SERP analysis on the expanded keyword set.
+3. **Module B (Scoring):** Apply Systematic Scoring and validate data consistency.
+4. **Module F (GSC Intel):** Cross-reference internal performance data.
+5. **Module G (Publication):** Map GSC strikes to final content drafts.

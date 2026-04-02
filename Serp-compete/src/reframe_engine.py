@@ -17,7 +17,22 @@ class ReframeEngine:
             "anxious attachment": "Emotional Fusion / Pursuit",
             "boundaries": "Differentiation of Self",
             "toxic person": "Functional Position in the System",
-            "trauma": "Multigenerational Emotional Process"
+            "trauma": "Multigenerational Emotional Process",
+            "anger": "Anger as a Systemic Reactive Process",
+            "infidelity": "Infidelity: Reciprocity in the Relationship System",
+            "grief": "Grief as a Family Emotional Process",
+            "depression": "Depression: A Systemic Functioning Perspective",
+            "anxiety": "Anxiety: Intercepting the Relationship Loop",
+            "marriage counselling": "Observing the Marriage as an Emotional System",
+            "couples counselling": "Relationship Reciprocity and Differentiation",
+            "introvert": "Introversion as a Function of Systemic Anxiety",
+            "gottman": "Beyond Gottman: A Systemic Differentiation Approach",
+            "sexuality": "Sexuality and the Emotional System",
+            "narcissist": "The Narcissism Label vs. Systemic Reciprocity",
+            "cbt": "Beyond CBT: Focus on Emotional Process",
+            "adhd": "ADHD as a Systemic Functioning Variation",
+            "attachment styles": "From Attachment Labels to Pursuit-Distance Cycles",
+            "self care": "Self-Care as a Differentiation Strategy"
         }
 
     def clinical_pivot(self, text: str) -> str:

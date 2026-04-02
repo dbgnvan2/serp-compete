@@ -11,12 +11,16 @@ def test_reframe_engine_missing_key():
 def test_clinical_pivot():
     engine = ReframeEngine()
     
-    assert engine.clinical_pivot("anxiety") == "anxiety"
+    assert engine.clinical_pivot("anxiety") == "Anxiety: Intercepting the Relationship Loop"
     assert engine.clinical_pivot("avoidant attachment") == "Emotional Distance / Pursuer-Distancer"
     assert engine.clinical_pivot("anxious attachment") == "Emotional Fusion / Pursuit"
     assert engine.clinical_pivot("boundaries") == "Differentiation of Self"
     assert engine.clinical_pivot("toxic person") == "Functional Position in the System"
     assert engine.clinical_pivot("trauma") == "Multigenerational Emotional Process"
+    assert engine.clinical_pivot("anger management") == "Anger as a Systemic Reactive Process"
+    assert engine.clinical_pivot("introvert signs") == "Introversion as a Function of Systemic Anxiety"
+    assert engine.clinical_pivot("adhd symptoms") == "ADHD as a Systemic Functioning Variation"
+    assert engine.clinical_pivot("gottman method") == "Beyond Gottman: A Systemic Differentiation Approach"
 
 @patch('src.reframe_engine.OpenAI')
 def test_spec_3_prompt_injection(mock_openai_class):
