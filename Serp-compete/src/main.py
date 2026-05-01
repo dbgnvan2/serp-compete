@@ -3,6 +3,8 @@ import datetime
 import os
 import json
 import glob
+import warnings
+import jsonschema
 from src.api_clients import DataForSEOClient, MozClient
 from src.semantic import SemanticAuditor
 from src.analysis import AnalysisEngine
@@ -17,6 +19,7 @@ from src.gsc_performance import GSCManager
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SHARED_CONFIG_PATH = os.path.join(PROJECT_ROOT, "shared_config.json")
 MANUAL_TARGETS_PATH = os.path.join(PROJECT_ROOT, "manual_targets.json")
+HANDOFF_SCHEMA_PATH = os.path.join(PROJECT_ROOT, "handoff_schema.json")
 KEYWORD_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "serp-keyword", "output")
 
 def load_shared_config():
@@ -25,67 +28,144 @@ def load_shared_config():
             return json.load(f)
     return {}
 
-def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
-    """
-    Spec 1: Automatic Handover (Radar-to-Sniper Bridge)
-    Ingest the newest JSON from serp-keyword/output/
-    Returns: (list of target entries, dict of keyword -> paa_questions)
-    Target entry: {"domain": str, "url": str, "primary_keyword": str, "est_traffic": float}
-    """
-    json_files = glob.glob(os.path.join(KEYWORD_OUTPUT_DIR, "market_analysis_*.json"))
-    
-    if not json_files:
-        print(f"⚠️ No files found in {KEYWORD_OUTPUT_DIR}. Checking root for fallback...")
-        if os.path.exists(MANUAL_TARGETS_PATH):
-            print(f"📦 Loading fallback from {MANUAL_TARGETS_PATH}")
-            with open(MANUAL_TARGETS_PATH, 'r') as f:
-                data = json.load(f)
-                # Map manual targets to consistent format
-                targets = [{"domain": d, "url": f"https://{d}", "primary_keyword": "manual_audit", "est_traffic": 0} 
-                           for d in data.get("competitors", [])]
-                return targets, {}
-        return [], {}
+def load_handoff_schema():
+    """Load the JSON Schema for handoff validation."""
+    if os.path.exists(HANDOFF_SCHEMA_PATH):
+        with open(HANDOFF_SCHEMA_PATH, 'r') as f:
+            return json.load(f)
+    return None
 
-    # 1. Latest File Detection
-    latest_file = max(json_files, key=os.path.getmtime)
-    print(f"📦 Ingesting latest market data from: {latest_file}")
-    
-    with open(latest_file, 'r') as f:
-        data = json.load(f)
-    
+def find_latest_handoff_file() -> str | None:
+    """Find the most recently modified competitor_handoff_*.json file."""
+    handoff_files = glob.glob(os.path.join(PROJECT_ROOT, "competitor_handoff_*.json"))
+    if not handoff_files:
+        return None
+    return max(handoff_files, key=os.path.getmtime)
+
+def find_latest_legacy_file() -> str | None:
+    """Find the most recently modified market_analysis_*.json file (legacy)."""
+    legacy_files = glob.glob(os.path.join(KEYWORD_OUTPUT_DIR, "market_analysis_*.json"))
+    if not legacy_files:
+        return None
+    return max(legacy_files, key=os.path.getmtime)
+
+def convert_handoff_to_targets(handoff_data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
+    """Convert handoff format to internal targets format."""
     targets = []
-    # 2. Expert Filter: Relevance Check & Context Mapping
-    if "organic_results" in data:
-        for res in data["organic_results"]:
+    for target in handoff_data.get("targets", []):
+        targets.append({
+            "domain": target["domain"],
+            "url": target["url"],
+            "primary_keyword": target["primary_keyword_for_url"],
+            "est_traffic": 0,  # Handoff doesn't include traffic; it's deterministic audit data
+            "rank": target["rank"],
+            "entity_type": target["entity_type"],
+            "content_type": target["content_type"],
+            "title": target["title"],
+            "source_keyword": target["source_keyword"]
+        })
+    return targets, {}
+
+def convert_legacy_to_targets(legacy_data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
+    """Convert legacy market_analysis format to internal targets format."""
+    targets = []
+    if "organic_results" in legacy_data:
+        for res in legacy_data["organic_results"]:
             url = res.get("Link")
             keyword = res.get("Source_Keyword")
-            
-            # Relevance Check: Only ingest entries that contain both a competitor_url and primary_keyword
             if url and keyword:
                 from urllib.parse import urlparse
                 domain = urlparse(url).netloc.replace('www.', '')
-                
-                # Context Mapping: Source: est_traffic -> Target: priority_rank (priority sorted by traffic later)
-                # Source: primary_keyword -> Target: anchor_concept
                 targets.append({
                     "domain": domain,
                     "url": url,
                     "primary_keyword": keyword,
-                    "est_traffic": res.get("Word_Count") if isinstance(res.get("Word_Count"), (int, float)) else 0 # Word_Count as proxy for traffic if ETV missing in this JSON
+                    "est_traffic": res.get("Word_Count") if isinstance(res.get("Word_Count"), (int, float)) else 0
                 })
-    
-    # 3. Anxiety Loop Sync: Source: paa_questions -> Target: reframe_context
+
     paa_data = {}
-    if "paa_questions" in data:
-        for paa in data["paa_questions"]:
+    if "paa_questions" in legacy_data:
+        for paa in legacy_data["paa_questions"]:
             kw = paa.get("Source_Keyword")
             question = paa.get("Question")
             if kw and question:
                 if kw not in paa_data:
                     paa_data[kw] = []
                 paa_data[kw].append(question)
-                
+
     return targets, paa_data
+
+def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
+    """
+    Gap 1: Competitor handoff ingestion from Tool 1.
+
+    Tries sources in order:
+    1. competitor_handoff_*.json (Tool 1 Gap 3) — validated against handoff_schema.json
+    2. market_analysis_*.json (legacy, deprecated) — with DeprecationWarning
+    3. manual_targets.json (developer override) — fallback only
+
+    Returns: (list of target entries, dict of keyword -> paa_questions)
+    """
+    schema = load_handoff_schema()
+
+    # 1. Try competitor_handoff_*.json (Tool 1 Gap 3)
+    handoff_file = find_latest_handoff_file()
+    if handoff_file:
+        print(f"📦 Loading competitor handoff from: {handoff_file}")
+        try:
+            with open(handoff_file, 'r') as f:
+                handoff_data = json.load(f)
+
+            # Validate against schema
+            if schema:
+                try:
+                    jsonschema.validate(instance=handoff_data, schema=schema)
+                    print(f"✅ Handoff validated against schema v{handoff_data.get('schema_version')}")
+                    return convert_handoff_to_targets(handoff_data)
+                except jsonschema.ValidationError as e:
+                    print(f"❌ Handoff validation failed: {e.message}")
+                    print(f"   Path: {list(e.path)}")
+                    sys.exit(1)  # Hard fail per spec
+            else:
+                print("⚠️ Schema file not found; skipping validation. Using handoff data as-is.")
+                return convert_handoff_to_targets(handoff_data)
+        except Exception as e:
+            print(f"❌ Error loading handoff: {e}")
+            sys.exit(1)
+
+    # 2. Try legacy market_analysis_*.json (deprecated)
+    legacy_file = find_latest_legacy_file()
+    if legacy_file:
+        print(f"⚠️ DEPRECATED: Loading legacy market_analysis from: {legacy_file}")
+        warnings.warn(
+            "market_analysis_*.json format is deprecated. Please use competitor_handoff_*.json from Tool 1.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        try:
+            with open(legacy_file, 'r') as f:
+                legacy_data = json.load(f)
+            return convert_legacy_to_targets(legacy_data)
+        except Exception as e:
+            print(f"❌ Error loading legacy file: {e}")
+            # Continue to fallback
+
+    # 3. Fallback to manual_targets.json (developer override)
+    if os.path.exists(MANUAL_TARGETS_PATH):
+        print(f"📦 Loading manual targets from {MANUAL_TARGETS_PATH}")
+        try:
+            with open(MANUAL_TARGETS_PATH, 'r') as f:
+                data = json.load(f)
+                targets = [{"domain": d, "url": f"https://{d}", "primary_keyword": "manual_audit", "est_traffic": 0}
+                           for d in data.get("competitors", [])]
+                return targets, {}
+        except Exception as e:
+            print(f"❌ Error loading manual targets: {e}")
+            return [], {}
+
+    # No data sources found
+    print(f"⚠️ No data sources found (checked: handoff, legacy, manual).")
+    return [], {}
 
 def pre_flight_check():
     """
