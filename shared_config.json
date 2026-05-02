@@ -64,5 +64,55 @@
   },
   "filtering": {
     "omitted_domains_path": "omitted_domains.txt"
+  },
+  "eeat_weights": {
+    "experience": {
+      "has_author_byline": 0.15,
+      "has_publish_date": 0.10,
+      "has_update_date": 0.10,
+      "has_likely_original_images": 0.20,
+      "first_person_count_normalised": 0.20,
+      "case_study_signal": 0.25
+    },
+    "expertise": {
+      "has_credentials_in_byline": 0.40,
+      "schema_author_type_person": 0.20,
+      "tier_3_or_tier_2_present": 0.40
+    },
+    "authoritativeness": {
+      "domain_authority_normalised": 0.50,
+      "external_link_count_normalised": 0.20,
+      "schema_organization_present": 0.30
+    },
+    "trustworthiness": {
+      "is_https": 0.40,
+      "has_contact_link": 0.30,
+      "has_privacy_link": 0.30
+    }
+  },
+  "stock_image_hosts": [
+    "shutterstock.com",
+    "gettyimages.com",
+    "istockphoto.com",
+    "unsplash.com",
+    "pexels.com",
+    "pixabay.com",
+    "stock.adobe.com"
+  ],
+  "credential_list": [
+    "MD", "PhD", "MA", "MSW", "RCC", "LCSW", "RP", "RSW",
+    "LMFT", "LPC", "LPCC", "MEd", "MSc", "MDiv"
+  ],
+  "case_study_triggers": [
+    "we tested",
+    "case study",
+    "in our experience",
+    "our research",
+    "we conducted",
+    "our findings"
+  ],
+  "cluster_thresholds": {
+    "hub_in_degree_threshold": 2,
+    "min_pages_for_signal": 3
   }
 }

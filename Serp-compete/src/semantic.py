@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 import requests
 from typing import Dict, List, Tuple, Any, Literal
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from urllib.parse import urlparse
 
@@ -69,7 +69,7 @@ class SemanticAuditor:
             'Sec-Fetch-User': '?1',
         }
 
-        fetched_at = datetime.utcnow().isoformat() + "Z"
+        fetched_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         extraction_errors = []
 
         try:
