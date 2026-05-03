@@ -33,7 +33,9 @@ def test_scrape_content_mock(requests_mock):
     auditor = SemanticAuditor()
     url = "https://example.com"
     requests_mock.get(url, text="<html><h1>Heading</h1><p>Some text and more text.</p></html>")
-    
-    content = auditor.scrape_content(url)
-    assert "Heading" in content
-    assert "Some text" in content
+
+    page = auditor.scrape_content(url)
+    assert page.url == url
+    assert page.http_status == 200
+    assert "Heading" in page.first_500_words
+    assert "Some text" in page.first_500_words
