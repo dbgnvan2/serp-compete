@@ -114,5 +114,77 @@
   "cluster_thresholds": {
     "hub_in_degree_threshold": 2,
     "min_pages_for_signal": 3
+  },
+  "clinical_pivots": {
+    "avoidant attachment": "Emotional Distance / Pursuer-Distancer",
+    "anxious attachment": "Emotional Fusion / Pursuit",
+    "boundaries": "Differentiation of Self",
+    "toxic person": "Functional Position in the System",
+    "trauma": "Multigenerational Emotional Process",
+    "anger": "Anger as a Systemic Reactive Process",
+    "infidelity": "Infidelity: Reciprocity in the Relationship System",
+    "grief": "Grief as a Family Emotional Process",
+    "depression": "Depression: A Systemic Functioning Perspective",
+    "anxiety": "Anxiety: Intercepting the Relationship Loop",
+    "marriage counselling": "Observing the Marriage as an Emotional System",
+    "couples counselling": "Relationship Reciprocity and Differentiation",
+    "introvert": "Introversion as a Function of Systemic Anxiety",
+    "gottman": "Beyond Gottman: A Systemic Differentiation Approach",
+    "sexuality": "Sexuality and the Emotional System",
+    "narcissist": "The Narcissism Label vs. Systemic Reciprocity",
+    "cbt": "Beyond CBT: Focus on Emotional Process",
+    "adhd": "ADHD as a Systemic Functioning Variation",
+    "attachment styles": "From Attachment Labels to Pursuit-Distance Cycles",
+    "self care": "Self-Care as a Differentiation Strategy"
+  },
+  "handoff": {
+    "supported_versions": ["2.0", "2.1"],
+    "schema_dir": ".",
+    "minimum_version": "2.0",
+    "legacy_fallback_enabled": true
+  },
+  "orchestrator": {
+    "enabled": true,
+    "streamlit_theme": "light",
+    "step_timeout_seconds": 3600,
+    "log_level": "INFO",
+    "show_advanced_options": false
+  },
+  "step_dag": {
+    "step_1_mining": {
+      "name": "Competitor Mining",
+      "depends_on": [],
+      "optional": true
+    },
+    "step_2_audit": {
+      "name": "SERP Audit",
+      "depends_on": ["step_1_mining"],
+      "optional": false
+    },
+    "step_3_scoring": {
+      "name": "Systematic Scoring",
+      "depends_on": ["step_2_audit"],
+      "optional": false,
+      "includes": ["step_2_audit"]
+    },
+    "step_4_gsc": {
+      "name": "GSC Analysis",
+      "depends_on": [],
+      "optional": true
+    },
+    "step_5_strike": {
+      "name": "Strike Mapping",
+      "depends_on": ["step_4_gsc"],
+      "optional": true
+    }
+  },
+  "eeat_client_messaging": {
+    "caveat": "These scores are heuristic structural signals based on SEO industry conventions, not Google's proprietary EEAT model. Use as competitive analysis framework, not authoritative SEO measurement.",
+    "positioning": "EEAT scores help identify competitive strengths/weaknesses in page structure, author credentials, authority signals, and trust indicators. They inform strategy but should not be presented as definitive SEO authority.",
+    "confidence_levels": {
+      "high": "0.8-1.0: Comprehensive signals detected. Scores are reliable.",
+      "medium": "0.5-0.8: Moderate signal coverage. Scores are indicative.",
+      "low": "0.0-0.5: Limited signals. Scores are exploratory only."
+    }
   }
 }
