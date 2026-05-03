@@ -1,0 +1,22 @@
+{
+  "tier_1_medical": [
+    "symptom", "symptoms", "treatment", "disorder", "disorders", "diagnosis", "clinical", 
+    "patient", "patients", "therapy", "medical", "disease", "medication", 
+    "prognosis", "pathology", "syndrome", "condition", "healthcare",
+    "illness", "trauma"
+  ],
+  "tier_2_systems": [
+    "differentiation", "triangles", "chronic anxiety", "emotional system",
+    "family of origin", "nuclear family", "multigenerational", "process",
+    "relationship", "self-regulation", "emotional process", "functioning",
+    "connectedness", "systemic", "interdependence",
+    "internal family systems", "estrangement", "triangulation",
+    "attachment", "avoidant"
+  ],
+  "tier_3_bowen_expert": [
+    "defining self", "over-under functioning", "functional facts", 
+    "emotional distance", "emotional fusion", "differentiation of self",
+    "triangling", "emotional cutoff", "sibling position",
+    "pursuer-distancer reciprocity"
+  ]
+}
