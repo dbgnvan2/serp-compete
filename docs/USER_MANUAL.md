@@ -1,14 +1,44 @@
 # Serp-Compete: Competitive SEO Intelligence User Manual
 
 ## Table of Contents
-1. [Overview](#overview)
-2. [Core Purpose](#core-purpose)
-3. [How the System Works](#how-the-system-works)
-4. [Workflow & Steps](#workflow--steps)
-5. [Key Concepts](#key-concepts)
-6. [Configuration](#configuration)
-7. [Understanding Your Results](#understanding-your-results)
-8. [Troubleshooting](#troubleshooting)
+1. [Quick Start](#quick-start)
+2. [Overview](#overview)
+3. [Core Purpose](#core-purpose)
+4. [How the System Works](#how-the-system-works)
+5. [Workflow & Steps](#workflow--steps)
+6. [Key Concepts](#key-concepts)
+7. [Configuration](#configuration)
+8. [Understanding Your Results](#understanding-your-results)
+9. [Troubleshooting](#troubleshooting)
+
+---
+
+## Quick Start
+
+### Option 1: GUI (Recommended)
+```bash
+cd /Users/davemini2/ProjectsLocal/serp-compete
+./run_gui.sh
+```
+Then open browser to `http://localhost:8501` and:
+1. Click "🔍 New Audit" tab
+2. Enter path to Serp-Discover output directory
+3. Select a `competitor_handoff_*.json` file
+4. Click "🔥 RUN AUDIT"
+5. View report and download results
+
+**Features:**
+- Browse previous reports in sidebar
+- Reports stay open (don't auto-close on download)
+- Configurable reports directory
+- Download both Markdown and Excel
+
+### Option 2: Command Line
+```bash
+cd /Users/davemini2/ProjectsLocal/serp-compete
+./run_audit.sh
+```
+Auto-finds latest handoff from Serp-Discover and runs audit.
 
 ---
 
@@ -340,6 +370,25 @@ AI-generated content outlines for reframing competitor content.
 
 **How to use:** Use these as starting points for your content writers. Not production-ready, but provides structure.
 
+### Output Files
+
+After each audit run, Serp-Compete generates:
+
+| File | What It Is |
+|------|-----------|
+| `strategic_briefing_run_N.md` | Complete competitive analysis + Bowen reframes (Markdown) |
+| `audit_results_run_N.xlsx` | Same data in Excel spreadsheet format |
+
+**Where they're saved:**
+- By default: Same directory as the audit script (`Serp-compete/`)
+- Configurable via GUI: Settings tab → "Reports Directory"
+
+**How to access:**
+- **GUI:** Reports appear in browser after audit completes. Use sidebar to browse previous reports.
+- **CLI:** Files saved to disk in reports directory
+- **Download:** Click download buttons in GUI (reports stay open after download)
+- **Reload previous:** Use "📚 Previous Reports" dropdown in sidebar to open any past briefing
+
 ---
 
 ## Troubleshooting
@@ -386,31 +435,62 @@ AI-generated content outlines for reframing competitor content.
 
 ## Quick Start Guide
 
-### Minimal Setup (15 minutes)
+### Option 1: GUI (Recommended - 5 minutes)
 
-1. **Prepare your keyword list** (CSV format)
-   - One keyword per row
-   - Include source (organic search, client request, etc.)
+```bash
+cd /Users/davemini2/ProjectsLocal/serp-compete
+./run_gui.sh
+```
 
-2. **Update shared_config.json**
-   - Set your client domain
-   - Set GSC credentials path (if running Step 4)
-   - Adjust clinical_pivots if needed
+Then in your browser at `http://localhost:8501`:
+1. Click **"🔍 New Audit"** tab
+2. Enter path to Serp-Discover output folder (saves as default)
+3. Select a `competitor_handoff_*.json` file
+4. Click **"🔥 RUN AUDIT"**
+5. Review report in browser
+6. Download both Markdown and Excel files
+7. Click **"❌ Close Report"** when done
 
-3. **Run the audit**
-   ```bash
-   cd Serp-compete
-   python3 src/main.py
-   ```
+**Benefits:**
+- No command line needed
+- Browse previous reports in sidebar
+- Report stays open (download without closing)
+- Configure reports directory in Settings tab
 
-4. **Check the results**
-   - Output: `strategic_briefing_run_N.md` (Markdown) + `.xlsx` (Excel)
-   - Open in your browser or spreadsheet
+### Option 2: Command Line (5 minutes)
 
-5. **Share with content team**
-   - Traffic magnets = keywords to target
-   - Systemic vacuums = reframing opportunities
-   - Bowen reframes = content structure templates
+```bash
+cd /Users/davemini2/ProjectsLocal/serp-compete
+./run_audit.sh
+```
+
+Script automatically:
+- Finds latest `competitor_handoff_*.json` from Serp-Discover
+- Copies to project directory
+- Runs audit
+- Shows output file locations
+
+### Option 3: Manual (Advanced)
+
+```bash
+cd /Users/davemini2/ProjectsLocal/serp-compete
+cp ../serp-discover/output/competitor_handoff_*.json ./
+cd Serp-compete
+PYTHONPATH=. python3 src/main.py
+```
+
+---
+
+### After Running Audit
+
+1. **View Results**
+   - `strategic_briefing_run_N.md` — Competitive analysis + Bowen reframes
+   - `audit_results_run_N.xlsx` — Data in Excel format
+
+2. **Share with Content Team**
+   - Traffic magnets = high-value keywords to target
+   - Systemic vacuums = reframing opportunities (competitor weaknesses)
+   - Bowen reframes = content structure templates (AI-generated)
 
 ### Advanced Features (30-60 minutes)
 
