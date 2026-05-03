@@ -136,3 +136,49 @@ class ClusterDetector:
         p = urlparse(url)
         path = p.path.rstrip("/") or "/"
         return urlunparse((p.scheme, p.netloc, path, p.params, p.query, ""))
+
+    def save_to_database(self, db_manager: Any, run_id: int, result: ClusterResult) -> None:
+        """
+        Persist cluster result to database.
+
+        Purpose: Gap 4 persistence for internal linking analysis
+        """
+        import json
+        import sqlite3
+        conn = db_manager._get_connection()
+        cursor = conn.cursor()
+
+        # Compute additional metrics for storage
+        graph = result.internal_link_graph
+        avg_in_degree = 0.0
+        max_in_degree = 0
+        num_connected_components = 0
+
+        if graph:
+            in_degrees = [node.get("in_degree", 0) for node in graph.values()]
+            if in_degrees:
+                avg_in_degree = sum(in_degrees) / len(in_degrees)
+                max_in_degree = max(in_degrees)
+
+            # Simple connectivity metric (count components - nodes with no edges)
+            isolated_nodes = sum(1 for node in graph.values() if node.get("in_degree", 0) == 0 and node.get("out_degree", 0) == 0)
+            num_connected_components = isolated_nodes + (1 if graph else 0)
+
+        cursor.execute('''
+            INSERT INTO cluster_results
+            (run_id, domain, pages_analysed, internal_link_graph, hub_candidates,
+             cluster_signal, resolution_caveat, avg_in_degree, max_in_degree, num_connected_components)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            run_id,
+            result.domain,
+            result.pages_analyzed,
+            json.dumps(result.internal_link_graph),
+            json.dumps(result.hub_candidates),
+            result.cluster_signal,
+            result.resolution_caveat,
+            avg_in_degree,
+            max_in_degree,
+            num_connected_components
+        ))
+        conn.commit()

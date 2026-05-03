@@ -26,6 +26,12 @@ class ReportGenerator:
             "This report identifies strategic openings where competitors rely on the 'Medical Model' and provides automated Bowen-based reframes."
         ]
 
+        # Initialize dataframes for later use in Excel export
+        df_eeat = pd.DataFrame()
+        df_clusters = pd.DataFrame()
+        df_metrics = pd.DataFrame()
+        df_magnets = pd.DataFrame()
+
         if gsc_findings:
             report.append("\n## 📈 Internal GSC Performance Gaps")
             report.append("Analysis of our own site's performance in Google Search Console.")
@@ -133,6 +139,40 @@ class ReportGenerator:
                 report.append("\n## Competitor Ranking Summary")
                 report.append(df_metrics.to_markdown(index=False))
 
+            # 2b. EEAT Scores (Gap 3 enhancement)
+            df_eeat = pd.read_sql_query('''
+                SELECT url, score_confidence, experience_score, expertise_score,
+                       authoritativeness_score, trustworthiness_score
+                FROM eeat_scores
+                WHERE run_id = ?
+                ORDER BY url
+                LIMIT 30
+            ''', conn, params=(run_id,))
+
+            if not df_eeat.empty:
+                report.append("\n## EEAT Competitive Analysis (Heuristic)")
+                report.append("Experience, Expertise, Authoritativeness, and Trustworthiness heuristic scores.")
+                # Format numeric columns to 2 decimals
+                for col in ['experience_score', 'expertise_score', 'authoritativeness_score', 'trustworthiness_score']:
+                    df_eeat[col] = df_eeat[col].apply(lambda x: f"{x:.2f}" if x is not None else "—")
+                report.append(df_eeat.to_markdown(index=False))
+                report.append("\n_Note: These scores are heuristic proxies based on SEO industry conventions, not Google's proprietary EEAT model._")
+
+            # 2c. Cluster Analysis (Gap 4 enhancement)
+            df_clusters = pd.read_sql_query('''
+                SELECT domain, pages_analysed, cluster_signal, avg_in_degree, max_in_degree
+                FROM cluster_results
+                WHERE run_id = ?
+                ORDER BY domain
+            ''', conn, params=(run_id,))
+
+            if not df_clusters.empty:
+                report.append("\n## Internal Linking Cluster Analysis")
+                report.append("Detection of hub pages and linking patterns within competitor sites.")
+                df_clusters['avg_in_degree'] = df_clusters['avg_in_degree'].apply(lambda x: f"{x:.2f}" if x is not None else "—")
+                report.append(df_clusters.to_markdown(index=False))
+                report.append("\n_Note: Analysis based on N≤3 scraped pages per domain. Full site structure not visible._")
+
             # 3. Traffic Magnets with Systemic Label
             df_magnets = pd.read_sql_query('''
                 SELECT domain, url, primary_keyword, est_traffic, medical_score, systems_score, systemic_label
@@ -176,10 +216,16 @@ class ReportGenerator:
         # Excel Export
         with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
             with self.db._get_connection() as conn:
-                df_metrics.to_excel(writer, sheet_name='Competitor Summary', index=False)
-                df_magnets.to_excel(writer, sheet_name='Traffic Magnets', index=False)
+                if not df_metrics.empty:
+                    df_metrics.to_excel(writer, sheet_name='Competitor Summary', index=False)
+                if not df_magnets.empty:
+                    df_magnets.to_excel(writer, sheet_name='Traffic Magnets', index=False)
+                if not df_eeat.empty:
+                    df_eeat.to_excel(writer, sheet_name='EEAT Scores', index=False)
+                if not df_clusters.empty:
+                    df_clusters.to_excel(writer, sheet_name='Cluster Analysis', index=False)
                 if reframes:
-                    df_reframes = pd.DataFrame([{"keyword": r['keyword'], "url": r['url'], "reframe": r['reframe']} for r in reframes])
+                    df_reframes = pd.DataFrame([{"keyword": r['keyword'], "url": r['url'], "reframe": r['reframe'][:500]} for r in reframes])
                     df_reframes.to_excel(writer, sheet_name='Automated Reframes', index=False)
                 if token_usage:
                     df_usage = pd.DataFrame([token_usage])

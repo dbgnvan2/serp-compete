@@ -173,7 +173,7 @@ def pre_flight_check():
     """
     print("--- 🛠️ Pre-Flight Check ---")
     required_vars = [
-        "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD", 
+        "DATAFORSEO_LOGIN", "DATAFORSEO_PASSWORD",
         "OPENAI_API_KEY", "MOZ_TOKEN"
     ]
     missing = [var for var in required_vars if not os.getenv(var)]
@@ -181,12 +181,15 @@ def pre_flight_check():
         print(f"❌ Missing environment variables: {', '.join(missing)}")
         return None
 
+    # Load shared config early for all checks
+    shared_config = load_shared_config()
+
     # 1. Check DataForSEO Balance
     try:
         dfs = DataForSEOClient()
         import requests
         r = requests.get(
-            'https://api.dataforseo.com/v3/appendix/user_data', 
+            'https://api.dataforseo.com/v3/appendix/user_data',
             auth=(dfs.login, dfs.password)
         ).json()
         balance = r['tasks'][0]['result'][0]['money']['balance']
@@ -200,7 +203,7 @@ def pre_flight_check():
 
     # 2. Check OpenAI connectivity
     try:
-        reframe = ReframeEngine()
+        reframe = ReframeEngine(shared_config)
         if reframe.client:
             reframe.client.models.retrieve(reframe.model)
             print(f"✅ OpenAI Model Ready: {reframe.model}")
@@ -211,12 +214,11 @@ def pre_flight_check():
     # 3. Check GSC Connectivity (Mandatory - Hard Fail)
     gsc = None
     try:
-        shared_config = load_shared_config()
         secrets_path = shared_config.get("auth", {}).get("gsc_client_secrets")
         if not secrets_path or not os.path.exists(secrets_path):
             print("❌ GSC Credentials not found. Please provide path to GSC Client Secrets in shared_config.json.")
             return None
-            
+
         gsc = GSCManager()
         success, message = gsc.test_connection()
         if not success:
@@ -274,7 +276,7 @@ def run_audit():
     # 2. API Clients
     dfs_client = DataForSEOClient()
     moz_client = MozClient()
-    reframe_engine = ReframeEngine()
+    reframe_engine = ReframeEngine(shared_config)
     
     # 3. Engines
     auditor = SemanticAuditor()

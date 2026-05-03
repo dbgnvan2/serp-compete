@@ -336,3 +336,51 @@ class EEATScorer:
             "has_contact_link": False,
             "has_privacy_link": False
         }
+
+    def save_to_database(self, db_manager: Any, run_id: int, score: EEATScore) -> None:
+        """
+        Persist EEAT score to database.
+
+        Purpose: Gap 3 persistence for competitive analysis
+        """
+        import sqlite3
+        conn = db_manager._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            INSERT INTO eeat_scores
+            (run_id, url, scored_at, has_author_byline, has_publish_date, has_update_date,
+             has_likely_original_images, first_person_count_normalised, case_study_signal,
+             experience_score, has_credentials_in_byline, schema_author_type_person,
+             tier_3_or_tier_2_present, expertise_score, domain_authority_normalised,
+             external_link_count_normalised, schema_organization_present, authoritativeness_score,
+             is_https, has_contact_link, has_privacy_link, trustworthiness_score,
+             score_confidence, caveat)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            run_id,
+            score.url,
+            score.scored_at,
+            score.experience_signals.get("has_author_byline"),
+            score.experience_signals.get("has_publish_date"),
+            score.experience_signals.get("has_update_date"),
+            score.experience_signals.get("has_likely_original_images"),
+            score.experience_signals.get("first_person_count_normalised"),
+            score.experience_signals.get("case_study_signal"),
+            score.scores.get("experience"),
+            score.expertise_signals.get("has_credentials_in_byline"),
+            score.expertise_signals.get("schema_author_type_person"),
+            score.expertise_signals.get("tier_3_or_tier_2_present"),
+            score.scores.get("expertise"),
+            score.authoritativeness_signals.get("domain_authority_normalised"),
+            score.authoritativeness_signals.get("external_link_count_normalised"),
+            score.authoritativeness_signals.get("schema_organization_present"),
+            score.scores.get("authoritativeness"),
+            score.trustworthiness_signals.get("is_https"),
+            score.trustworthiness_signals.get("has_contact_link"),
+            score.trustworthiness_signals.get("has_privacy_link"),
+            score.scores.get("trustworthiness"),
+            score.score_confidence,
+            score.caveat
+        ))
+        conn.commit()

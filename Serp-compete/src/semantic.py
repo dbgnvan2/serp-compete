@@ -212,12 +212,14 @@ class SemanticAuditor:
             "has_localbusiness_schema": False,
             "image_count": 0,
             "image_hosts": [],
+            "likely_original_images_count": 0,
             "external_link_count": 0,
             "internal_link_count": 0,
             "internal_links": [],
             "is_https": url.startswith("https"),
             "has_contact_link": False,
             "has_privacy_link": False,
+            "case_study_signal": False,
         }
 
         # Title
@@ -267,6 +269,7 @@ class SemanticAuditor:
 
         # Images
         image_hosts_set = set()
+        stock_image_hosts = {"shutterstock.com", "gettyimages.com", "istockphoto.com", "unsplash.com", "pexels.com", "pixabay.com", "stock.adobe.com"}
         for img in soup.find_all('img'):
             metadata["image_count"] += 1
             src = img.get('src', '')
@@ -274,6 +277,9 @@ class SemanticAuditor:
                 parsed = urlparse(src)
                 if parsed.netloc:
                     image_hosts_set.add(parsed.netloc)
+                    # Count original images (not from stock hosts)
+                    if parsed.netloc not in stock_image_hosts and parsed.netloc:
+                        metadata["likely_original_images_count"] += 1
         metadata["image_hosts"] = list(image_hosts_set)
 
         # Links (internal vs external)
@@ -303,6 +309,14 @@ class SemanticAuditor:
                 metadata["external_link_count"] += 1
 
         metadata["internal_links"] = list(internal_links_set)
+
+        # Case study signal detection
+        page_text = soup.get_text().lower()
+        case_study_triggers = ["we tested", "case study", "in our experience", "our research", "we conducted", "our findings"]
+        for trigger in case_study_triggers:
+            if trigger in page_text:
+                metadata["case_study_signal"] = True
+                break
 
         return metadata
 
@@ -351,12 +365,14 @@ class SemanticAuditor:
             "has_localbusiness_schema": False,
             "image_count": 0,
             "image_hosts": [],
+            "likely_original_images_count": 0,
             "external_link_count": 0,
             "internal_link_count": 0,
             "internal_links": [],
             "is_https": False,
             "has_contact_link": False,
             "has_privacy_link": False,
+            "case_study_signal": False,
         }
 
     def analyze_text(self, text: str) -> Dict[str, Any]:
