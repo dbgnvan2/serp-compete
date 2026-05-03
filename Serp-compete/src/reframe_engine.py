@@ -5,35 +5,48 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Default Bowen reframes (fallback if clinical_pivots not in config)
+DEFAULT_CLINICAL_PIVOTS = {
+    "avoidant attachment": "Emotional Distance / Pursuer-Distancer",
+    "anxious attachment": "Emotional Fusion / Pursuit",
+    "boundaries": "Differentiation of Self",
+    "toxic person": "Functional Position in the System",
+    "trauma": "Multigenerational Emotional Process",
+    "anger": "Anger as a Systemic Reactive Process",
+    "infidelity": "Infidelity: Reciprocity in the Relationship System",
+    "grief": "Grief as a Family Emotional Process",
+    "depression": "Depression: A Systemic Functioning Perspective",
+    "anxiety": "Anxiety: Intercepting the Relationship Loop",
+    "marriage counselling": "Observing the Marriage as an Emotional System",
+    "couples counselling": "Relationship Reciprocity and Differentiation",
+    "introvert": "Introversion as a Function of Systemic Anxiety",
+    "gottman": "Beyond Gottman: A Systemic Differentiation Approach",
+    "sexuality": "Sexuality and the Emotional System",
+    "narcissist": "The Narcissism Label vs. Systemic Reciprocity",
+    "cbt": "Beyond CBT: Focus on Emotional Process",
+    "adhd": "ADHD as a Systemic Functioning Variation",
+    "attachment styles": "From Attachment Labels to Pursuit-Distance Cycles",
+    "self care": "Self-Care as a Differentiation Strategy"
+}
+
 class ReframeEngine:
-    def __init__(self):
+    def __init__(self, config: Dict[str, Any] = None):
+        """Initialize ReframeEngine with optional config (loads from shared_config.json).
+
+        Args:
+            config: Optional dict with clinical_pivots and eeat_client_messaging
+        """
+        if config is None:
+            config = {}
+
         self.api_key = os.getenv("OPENAI_API_KEY")
         # Initialize client with api_key
         self.client = OpenAI(api_key=self.api_key) if self.api_key else None
         self.model = "gpt-4o"
-        # Spec 3 Mapping Dictionary
-        self.pivot_map = {
-            "avoidant attachment": "Emotional Distance / Pursuer-Distancer",
-            "anxious attachment": "Emotional Fusion / Pursuit",
-            "boundaries": "Differentiation of Self",
-            "toxic person": "Functional Position in the System",
-            "trauma": "Multigenerational Emotional Process",
-            "anger": "Anger as a Systemic Reactive Process",
-            "infidelity": "Infidelity: Reciprocity in the Relationship System",
-            "grief": "Grief as a Family Emotional Process",
-            "depression": "Depression: A Systemic Functioning Perspective",
-            "anxiety": "Anxiety: Intercepting the Relationship Loop",
-            "marriage counselling": "Observing the Marriage as an Emotional System",
-            "couples counselling": "Relationship Reciprocity and Differentiation",
-            "introvert": "Introversion as a Function of Systemic Anxiety",
-            "gottman": "Beyond Gottman: A Systemic Differentiation Approach",
-            "sexuality": "Sexuality and the Emotional System",
-            "narcissist": "The Narcissism Label vs. Systemic Reciprocity",
-            "cbt": "Beyond CBT: Focus on Emotional Process",
-            "adhd": "ADHD as a Systemic Functioning Variation",
-            "attachment styles": "From Attachment Labels to Pursuit-Distance Cycles",
-            "self care": "Self-Care as a Differentiation Strategy"
-        }
+        # Load pivot_map from config or use defaults
+        self.pivot_map = config.get("clinical_pivots", DEFAULT_CLINICAL_PIVOTS)
+        # Load client messaging template
+        self.client_messaging = config.get("eeat_client_messaging", {})
 
     def clinical_pivot(self, text: str) -> str:
         """

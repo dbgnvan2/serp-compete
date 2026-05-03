@@ -125,6 +125,86 @@ class DatabaseManager:
                 )
             ''')
 
+            # v3: EEAT Scores Table (Gap 3 enhancement)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS eeat_scores (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    url TEXT NOT NULL,
+                    scored_at TEXT NOT NULL,
+                    has_author_byline BOOLEAN,
+                    has_publish_date BOOLEAN,
+                    has_update_date BOOLEAN,
+                    has_likely_original_images BOOLEAN,
+                    first_person_count_normalised REAL,
+                    case_study_signal BOOLEAN,
+                    experience_score REAL,
+                    has_credentials_in_byline BOOLEAN,
+                    schema_author_type_person BOOLEAN,
+                    tier_3_or_tier_2_present BOOLEAN,
+                    expertise_score REAL,
+                    domain_authority_normalised REAL,
+                    external_link_count_normalised REAL,
+                    schema_organization_present BOOLEAN,
+                    authoritativeness_score REAL,
+                    is_https BOOLEAN,
+                    has_contact_link BOOLEAN,
+                    has_privacy_link BOOLEAN,
+                    trustworthiness_score REAL,
+                    score_confidence TEXT,
+                    caveat TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_eeat_scores_url ON eeat_scores(url)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_eeat_scores_run ON eeat_scores(run_id)')
+
+            # v3: Cluster Results Table (Gap 4 enhancement)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cluster_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    domain TEXT NOT NULL,
+                    analysed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    pages_analysed INTEGER,
+                    internal_link_graph TEXT,
+                    hub_candidates TEXT,
+                    cluster_signal TEXT,
+                    resolution_caveat TEXT,
+                    avg_in_degree REAL,
+                    max_in_degree INTEGER,
+                    num_connected_components INTEGER,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_cluster_results_domain ON cluster_results(domain)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_cluster_results_run ON cluster_results(run_id)')
+
+            # v3: Semantic Audit Results Table (detailed tier scoring)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS semantic_audit_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    url TEXT NOT NULL,
+                    tier_1_medical_score INTEGER,
+                    tier_1_medical_terms_found TEXT,
+                    tier_2_systems_score INTEGER,
+                    tier_2_systems_terms_found TEXT,
+                    tier_3_bowen_score INTEGER,
+                    tier_3_bowen_terms_found TEXT,
+                    systemic_label TEXT,
+                    medical_model_indicator BOOLEAN,
+                    extraction_status TEXT,
+                    content_length INTEGER,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_semantic_audit_results_url ON semantic_audit_results(url)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_semantic_audit_results_run ON semantic_audit_results(run_id)')
+
             # --- MIGRATIONS: Add columns if they don't exist (Yolo Mode robustness) ---
             try:
                 # Add systemic_label to semantic_audits
