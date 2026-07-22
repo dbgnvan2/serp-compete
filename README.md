@@ -50,18 +50,29 @@ Each audit generates:
 ✅ **Semantic Analysis** — Scores competitor pages for medical vs. systems language  
 ✅ **EEAT Heuristics** — Experience, Expertise, Authoritativeness, Trustworthiness scoring  
 ✅ **Internal Linking** — Detects competitor hub pages and link clusters  
-✅ **Bowen Reframes** — AI generates content outlines for reframing opportunities  
+✅ **Bowen Reframes** — OpenAI (`gpt-4o`) generates content outlines for reframing opportunities  
 ✅ **Strategic Briefing** — Executive summary + traffic magnets + reframing targets  
 ✅ **Web GUI** — Streamlit interface with previous reports browser  
 ✅ **Configurable** — All settings in `shared_config.json`
 
 ## Testing
 
+There are two test suites:
+
 ```bash
+# Core/unit suite (54 tests) — lives beside the source
 cd Serp-compete
 PYTHONPATH=. pytest tests/ -q
+
+# v3 feature suite (EEAT, cluster detection, step DAG, page structure, handoff ingestion)
+# lives at the project root
+PYTHONPATH=Serp-compete pytest tests/ -q
 ```
-All 35 tests pass (100%).
+
+The `Serp-compete/tests/` folder holds 54 tests. A separate, larger suite at the
+project root (`tests/`, 158 tests) covers the v3 features (EEAT scoring, cluster
+detection, `step_dag`, page-structure extraction, handoff ingestion). Run both to
+validate the full feature set described in this README.
 
 ## Documentation
 
@@ -110,8 +121,25 @@ All settings in `shared_config.json`:
 - `client.domain` — Your domain (for comparison)
 - `client.da` — Your Domain Authority (for feasibility scoring)
 - `clinical_pivots` — Bowen concepts for reframing (non-code editable)
-- `orchestrator.handoff_source_dir` — Where Serp-Discover output is stored
-- `orchestrator.reports_dir` — Where to save audit reports
+- `technical.max_audit_pages_per_domain` — Pages scraped per competitor (default 3)
+- `handoff.supported_versions` — Tool 1 handoff formats accepted (e.g. `2.0`, `2.1`)
+- `eeat_weights`, `cluster_thresholds`, `scoring_weights` — tuning for the scoring engines
+
+> **Note:** the handoff source directory and reports directory are **not** stored in
+> `shared_config.json` by default. They are entered in the GUI's Settings tab at runtime
+> and only written to the `orchestrator` block once you save them there.
+
+## Out of Scope
+
+**Backlink / off-site authority analysis.** Serp-Compete audits competitor pages'
+on-page and structural signals (language, EEAT, internal-link clusters, GEO/
+extractability); it does **not** analyse competitors' backlink profiles. Backlink
+discovery, toxic-link identification, and referring-domain diversity are
+deliberately out of scope. Across the tool suite, Domain Authority (and Moz Page
+Authority) serve as the single authority proxy; a full backlink graph requires a
+paid third-party link-index provider (Ahrefs, Majestic, or DataForSEO backlinks)
+and is judged low-ROI for a single nonprofit. This is a deliberate boundary, not
+an omission — revisit only if scale or budget changes.
 
 ## Support
 
