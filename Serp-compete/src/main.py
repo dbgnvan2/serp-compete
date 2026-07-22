@@ -7,6 +7,9 @@ import warnings
 import jsonschema
 from src.api_clients import DataForSEOClient, MozClient
 from src.semantic import SemanticAuditor
+from src.geo_profiler import GeoProfiler
+from src.eeat_scorer import EEATScorer
+from src.cluster_detector import ClusterDetector
 from src.analysis import AnalysisEngine
 from src.database import DatabaseManager
 from typing import Dict, Set, List, Tuple, Any
@@ -280,6 +283,9 @@ def run_audit():
     
     # 3. Engines
     auditor = SemanticAuditor()
+    geo_profiler = GeoProfiler(shared_config)  # SC-1: competitor GEO/extractability
+    eeat_scorer = EEATScorer(shared_config)           # wire-up fix: built but never called
+    cluster_detector = ClusterDetector(shared_config)  # wire-up fix: built but never called
     reporter = ReportGenerator()
 
     # 4. Optional: Internal GSC Analysis
@@ -302,7 +308,17 @@ def run_audit():
     
     competitor_keywords: Dict[str, Set[str]] = {}
     all_metrics_to_save = []
-    
+
+    # Finding 1/4 (P8/P2): make enrichment coverage provable, so an empty EEAT/GEO/
+    # cluster report section is never silently indistinguishable from "competitors
+    # had no signals". Counts fresh scores, cache-served carry-forwards, cache hits
+    # with no prior profile to carry, and outright failures.
+    enrich = {k: 0 for k in (
+        "eeat_fresh", "eeat_carried", "eeat_no_prior", "eeat_failed",
+        "geo_fresh", "geo_carried", "geo_no_prior", "geo_failed",
+        "cluster_fresh", "cluster_carried", "cluster_no_prior", "cluster_failed",
+    )}
+
     print(f"Starting audit for {client_domain}...")
     
     # 4. Ingestion & Expert Filtering
@@ -341,6 +357,8 @@ def run_audit():
         domain_keywords = set()
         processed_urls = set() # Track URLs processed for this domain
         domain_blocked = False
+        domain_scraped_pages = []  # wire-up fix: retain pages for cluster detection
+        domain_had_cache_hit = False  # Finding 1: track cache hits for cluster carry-forward
 
         for page in pages:
             if domain_blocked:
@@ -378,19 +396,54 @@ def run_audit():
                 if cached_audit:
                     scores = cached_audit
                     print(f"  ⚡ Using cached audit for {url} (fresh within 7 days)")
+                    domain_had_cache_hit = True
+                    # Finding 1 (P8): the page is served from the 7-day semantic cache,
+                    # so it is NOT re-scraped and EEAT/GEO cannot recompute. Carry the
+                    # URL's latest prior profile into this run so the report sections do
+                    # not silently blank out on every re-run. A cache hit with no prior
+                    # profile (e.g. first run after this feature shipped) is counted, not
+                    # hidden — it self-heals once the URL is next scraped.
+                    if db.carry_forward_profile("eeat_scores", "url", url, run_id):
+                        enrich["eeat_carried"] += 1
+                    else:
+                        enrich["eeat_no_prior"] += 1
+                    if db.carry_forward_profile("geo_profiles", "url", url, run_id):
+                        enrich["geo_carried"] += 1
+                    else:
+                        enrich["geo_no_prior"] += 1
                 else:
-                    # Double check we don't scrape the same URL if it was already processed in this domain loop
+                    # scrape_content returns a ScrapedPage (never a "BLOCK"/"" string,
+                    # as the pre-ScrapedPage code assumed). Branch on extraction_status
+                    # so the 429 circuit-breaker actually fires and failed fetches are
+                    # not saved as zero-score traffic magnets / false systemic vacuums.
                     content = auditor.scrape_content(url)
-                    if content == "BLOCK":
+                    status = getattr(content, "extraction_status", "error")
+                    if status == "blocked":
                         print(f"  🛑 Circuit Breaker: Domain {domain} is blocking us (429). Skipping remaining pages.")
                         domain_blocked = True
                         continue
-                    elif content:
-                        scores = auditor.analyze_text(content)
-                        db.save_semantic_audit(url, scores['medical_score'], scores['systems_score'], run_id=run_id, label=scores.get('systemic_label', 'Standard'))
-                    else:
-                        # Logic: If we hit a major error other than 429, scrape_content returns ""
+                    elif status == "error":
+                        print(f"  ⚠️ Skipping unreadable page: {url}")
                         continue
+                    scores = auditor.analyze_text(content)
+                    db.save_semantic_audit(url, scores['medical_score'], scores['systems_score'], run_id=run_id, label=scores.get('systemic_label', 'Standard'))
+                    domain_scraped_pages.append(content)
+                    # Wire-up fix: EEAT was built but never called. Score the page now.
+                    try:
+                        eeat_score = eeat_scorer.score_page(content, domain_authority=(pa or None))
+                        eeat_scorer.save_to_database(db, run_id, eeat_score)
+                        enrich["eeat_fresh"] += 1
+                    except Exception as eeat_err:
+                        enrich["eeat_failed"] += 1
+                        print(f"  ⚠️ EEAT scoring skipped for {url}: {eeat_err}")
+                    # SC-1: profile the freshly-scraped page for GEO/extractability.
+                    try:
+                        geo_profile = geo_profiler.profile_page(content)
+                        db.save_geo_profile(run_id, geo_profile)
+                        enrich["geo_fresh"] += 1
+                    except Exception as geo_err:
+                        enrich["geo_failed"] += 1
+                        print(f"  ⚠️ GEO profiling skipped for {url}: {geo_err}")
 
                 db.save_traffic_magnet(run_id, domain, url, keyword, traffic, scores['medical_score'], scores['systems_score'], label=scores.get('systemic_label', 'Standard'))
                 print(f"  Audit {url}: Medical {scores['medical_score']}, Systems {scores['systems_score']} ({scores.get('systemic_label')})")
@@ -413,8 +466,40 @@ def run_audit():
                 domain_traffic_total += traffic
                 processed_urls.add(url)
 
+        # Wire-up fix: internal-linking cluster detection was built but never called.
+        if domain_scraped_pages:
+            try:
+                cluster_result = cluster_detector.analyze_domain(domain, domain_scraped_pages)
+                cluster_detector.save_to_database(db, run_id, cluster_result)
+                enrich["cluster_fresh"] += 1
+            except Exception as cl_err:
+                enrich["cluster_failed"] += 1
+                print(f"  ⚠️ Cluster detection skipped for {domain}: {cl_err}")
+        elif domain_had_cache_hit:
+            # Finding 1 (P8): every audited page for this domain was cache-served, so
+            # there is no fresh page set to analyse. Carry the domain's latest prior
+            # cluster result forward rather than emit a false "no cluster" on the re-run.
+            # NOTE: a *mixed* domain (some fresh, some cached) computes on the fresh
+            # subset above and may under-count hubs — see spec "Known limitations".
+            if db.carry_forward_profile("cluster_results", "domain", domain, run_id):
+                enrich["cluster_carried"] += 1
+            else:
+                enrich["cluster_no_prior"] += 1
+
         db.tag_competitor_position(domain, domain_medical_total, domain_t2_total, domain_t3_total, domain_traffic_total)
         competitor_keywords[domain] = domain_keywords
+
+    # Finding 1/4 (P8/P2): surface enrichment coverage. An empty EEAT/GEO/cluster
+    # section must never be silently mistaken for "no signals" — report exactly how
+    # many were computed fresh, served from cache, or failed.
+    print("\n📊 Enrichment coverage  (fresh / carried-forward / cache-hit-no-prior / failed):")
+    print(f"   EEAT:    {enrich['eeat_fresh']} / {enrich['eeat_carried']} / {enrich['eeat_no_prior']} / {enrich['eeat_failed']}")
+    print(f"   GEO:     {enrich['geo_fresh']} / {enrich['geo_carried']} / {enrich['geo_no_prior']} / {enrich['geo_failed']}")
+    print(f"   Cluster: {enrich['cluster_fresh']} / {enrich['cluster_carried']} / {enrich['cluster_no_prior']} / {enrich['cluster_failed']}")
+    if enrich["eeat_failed"] or enrich["geo_failed"] or enrich["cluster_failed"]:
+        print("   ⚠️ Some enrichment steps FAILED (not merely cache-served) — investigate the warnings above.")
+    if enrich["eeat_no_prior"] or enrich["geo_no_prior"] or enrich["cluster_no_prior"]:
+        print("   ℹ️ Some cache-served URLs had no prior profile to carry forward; they populate once re-scraped.")
 
     if all_metrics_to_save:
         db.save_competitor_metrics(all_metrics_to_save, run_id=run_id)

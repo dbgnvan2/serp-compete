@@ -218,6 +218,35 @@ class DatabaseManager:
             except sqlite3.OperationalError:
                 pass # Already exists
 
+            # SC-1: GEO / Extractability Profiles Table
+            # (Spec: suite_enhancement_spec_v1.md#SC-1)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS geo_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    url TEXT NOT NULL,
+                    profiled_at TEXT NOT NULL,
+                    extractability_tier TEXT,
+                    has_faq_schema BOOLEAN,
+                    has_article_schema BOOLEAN,
+                    has_localbusiness_schema BOOLEAN,
+                    has_person_schema BOOLEAN,
+                    has_org_schema BOOLEAN,
+                    has_author_byline BOOLEAN,
+                    credential_count INTEGER,
+                    question_heading_count INTEGER,
+                    question_heading_ratio REAL,
+                    has_publish_date BOOLEAN,
+                    has_update_date BOOLEAN,
+                    present_signals TEXT,
+                    why_cited TEXT,
+                    caveat TEXT,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_geo_profiles_url ON geo_profiles(url)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_geo_profiles_run ON geo_profiles(run_id)')
+
             conn.commit()
 
     def create_run(self, client_domain: str) -> int:
@@ -247,6 +276,90 @@ class DatabaseManager:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (run_id, domain, url, keyword, traffic, medical, systems, label))
             conn.commit()
+
+    def save_geo_profile(self, run_id: int, profile: Any):
+        """SC-1: persist a GeoProfile for a competitor URL.
+
+        Accepts a src.geo_profiler.GeoProfile. present_signals is stored as a
+        JSON string. (Spec: suite_enhancement_spec_v1.md#SC-1)
+        """
+        s = profile.signals
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO geo_profiles (
+                    run_id, url, profiled_at, extractability_tier,
+                    has_faq_schema, has_article_schema, has_localbusiness_schema,
+                    has_person_schema, has_org_schema, has_author_byline,
+                    credential_count, question_heading_count, question_heading_ratio,
+                    has_publish_date, has_update_date, present_signals, why_cited, caveat)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                run_id, profile.url, profile.profiled_at, profile.extractability_tier,
+                s.get("has_faq_schema"), s.get("has_article_schema"),
+                s.get("has_localbusiness_schema"), s.get("has_person_schema"),
+                s.get("has_org_schema"), s.get("has_author_byline"),
+                len(s.get("matched_credentials", [])), s.get("question_heading_count"),
+                s.get("question_heading_ratio"), s.get("has_publish_date"),
+                s.get("has_update_date"), json.dumps(profile.present_signals),
+                profile.why_cited, profile.caveat,
+            ))
+            conn.commit()
+
+    # Finding 1 (P8) — carry-forward allowlist. Never interpolate an arbitrary
+    # table/column into SQL; only these structural-profile tables (keyed by the
+    # named column) may be carried forward for a cache-served URL/domain.
+    _CARRY_FORWARD_TABLES = {
+        "geo_profiles": "url",
+        "eeat_scores": "url",
+        "cluster_results": "domain",
+    }
+
+    def carry_forward_profile(self, table: str, match_col: str, match_val: str,
+                              run_id: int) -> bool:
+        """Copy the latest prior structural profile for a cached URL/domain into run_id.
+
+        Purpose: a re-run within the 7-day semantic-audit cache window must not blank
+                 the EEAT/GEO/cluster report sections. On a cache hit no page is
+                 re-scraped, so those engines cannot run; instead we re-associate the
+                 most recent prior row (from another run) with the current run_id.
+                 Honest — it reuses a real earlier scrape (original timestamps
+                 preserved), exactly as was_audited_recently reuses prior scores; it
+                 never fabricates a row.
+        Spec:    suite_enhancement_spec_SERPCOMPETE_v1.md#SC-1 (Finding 1 fix)
+        Tests:   tests/test_wiring.py::test_geo_carry_forward_populates_new_run_on_cache_hit
+
+        Returns True if a prior row was carried forward, False if none existed
+        (the caller counts the miss and surfaces it — see run_audit enrichment
+        coverage summary).
+        """
+        if self._CARRY_FORWARD_TABLES.get(table) != match_col:
+            raise ValueError(
+                f"carry_forward_profile: {table}.{match_col} not in allowlist"
+            )
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"PRAGMA table_info({table})")
+            cols = [row[1] for row in cursor.fetchall()]  # row[1] = column name
+            cursor.execute(
+                f"SELECT * FROM {table} WHERE {match_col} = ? AND run_id != ? "
+                f"ORDER BY id DESC LIMIT 1",
+                (match_val, run_id),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+            rowdict = dict(zip(cols, row))
+            rowdict["run_id"] = run_id  # re-point the copy at the current run
+            insert_cols = [c for c in cols if c != "id"]  # id is AUTOINCREMENT
+            placeholders = ", ".join("?" for _ in insert_cols)
+            cursor.execute(
+                f"INSERT INTO {table} ({', '.join(insert_cols)}) "
+                f"VALUES ({placeholders})",
+                [rowdict[c] for c in insert_cols],
+            )
+            conn.commit()
+            return True
 
     def save_competitor_metrics(self, metrics: List[Dict[str, Any]], run_id: int):
         with self._get_connection() as conn:

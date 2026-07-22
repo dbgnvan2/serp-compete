@@ -31,6 +31,7 @@ class ReportGenerator:
         df_clusters = pd.DataFrame()
         df_metrics = pd.DataFrame()
         df_magnets = pd.DataFrame()
+        df_geo = pd.DataFrame()
 
         if gsc_findings:
             report.append("\n## 📈 Internal GSC Performance Gaps")
@@ -194,6 +195,30 @@ class ReportGenerator:
                         label_str = f" [{v['systemic_label']}]" if v['systemic_label'] != 'Standard' else ""
                         report.append(f"- **{v['domain']}** ({v['primary_keyword']}): Medical Score {v['medical_score']}, Systems Score {v['systems_score']}{label_str}")
 
+            # 3b. GEO / Extractability — Why Competitors Get Cited (SC-1)
+            df_geo = pd.read_sql_query('''
+                SELECT url, extractability_tier, question_heading_count,
+                       present_signals, why_cited
+                FROM geo_profiles
+                WHERE run_id = ?
+                ORDER BY
+                    CASE extractability_tier
+                        WHEN 'Strong' THEN 0 WHEN 'Moderate' THEN 1
+                        WHEN 'Weak' THEN 2 ELSE 3 END, url
+                LIMIT 30
+            ''', conn, params=(run_id,))
+
+            if not df_geo.empty:
+                report.append("\n## GEO / Extractability — Why Competitors Get Cited")
+                report.append("Structural signals AI answer engines use to decide whether to quote a "
+                              "competitor page (schema markup, credentialed authorship, question-shaped "
+                              "headings, freshness). These explain *why* a page is citable — match or "
+                              "exceed them on the client's equivalent page.")
+                for _, g in df_geo.iterrows():
+                    report.append(f"- **{g['url']}** — _{g['extractability_tier']}_: {g['why_cited']}")
+                report.append("\n_Heuristic structural proxies for AI citability, not measured citations. "
+                              "Answer-first placement and FAQ-answers-in-HTML are not yet measured._")
+
             # 4. Strategic Openings & Reframes
             if reframes:
                 report.append("\n## 🎯 Automated Bowen Reframes")
@@ -224,6 +249,8 @@ class ReportGenerator:
                     df_eeat.to_excel(writer, sheet_name='EEAT Scores', index=False)
                 if not df_clusters.empty:
                     df_clusters.to_excel(writer, sheet_name='Cluster Analysis', index=False)
+                if not df_geo.empty:
+                    df_geo.to_excel(writer, sheet_name='GEO Extractability', index=False)
                 if reframes:
                     df_reframes = pd.DataFrame([{"keyword": r['keyword'], "url": r['url'], "reframe": r['reframe'][:500]} for r in reframes])
                     df_reframes.to_excel(writer, sheet_name='Automated Reframes', index=False)

@@ -7,7 +7,7 @@
     "framework": "Bowen Family Systems Theory"
   },
   "auth": {
-    "gsc_client_secrets": "/Users/davemini2/ProjectsLocal/serp-main/client_secret_275180378889-d0pki2mc14fq90eh4mo3hfsv1ubinnsc.apps.googleusercontent.com.json",
+    "gsc_client_secrets": "/Users/davemini2/ProjectsLocal/serp-compete/client_secret_275180378889-d0pki2mc14fq90eh4mo3hfsv1ubinnsc.apps.googleusercontent.com.json",
     "gsc_property_url": "https://www.livingsystems.ca/",
     "scopes": ["https://www.googleapis.com/auth/webmasters.readonly"]
   },
@@ -111,6 +111,14 @@
     "we conducted",
     "our findings"
   ],
+  "geo_signals": {
+    "interrogatives": [
+      "how", "what", "why", "when", "where", "who", "which",
+      "can", "does", "do", "is", "are", "should", "will"
+    ],
+    "strong_tier_min_signals": 3,
+    "moderate_tier_min_signals": 1
+  },
   "cluster_thresholds": {
     "hub_in_degree_threshold": 2,
     "min_pages_for_signal": 3
