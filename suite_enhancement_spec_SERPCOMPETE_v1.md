@@ -94,27 +94,39 @@ findings; the substantive one changed the design.
   printed as an "Enrichment coverage (fresh / carried-forward / cache-hit-no-prior
   / failed)" summary — a systematic failure or a fully cache-served run is now
   provable, not an indistinguishable empty section.
-- **Finding 2 — the wiring itself is not unit-tested (P10) — ⚠️ PARTIAL.** The
-  carry-forward and both `save_to_database` persistence paths are now unit-tested
-  (`tests/test_wiring.py`, incl. dirty-state cases). The full `run_audit` loop
-  (cache branch, `extraction_status` circuit-breaker) stays integration-only (needs
-  the DataForSEO/Moz/spaCy/OpenAI stack); its call signatures were verified by hand.
-  Follow-up: extract the per-page enrichment into a testable helper and monkeypatch
-  the loop.
+- **Finding 2 — the wiring itself is not unit-tested (P10) — ✅ FIXED.** The
+  fresh-scrape / cache-hit / cluster-gate decision logic was extracted from the
+  monolithic `run_audit()` into a new importable module `src/enrichment.py`
+  (`new_enrichment_stats`, `enrich_scraped_page`, `carry_forward_cached_page`,
+  `finalize_domain_cluster`); `main.py` now delegates to it. The wiring is now
+  unit-tested directly with a real DB + real engines + duck-typed pages, no
+  network/model stack (`tests/test_enrichment.py`, 9 tests). Only the outer SERP
+  loop (which pages get audited) remains integration-only.
 
-**Known limitation (follow-up).** A *mixed* domain on a re-run — some URLs
-cache-served, some freshly scraped — computes cluster detection over only the fresh
-subset and may under-count hubs (carry-forward triggers only when a domain has **no**
-fresh pages this run). Acceptable for now (the common re-run case is all-cached); a
-full fix persists per-page internal-link structure and recomputes, or merges the
-carried and fresh link graphs.
+**Finding 1 mixed-domain fix — ✅ FIXED.** A *mixed* domain on a re-run (some URLs
+cache-served, some freshly scraped) previously computed cluster detection over only
+the fresh subset and could under-count hubs. `finalize_domain_cluster` now computes
+fresh **only** when the whole domain was freshly scraped; if any page was
+cache-served it carries the latest **complete** prior cluster result forward instead
+(falling back to a best-effort partial compute only when no prior exists). Proven by
+`tests/test_enrichment.py::test_finalize_cluster_mixed_domain_prefers_carry_forward`.
+
+**Known limitation (residual, accepted).** A domain that keeps ≥1 cache hit on every
+run inside the 7-day audit window will always take the carry-forward branch and never
+*recompute* its cluster result, so `max_in_degree` / hub counts can go stale until the
+whole domain is next re-scraped. This is the deliberate, honest trade against the
+under-count bug, and matches the per-URL EEAT/GEO carry-forward semantics (same
+staleness). A future fix persists per-page internal-link structure so a mixed set can
+be fully recomputed.
 
 ## Verification
 
-Full local suite: **54 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
-— geo profiler, wire-up persistence, and cache-hit carry-forward all covered;
-`main.py` byte-compiles. The live `run_audit` path (DataForSEO / Moz / spaCy /
-OpenAI) remains integration-only and is not exercised end-to-end here.
+Full local suite: **63 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
+— geo profiler, wire-up persistence, cache-hit carry-forward, and the extracted
+enrichment wiring (fresh / cache-hit / mixed-domain cluster gate) all covered;
+`main.py` + `src/enrichment.py` byte-compile. The root v3 suite (`PYTHONPATH=Serp-compete
+pytest tests/ -q`) stays at **158 passing**. Only the outer SERP loop of `run_audit`
+(DataForSEO / Moz / spaCy / OpenAI) remains integration-only.
 
 ## Read first (this repo)
 
