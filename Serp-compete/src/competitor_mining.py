@@ -6,9 +6,11 @@ from typing import List, Set
 try:  # importable as a submodule: `from src.competitor_mining import derive_brand_name`
     from src.api_clients import DataForSEOClient
     from src.reframe_engine import ReframeEngine
+    from src.brand_utils import derive_brand_name
 except ImportError:  # run standalone: `python3 src/competitor_mining.py` (src/ is on sys.path)
     from api_clients import DataForSEOClient
     from reframe_engine import ReframeEngine
+    from brand_utils import derive_brand_name
 
 # Paths
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -34,15 +36,6 @@ def get_top_domains(path: str, limit: int = 5) -> List[str]:
     if 'total_keywords' in df.columns:
         df = df.sort_values(by='total_keywords', ascending=False)
     return df['domain'].head(limit).tolist()
-
-def derive_brand_name(domain: str) -> str:
-    """Extract 'jericho' from 'jerichocounselling.com'. None-safe (returns '')."""
-    name = str(domain or "").split('.')[0]
-    # Handle common counselor/counselling suffix removal
-    for suffix in ['counselling', 'counseling', 'therapy', 'counselor', 'counsellor', 'psychology']:
-        if name.endswith(suffix):
-            name = name[:-len(suffix)]
-    return name.lower()
 
 def contains_numbers(text: str) -> bool:
     return bool(re.search(r'\d', text))

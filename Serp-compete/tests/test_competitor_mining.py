@@ -5,16 +5,15 @@ Sweep finding F7 (root fix): the module used bare `from api_clients import ...` 
 disabled C1/C3 (they consume `derive_brand_name` from here) through their guarded
 try/except. The imports are now dual-mode (works both as `python3 src/competitor_mining.py`
 and as `from src.competitor_mining import ...`). These tests lock (a) that the module
-imports as `src.competitor_mining`, and (b) `derive_brand_name`'s behavior — so the run
-path and the standalone script share ONE brand-derivation implementation, no inlined copy
-to drift.
+imports as `src.competitor_mining`, and (b) that it re-exports the ONE canonical
+`derive_brand_name` (now in src/brand_utils.py) — so the run path and the standalone script
+share a single implementation, no inlined copy to drift. Full behavior of the brand function
+lives in test_brand_utils.py.
 """
 import importlib
 import os
 import subprocess
 import sys
-
-import pytest
 
 
 def test_f7_competitor_mining_importable_as_submodule():
@@ -25,19 +24,14 @@ def test_f7_competitor_mining_importable_as_submodule():
     assert hasattr(mod, "derive_brand_name")
 
 
-@pytest.mark.parametrize("domain,expected", [
-    ("jerichocounselling.com", "jericho"),   # 'counselling' suffix stripped
-    ("bowentherapy.org", "bowen"),           # 'therapy' suffix stripped
-    ("theravive.com", "theravive"),          # no suffix → domain stem
-    ("SomePractice.CA", "somepractice"),     # lowercased
-    (None, ""),                               # None-safe (was a crash before the fix)
-    ("", ""),
-])
-def test_f7_derive_brand_name(domain, expected):
-    """The one canonical brand-derivation used by both the offline script and the run
-    path (C1 SoV / C3 branded-demand)."""
+def test_f7_derive_brand_name_is_reexport_of_canonical():
+    """competitor_mining must re-export the SAME brand_utils.derive_brand_name object (so
+    existing `from src.competitor_mining import derive_brand_name` callers keep working and
+    no duplicate copy can drift). Behavior itself is covered in test_brand_utils.py."""
     from src.competitor_mining import derive_brand_name
-    assert derive_brand_name(domain) == expected
+    from src.brand_utils import derive_brand_name as canonical
+    assert derive_brand_name is canonical                       # same object, not a fork
+    assert derive_brand_name("jerichocounselling.com") == "jericho"
 
 
 def test_f7_standalone_fallback_import_branch():

@@ -140,6 +140,10 @@
     "export_path": null,
     "framework_caption": "AI Share-of-Voice is CONSUMED from serp-discover's AI-visibility probes (not re-probed here). Values are rolling snapshots — LLM answers vary between runs and model versions."
   },
+  "brand": {
+    "_comment": "Practice-name suffixes stripped from a domain stem to derive a bare brand token (e.g. 'jerichocounselling' -> 'jericho'). Shared by C1 AI Share-of-Voice and C3 Branded-Demand; matched case-insensitively. Distinct from branded_demand.generic_brand_prune, which drops a derived brand that is itself a generic word.",
+    "name_suffixes": ["counselling", "counseling", "therapy", "counselor", "counsellor", "psychology"]
+  },
   "branded_demand": {
     "branded_modifiers": ["reviews", "pricing", "login", "cost", "vs"],
     "generic_brand_prune": ["therapy", "counselling", "counseling", "psychology", "health", "wellness"],

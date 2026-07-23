@@ -121,7 +121,7 @@ be fully recomputed.
 
 ## Verification
 
-Full local suite: **147 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
+Full local suite: **156 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
 — geo profiler, wire-up + cache-hit carry-forward, the extracted enrichment wiring, the
 **SC-6 SERP-overlap matrix**, **SC-4 barbell positioning**, **SC-3 AI share-of-voice**,
 **SC-5 branded-demand benchmark**, and **SC-8 reputation-risk radar** all covered; modules
@@ -152,6 +152,18 @@ migrated via `ALTER TABLE … ADD COLUMN` in the migrations block, locked by a d
 **F2 (P12, MED)** — the extraction unified all DA reads to a `0` default, but C2 authority must
 receive `None` for a missing client DA (compute_authority *excludes* it, never scores it as 0);
 restored the `None` default for C2 only (C4 still uses `0`), with a regression test.
+
+The F7 sweep also flagged **two LOW pre-existing adjacent risks, now both fixed** (see
+`LEARNINGS.md` fix log): **(P13)** the five comparison-feature compute-imports sat *outside* the
+per-feature `try` guards, so one bad import would abort all five and error the unguarded caller —
+each import now lives inside its own guard, proved by a test that forces one feature's import to
+fail and asserts the other four still persist. **(P7/P4)** `derive_brand_name` stripped suffixes
+case-sensitively (`JerichoCounselling.com` mis-derived) with a hardcoded vocab — it was extracted
+to the **dependency-free** `src/brand_utils.py` (so the shared import can't drag heavy deps into
+the guard-scope fix), lower-cases before stripping, and reads its suffix vocab from
+`shared_config.json → brand.name_suffixes` (`competitor_mining.py` re-exports the one canonical
+copy). Suite grew 147 → 156 (brand_utils behavior + case-insensitivity + config override + the
+P13 isolation test).
 
 ## Read first (this repo)
 

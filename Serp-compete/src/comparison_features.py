@@ -23,21 +23,18 @@ from typing import Any, Dict
 def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
                             client_domain: str, competitor_keywords: Dict[str, Any],
                             gsc: Any, dfs_client: Any, project_root: str) -> Dict[str, Any]:
-    """Run C4/C2/C1/C3/C6 and persist their outputs. Never raises — each feature is
-    guarded so a failure degrades to an empty section, never a broken audit."""
-    from src.serp_overlap import analyze_serp_overlap
-    from src.positioning import compute_positioning, classify_query_tiers
-    from src.sov_analyzer import find_av_export, load_av_export, compute_sov
-    from src.brand_demand import compute_branded_demand
-    from src.risk_radar import compute_risk_signals
-    # F7 root fix: competitor_mining's bare imports are now dual-mode, so it's importable
-    # as a submodule — the run path uses the ONE canonical derive_brand_name (no inlined
-    # copy to drift). Lazy import keeps the offline script's pandas/API deps off the hot path
-    # until this function actually runs (where main.py has already loaded them).
-    from src.competitor_mining import derive_brand_name
+    """Run C4/C2/C1/C3/C6 and persist their outputs. Never raises — each feature (including
+    its own module import) is guarded, so any one failure degrades to an empty section rather
+    than aborting the others or the audit."""
+    # Each feature's compute-import is done INSIDE its own try/guard below (P13): if a module
+    # fails to import, only that one feature degrades — not all five. derive_brand_name is the
+    # exception: it's a dependency-free helper (no pandas/API-client deps, so its import can't
+    # trip that failure mode) and both C1 and C3 need it, so it's imported once here.
+    from src.brand_utils import derive_brand_name
 
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     client_da = shared_config.get("client", {}).get("da", 0)
+    brand_suffixes = shared_config.get("brand", {}).get("name_suffixes")  # None → helper default
     domains = list(competitor_keywords.keys())
     summary: Dict[str, Any] = {}
 
@@ -47,6 +44,7 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
 
     # C4 / SC-6: SERP Overlap & Differentiation Gap.
     try:
+        from src.serp_overlap import analyze_serp_overlap
         overlap = analyze_serp_overlap(
             competitor_positions=db.get_competitor_positions(run_id),
             client_positions=client_positions, competitor_keywords=competitor_keywords,
@@ -70,6 +68,7 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
 
     # C2 / SC-4: Barbell Positioning Diagnostic (client always plotted).
     try:
+        from src.positioning import compute_positioning, classify_query_tiers
         comp_inputs = db.get_positioning_inputs(run_id)
         client_med, client_sys = classify_query_tiers(
             list(client_positions.keys()), shared_config.get("clinical", {}))
@@ -92,10 +91,11 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
 
     # C1 / SC-3: AI Answer Share-of-Voice — CONSUME serp-discover's export (no probing).
     try:
+        from src.sov_analyzer import find_av_export, load_av_export, compute_sov
         export_path = find_av_export(project_root, shared_config)
         sov = compute_sov(load_av_export(export_path), competitor_domains=domains,
                           snapshot_date=today,
-                          competitor_brands=[derive_brand_name(d) for d in domains])
+                          competitor_brands=[derive_brand_name(d, brand_suffixes) for d in domains])
         summary["sov_available"] = sov["data_available"]
         if sov["data_available"]:
             db.save_sov(run_id, sov["rows"])
@@ -110,10 +110,11 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
 
     # C3 / SC-5: Branded-Demand Competitive Benchmark.
     try:
-        brand_by_domain = {d: derive_brand_name(d) for d in domains}
+        from src.brand_demand import compute_branded_demand
+        brand_by_domain = {d: derive_brand_name(d, brand_suffixes) for d in domains}
         client_brands = shared_config.get("client", {}).get("brand_names") or []
         brand_by_domain[client_domain] = (client_brands[0] if client_brands
-                                          else derive_brand_name(client_domain))
+                                          else derive_brand_name(client_domain, brand_suffixes))
         bd_rows = compute_branded_demand(
             brand_by_domain, dfs_client.get_search_volume, shared_config.get("branded_demand", {}),
             period=datetime.datetime.now().strftime("%Y-%m"),
@@ -126,6 +127,7 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
 
     # C6 / SC-8: Reputation-Risk Radar (pattern detections, not confirmed penalties).
     try:
+        from src.risk_radar import compute_risk_signals
         series_by_domain = {d: db.get_visibility_series(d) for d in domains}
         series_by_domain[client_domain] = db.get_visibility_series(client_domain)
         risk_rows = compute_risk_signals(

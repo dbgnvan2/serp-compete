@@ -6,6 +6,7 @@ seeded DB + fake GSC/DataForSEO clients + a fixture AV export, and asserts every
 persisted — so removing any wiring now fails a test.
 """
 import json
+import sys
 
 from src.database import DatabaseManager
 from src.comparison_features import run_comparison_features
@@ -90,3 +91,39 @@ def test_f2_client_moz_da_none_when_da_absent(tmp_path):
                            "WHERE run_id=? AND is_client=1", (run_id,)).fetchone()
     assert row is not None                        # client is always plotted (SC-4.1)
     assert json.loads(row[0])["moz_da"] is None    # excluded, not coerced to 0
+
+
+def test_p13_one_feature_import_failure_degrades_only_that_feature(tmp_path, monkeypatch):
+    """Adjacent-fix #1 (P13): each feature's compute-import now sits INSIDE its own try/guard,
+    so a module that fails to import degrades ONLY that feature — the other four still persist,
+    and the function never raises to its (unguarded) caller. Simulate risk_radar (C6) failing
+    to import; C4/C2/C1/C3 must be unaffected and C6 simply produces nothing."""
+    db = DatabaseManager(str(tmp_path / "p13.db"))
+    run_id = db.create_run("livingsystems.ca")
+    db.save_competitor_metrics([
+        {"domain": "comp.com", "url": "https://comp.com/therapy/a", "keyword": "couples therapy", "position": 3, "traffic": 100},
+        {"domain": "comp.com", "url": "https://comp.com/casino/b", "keyword": "best casino bonus", "position": 2, "traffic": 50},
+    ], run_id)
+    db.save_traffic_magnet(run_id, "comp.com", "https://comp.com/therapy/a", "couples therapy", 100, 10, 5, label="Standard")
+    db.save_competitor_summary("comp.com", 40)
+    (tmp_path / "ai_visibility_export_lsc_20260722.json").write_text(json.dumps(AV_EXPORT))
+
+    # Force `from src.risk_radar import compute_risk_signals` (inside C6's guard) to raise
+    # ImportError — setting a module to None in sys.modules makes the import fail.
+    monkeypatch.setitem(sys.modules, "src.risk_radar", None)
+
+    competitor_keywords = {"comp.com": {"couples therapy", "best casino bonus"}}
+    summary = run_comparison_features(db, run_id, SHARED_CONFIG, "livingsystems.ca",
+                                      competitor_keywords, _FakeGsc(), _FakeDfs(), str(tmp_path))
+
+    def count(table):
+        with db._get_connection() as conn:
+            return conn.execute(f"SELECT COUNT(*) FROM {table} WHERE run_id=?",
+                                (run_id,)).fetchone()[0]
+
+    assert count("serp_overlap") > 0        # C4 unaffected by C6's import failure
+    assert count("positioning") > 0         # C2 unaffected
+    assert count("sov_daily") > 0           # C1 unaffected
+    assert count("brand_demand_bench") > 0  # C3 unaffected
+    assert count("risk_signal") == 0        # C6 degraded to empty — but no crash, others survived
+    assert "risk_rows" not in summary       # C6 never reached its summary write
