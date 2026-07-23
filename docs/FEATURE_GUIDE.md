@@ -295,6 +295,45 @@ and the danger-zone middle flagged) and the *Positioning* Excel sheet.
 > breadth. You're always plotted, but since Search Console (not a page audit) feeds your
 > own axes, a run without GSC leaves you `insufficient_data` rather than mis-placed.
 
+### 4.6 AI Answer Share-of-Voice — whose brand the models return  ⭐ newest
+**What it does:** consumes serp-discover's AI-visibility probes (it does *not* re-ask the
+models here) and, per engine (Gemini / ChatGPT / Perplexity / …), computes what share of
+brand mentions and cited sources are yours vs each competitor's vs "other," plus
+per-competitor sentiment and a "cited but you're not" gap list.
+
+**What it lets you understand:** who wins the *AI answer*, not just the blue links. When
+someone asks an engine a category question, is your brand named and your site cited, or are
+competitors taking the airtime? The gap list shows which competitor domains an engine trusts
+but never cites you alongside.
+
+**What you can then do:** focus your GEO/citation work (§3.4) on the engines where your
+mention-share is low, and treat the "cited but you're not" domains as coverage/outreach targets.
+
+**Where you see it:** the *Competitive AI Share-of-Voice* section (per-engine leaderboards +
+gaps) and the *AI Share-of-Voice* Excel sheet.
+
+> **Read it honestly:** rolling snapshots — LLM answers swing between runs and model versions.
+> If serp-discover hasn't produced an AI-visibility export, the section is simply absent (not zero).
+
+### 4.7 Branded-Demand Benchmark — how your brand pull compares  ⭐ newest
+**What it does:** estimates each competitor's *branded* search demand (searches for
+"<brand>", "<brand> reviews/pricing/…") from public search volume, and ranks you against them
+by branded volume, share, and growth.
+
+**What it lets you understand:** the strength of each brand's *pull* — how many people already
+search for them by name. Branded demand is a lead indicator of market presence that on-page
+SEO can't fake.
+
+**What you can then do:** see whether you compete on brand or only on generic keywords, and
+spot competitors whose branded demand is growing fast (rising threats) or shrinking (gaps).
+
+**Where you see it:** the *Branded-Demand Benchmark* section (you ⭐ vs competitors) and the
+*Branded Demand* Excel sheet.
+
+> **Read it honestly:** competitor figures are *search-volume estimates*, not click-measured
+> (only your own can be GSC-anchored, when that export exists). Generic brand names are pruned
+> rather than guessed; if the volume source is down for a run, the section says so, not zeros.
+
 ## 5. Movement-over-time features (longitudinal memory)
 
 Each run records a snapshot, so later runs can compare against earlier ones.
@@ -323,6 +362,26 @@ authority is dropping, to overtake them on the way down.
 Alerts: Fragile Magnets*.
 
 ---
+
+### 5.3 Reputation-Risk Radar — penalty-pattern early warning  ⭐ newest
+**What it does:** scans for patterns Google is known to act on — a sudden visibility collapse
+(`visibility_cliff`), an off-topic *commercial* subfolder on an otherwise on-topic domain
+(`parasite_subfolder` / site-reputation abuse), and ranking volatility — and separates **your
+own-site warnings** from competitor intel.
+
+**What it lets you understand:** risk and timing. A competitor whose visibility just cliffed
+is a moment to strike; a parasite subfolder is a rival doing something Google may penalize. On
+your own site, the same signals are early warnings.
+
+**What you can then do:** fix own-site warnings first (before a penalty lands), and treat
+competitor cliffs as windows to publish and overtake.
+
+**Where you see it:** the *Reputation-Risk Radar* section (own-site warnings first, then
+competitor signals) and the *Reputation Risk* Excel sheet.
+
+> **Read it honestly:** these are **pattern detections, not confirmed Google penalties**. A
+> parasite flag needs both topical mismatch *and* commercial-intent keywords (the subfolder's
+> name alone never triggers one); a cliff is measured against a recent window, not all-time.
 
 ## 6. Action features (drafting help)
 
@@ -376,7 +435,7 @@ and `audit_results_run_12.xlsx`).
 
 ### 8.2 Excel workbook — sheet-by-sheet
 `Competitor Summary` · `Traffic Magnets` · `EEAT Scores` · `Cluster Analysis` ·
-`GEO Extractability` · `SERP Overlap` · `Feasibility` · `Positioning` · `Automated Reframes` · `AI Usage Stats`. Each sheet is the
+`GEO Extractability` · `SERP Overlap` · `Feasibility` · `Positioning` · `AI Share-of-Voice` · `Branded Demand` · `Reputation Risk` · `Automated Reframes` · `AI Usage Stats`. Each sheet is the
 tabular form of the matching briefing section — use it to sort/filter (e.g. sort
 *GEO Extractability* by tier, or *Traffic Magnets* by traffic) and to paste into a
 content plan. A sheet only appears if that run produced data for it.
@@ -406,11 +465,16 @@ content plan. A sheet only appears if that run produced data for it.
   language-tier concentration (medical vs. systems), not topic breadth; and because
   your own axes come from GSC (not a page audit), a run without GSC marks you
   `insufficient_data` rather than mis-plotting you.
+- **AI-era comparison features are consumed/estimated, honestly labelled.** AI Share-of-Voice
+  is a rolling snapshot consumed from serp-discover (absent when there's no export, never
+  zero); Branded-Demand competitor figures are search-volume estimates (only your own can be
+  GSC-anchored) and say so when the source is down; Reputation-Risk items are *pattern
+  detections, not confirmed Google penalties*.
 - **Reframes are AI-drafted scaffolds**, not clinical copy — always apply your own
   judgement.
 
 ---
 
-*This guide describes the behaviour shipped in the code as of the C2/SC-4 (Barbell
-Positioning) release. If a feature's behaviour changes, update this file alongside
-`suite_enhancement_spec_SERPCOMPETE_v1.md`.*
+*This guide describes the behaviour shipped in the code as of the C1/C3/C6 (AI
+Share-of-Voice, Branded Demand, Reputation Risk) release. If a feature's behaviour changes,
+update this file alongside `suite_enhancement_spec_SERPCOMPETE_v1.md`.*

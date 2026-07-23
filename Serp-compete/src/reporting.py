@@ -35,6 +35,9 @@ class ReportGenerator:
         df_overlap = pd.DataFrame()
         df_feasibility = pd.DataFrame()
         df_positioning = pd.DataFrame()
+        df_sov = pd.DataFrame()
+        df_brand = pd.DataFrame()
+        df_risk = pd.DataFrame()
 
         if gsc_findings:
             report.append("\n## 📈 Internal GSC Performance Gaps")
@@ -321,6 +324,83 @@ class ReportGenerator:
                     report.append("\n⚠️ **Danger zone (undifferentiated middle):** "
                                   + ", ".join(mid['domain'].tolist()) + ".")
 
+            # 3f. Competitive AI Share-of-Voice (C1 / SC-3)
+            df_sov = pd.read_sql_query('''
+                SELECT engine, entity, entity_type, is_client, category,
+                       mention_share, citation_share, avg_sentiment
+                FROM sov_daily WHERE run_id = ?
+            ''', conn, params=(run_id,))
+
+            if not df_sov.empty:
+                report.append("\n## Competitive AI Share-of-Voice")
+                report.append("When the AI engines answer category questions, whose brand and "
+                              "sources come back. Consumed from serp-discover's AI-visibility "
+                              "probes (not re-probed here). _Rolling snapshots — LLM answers vary._")
+                for engine in sorted(df_sov['engine'].dropna().unique()):
+                    eng = df_sov[df_sov['engine'] == engine]
+                    report.append(f"\n### {engine}")
+                    men = eng[(eng['entity_type'] == 'brand') & (eng['category'] != 'other')]
+                    men = men.sort_values('mention_share', ascending=False).head(10)
+                    if not men.empty:
+                        report.append("**Mention share:** " + ", ".join(
+                            f"{r['entity']}{' (you)' if r['is_client'] else ''} "
+                            f"{(r['mention_share'] or 0):.0f}%" for _, r in men.iterrows()))
+                    client_cited = bool(((eng['entity_type'] == 'domain') & (eng['is_client'] == 1) &
+                                         (eng['citation_share'] > 0)).any())
+                    comp_cites = eng[(eng['entity_type'] == 'domain') &
+                                     (eng['category'] == 'competitor') & (eng['citation_share'] > 0)]
+                    if not comp_cites.empty and not client_cited:
+                        report.append("⚔️ **Cited but you're not:** "
+                                      + ", ".join(sorted(comp_cites['entity'].dropna().unique())))
+
+            # 3g. Branded-Demand Benchmark (C3 / SC-5)
+            df_brand = pd.read_sql_query('''
+                SELECT domain, brand, branded_search_volume, branded_volume_share,
+                       branded_growth, est_branded_click_share, estimation_basis
+                FROM brand_demand_bench WHERE run_id = ?
+                ORDER BY branded_search_volume DESC
+            ''', conn, params=(run_id,))
+
+            if not df_brand.empty:
+                report.append("\n## Branded-Demand Benchmark")
+                report.append("Brand-search demand, you vs competitors, estimated from public "
+                              "search volume. _Competitor figures are volume-estimated (not "
+                              "click-measured); your own figure is GSC-anchored when the "
+                              "serp-discover D2 export is available — see `estimation_basis`._")
+                if (df_brand['estimation_basis'] == 'volume_unavailable').any():
+                    report.append("\n> ⚠️ **Search-volume source returned nothing this run** — the "
+                                  "figures below are unavailable (likely a DataForSEO outage), not "
+                                  "zero demand.")
+                disp = df_brand.copy()
+                disp['brand'] = disp.apply(
+                    lambda r: (f"⭐ {r['brand']} (you)" if r['domain'] == client_domain
+                               else r['brand']), axis=1)   # own row identifiable regardless of anchor
+                report.append(disp.to_markdown(index=False))
+
+            # 3h. Reputation-Risk Radar (C6 / SC-8)
+            df_risk = pd.read_sql_query('''
+                SELECT domain, is_own_site, signal_type, severity, evidence_json
+                FROM risk_signal WHERE run_id = ?
+                ORDER BY is_own_site DESC,
+                    CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, domain
+            ''', conn, params=(run_id,))
+
+            if not df_risk.empty:
+                report.append("\n## Reputation-Risk Radar")
+                report.append("Patterns Google is known to penalize — visibility cliffs, off-topic "
+                              "commercial subfolders (site-reputation abuse), ranking volatility. "
+                              "_**Pattern detections, not confirmed Google penalties.**_")
+                own = df_risk[df_risk['is_own_site'] == 1]
+                if not own.empty:
+                    report.append("\n### ⚠️ Own-site warnings")
+                    for _, r in own.iterrows():
+                        report.append(f"- **{r['signal_type']}** ({r['severity']}) on "
+                                      f"{r['domain']}: {r['evidence_json']}")
+                comp = df_risk[df_risk['is_own_site'] == 0]
+                if not comp.empty:
+                    report.append("\n### 🔎 Competitor risk signals (opportunity intel)")
+                    report.append(comp[['domain', 'signal_type', 'severity']].to_markdown(index=False))
+
             # 4. Strategic Openings & Reframes
             if reframes:
                 report.append("\n## 🎯 Automated Bowen Reframes")
@@ -359,6 +439,12 @@ class ReportGenerator:
                     df_feasibility.to_excel(writer, sheet_name='Feasibility', index=False)
                 if not df_positioning.empty:
                     df_positioning.to_excel(writer, sheet_name='Positioning', index=False)
+                if not df_sov.empty:
+                    df_sov.to_excel(writer, sheet_name='AI Share-of-Voice', index=False)
+                if not df_brand.empty:
+                    df_brand.to_excel(writer, sheet_name='Branded Demand', index=False)
+                if not df_risk.empty:
+                    df_risk.to_excel(writer, sheet_name='Reputation Risk', index=False)
                 if reframes:
                     df_reframes = pd.DataFrame([{"keyword": r['keyword'], "url": r['url'], "reframe": r['reframe'][:500]} for r in reframes])
                     df_reframes.to_excel(writer, sheet_name='Automated Reframes', index=False)

@@ -22,8 +22,11 @@ All specification requirements for Tool 2 v3 have been implemented and tested:
 > matrix + the previously-unwired `AnalysisEngine.find_keyword_intersection`/
 > `check_feasibility`, new `serp_overlap` + `competitor_feasibility` tables); **SC-4** —
 > Barbell Positioning Diagnostic (shipped: authority×focus 2×2, new `positioning` table;
-> also wires competitor-DA persistence, which repairs C4 feasibility). The core suite
-> beside the source is now **106 passing**; this v3 root suite (`tests/`) remains **158/158**.
+> also wires competitor-DA persistence, which repairs C4 feasibility); **SC-3** — AI Answer
+> Share-of-Voice (consumes serp-discover's AI-visibility export; `sov_daily`); **SC-5** —
+> Branded-Demand Benchmark (`brand_demand_bench`); **SC-8** — Reputation-Risk Radar
+> (`risk_signal`). The core suite beside the source is now **135 passing**; this v3 root
+> suite (`tests/`) remains **158/158**.
 
 ---
 

@@ -539,6 +539,68 @@ def run_audit():
     except Exception as pos_err:
         print(f"⚠️ Positioning analysis skipped: {pos_err}")
 
+    # C1 / SC-3: AI Answer Share-of-Voice — CONSUME serp-discover's AI-visibility export
+    # (no probing here; the single AI-probe runner lives in serp-discover). Computes
+    # per-engine mention/citation share vs the run's competitors + a cited-but-you're-not
+    # gap list. Absent export → data_available:false (the section just doesn't render).
+    try:
+        from src.sov_analyzer import find_av_export, load_av_export, compute_sov
+        from src.competitor_mining import derive_brand_name
+        export_path = find_av_export(PROJECT_ROOT, shared_config)
+        sov = compute_sov(load_av_export(export_path),
+                          competitor_domains=list(competitor_keywords.keys()),
+                          snapshot_date=datetime.datetime.now().strftime("%Y-%m-%d"),
+                          competitor_brands=[derive_brand_name(d) for d in competitor_keywords.keys()])
+        if sov["data_available"]:
+            db.save_sov(run_id, sov["rows"])
+            print(f"   📣 AI Share-of-Voice: {len(sov['rows'])} entity rows, "
+                  f"{len(sov['gaps'])} cited-but-you're-not gaps "
+                  f"(from {os.path.basename(export_path) if export_path else '?'}).")
+        else:
+            print("   ℹ️ AI Share-of-Voice: no serp-discover AI-visibility export found — skipped.")
+    except Exception as sov_err:
+        print(f"⚠️ AI Share-of-Voice analysis skipped: {sov_err}")
+
+    # C3 / SC-5: Branded-Demand Competitive Benchmark — estimate each competitor's
+    # brand-search demand from public search volume (live DataForSEO; graceful zero when
+    # unavailable). The client's own figure is GSC-anchored (serp-discover D2) when that
+    # export exists — otherwise NULL, labelled, so own vs estimated stay distinct.
+    try:
+        from src.brand_demand import compute_branded_demand
+        from src.competitor_mining import derive_brand_name
+        bd_cfg = shared_config.get("branded_demand", {})
+        brand_by_domain = {d: derive_brand_name(d) for d in competitor_keywords.keys()}
+        client_brands = shared_config.get("client", {}).get("brand_names") or []
+        brand_by_domain[client_domain] = (client_brands[0] if client_brands
+                                          else derive_brand_name(client_domain))
+        bd_rows = compute_branded_demand(
+            brand_by_domain, dfs_client.get_search_volume, bd_cfg,
+            period=datetime.datetime.now().strftime("%Y-%m"),
+            own_domain=client_domain, own_anchor=None)
+        db.save_brand_demand(run_id, bd_rows)
+        print(f"   💷 Branded demand: {len(bd_rows)} brands benchmarked.")
+    except Exception as bd_err:
+        print(f"⚠️ Branded-demand benchmark skipped: {bd_err}")
+
+    # C6 / SC-8: Reputation-Risk Radar — visibility cliffs, parasite/affiliate subfolders,
+    # and ranking volatility, as PATTERN DETECTIONS (not confirmed Google penalties).
+    # Own-site signals are separated from competitor intel.
+    try:
+        from src.risk_radar import compute_risk_signals
+        series_by_domain = {d: db.get_visibility_series(d) for d in competitor_keywords.keys()}
+        series_by_domain[client_domain] = db.get_visibility_series(client_domain)
+        risk_rows = compute_risk_signals(
+            volatility_alerts=db.get_volatility_alerts(run_id),
+            series_by_domain=series_by_domain,
+            parasite_candidates=db.get_parasite_candidates(run_id),
+            own_domain=client_domain, config=shared_config.get("risk_signals", {}))
+        db.save_risk_signals(run_id, risk_rows,
+                             detected_at=datetime.datetime.now().strftime("%Y-%m-%d"))
+        own_risks = sum(1 for r in risk_rows if r["is_own_site"])
+        print(f"   🚨 Reputation risk: {len(risk_rows)} signals ({own_risks} own-site).")
+    except Exception as risk_err:
+        print(f"⚠️ Reputation-risk radar skipped: {risk_err}")
+
     # Strategic Logic with PAA context from Handover
     print("Identifying Strategic Openings...")
     openings = db.identify_strategic_openings(run_id)

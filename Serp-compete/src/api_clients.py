@@ -1,6 +1,7 @@
 import requests
 import json
 import os
+import time
 import base64
 from typing import List, Dict, Any
 from dotenv import load_dotenv
@@ -28,7 +29,8 @@ class DataForSEOClient:
         response = requests.post(
             url, 
             auth=(self.login, self.password),
-            json=payload
+            json=payload,
+            timeout=30
         )
         
         if response.status_code != 200:
@@ -54,6 +56,41 @@ class DataForSEOClient:
             
         return items
 
+    def get_search_volume(self, keywords: List[str]) -> Dict[str, Dict[str, Any]]:
+        """C3/SC-5: monthly + current search volume for a keyword list.
+
+        POST .../keywords_data/google_ads/search_volume/live. Hardened (timeout +
+        one retry). Returns {keyword_lower: {'search_volume': int, 'monthly_searches':
+        [...]}}; {} on any failure (the caller degrades to zero volume, never crashes).
+        This is a live external call — mocked in tests (integration-only otherwise).
+        """
+        if not keywords:
+            return {}
+        url = f"{self.base_url}/keywords_data/google_ads/search_volume/live"
+        payload = [{"keywords": [str(k) for k in keywords][:1000],
+                    "location_code": 2124, "language_code": "en"}]
+        for attempt in range(3):
+            try:
+                response = requests.post(url, auth=(self.login, self.password),
+                                         json=payload, timeout=30)
+                if response.status_code != 200:
+                    print(f"DataForSEO search_volume error: {response.status_code}")
+                    time.sleep(1.5 * (attempt + 1))  # backoff before retry (429-friendly)
+                    continue
+                data = response.json()
+                result = (data.get('tasks') or [{}])[0].get('result') or []
+                out: Dict[str, Dict[str, Any]] = {}
+                for item in result:
+                    kw = str(item.get('keyword') or '').lower()
+                    if kw:
+                        out[kw] = {'search_volume': item.get('search_volume') or 0,
+                                   'monthly_searches': item.get('monthly_searches') or []}
+                return out
+            except requests.RequestException as e:
+                print(f"DataForSEO search_volume attempt {attempt + 1} failed: {e}")
+                time.sleep(1.5 * (attempt + 1))
+        return {}
+
     def get_top_pages(self, domain: str, limit: int = 20) -> List[Dict[str, Any]]:
         """
         POST https://api.dataforseo.com/v3/dataforseo_labs/google/relevant_pages/live
@@ -70,7 +107,8 @@ class DataForSEOClient:
         response = requests.post(
             url, 
             auth=(self.login, self.password),
-            json=payload
+            json=payload,
+            timeout=30
         )
         
         if response.status_code != 200:
@@ -117,7 +155,8 @@ class DataForSEOClient:
         response = requests.post(
             url, 
             auth=(self.login, self.password),
-            json=payload
+            json=payload,
+            timeout=30
         )
         
         if response.status_code != 200:
@@ -148,7 +187,7 @@ class MozClient:
         }
         payload = {"targets": urls}
         
-        response = requests.post(url, headers=headers, json=payload)
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
         
         if response.status_code != 200:
             # If 401, maybe token is not base64 encoded or is invalid

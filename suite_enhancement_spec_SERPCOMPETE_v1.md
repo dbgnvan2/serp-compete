@@ -121,13 +121,14 @@ be fully recomputed.
 
 ## Verification
 
-Full local suite: **106 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
-— geo profiler, wire-up persistence, cache-hit carry-forward, the extracted enrichment
-wiring, the **SC-6 SERP-overlap matrix**, and the **SC-4 barbell positioning** (authority
-/ focus axes, quadrant assignment incl. emerging/insufficient guards, the DA-persistence
-path, DB readers) all covered; modules byte-compile. The root v3 suite
-(`PYTHONPATH=Serp-compete pytest tests/ -q`) stays at **158 passing**. Only the outer
-SERP loop of `run_audit` (DataForSEO / Moz / spaCy / OpenAI) remains integration-only.
+Full local suite: **135 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
+— geo profiler, wire-up + cache-hit carry-forward, the extracted enrichment wiring, the
+**SC-6 SERP-overlap matrix**, **SC-4 barbell positioning**, **SC-3 AI share-of-voice**,
+**SC-5 branded-demand benchmark**, and **SC-8 reputation-risk radar** all covered; modules
+byte-compile. The root v3 suite (`PYTHONPATH=Serp-compete pytest tests/ -q`) stays at
+**158 passing**. The `run_audit` **assembly** of the comparison features (which glues the
+tested compute + persistence units) is integration-only, as are the live DataForSEO /
+serp-discover-export inputs — flagged, not implied-covered.
 
 ## Read first (this repo)
 
@@ -281,6 +282,63 @@ transparency). The keyword universe is "who ranked" (competitors' + the client's
 keywords), so the `absent` cell only becomes reachable if a full target-keyword list
 is later plumbed in. `commodity_score` is a local overlap-density proxy until the
 serp-discover D4 commodity export exists (soft dependency, plan §12.4).
+
+---
+
+## SC-3 — AI Answer Share-of-Voice  · **✅ SHIPPED** · consume, don't re-probe
+
+**What shipped.** `src/sov_analyzer.py` CONSUMES serp-discover's AI-visibility export
+(`brand_mentions` + `ai_citations` + `answer_sentiment`, the last added by extending the
+Phase-0 export) — no probing here. Per engine it computes mention share, citation share,
+per-competitor sentiment (SC-3.4, from that competitor's own rows only), and a
+"cited-but-you're-not" gap; shares within an engine sum to ~100% (unlisted → "other"). New
+`sov_daily` table + `db.save_sov`; report section + Excel. Absent export →
+`data_available:false` (section skipped). Consumer-selection contract honoured (newest
+`data_available:true` by `source_run_ts`).
+
+**Acceptance criteria.** SC-3.1 `test_sc31_mention_shares_sum_to_100_per_engine`;
+SC-3.2 `test_sc32_missing_engine_does_not_block_others`; SC-3.3
+`test_sc33_recompute_on_added_competitor_no_reprobe`; SC-3.4 `test_sc34_sentiment_is_scoped_per_competitor`.
+**Review-driven fix.** A competitor *mentioned* but not *cited* was hidden in "other"
+(brand→domain came only from citations); `compute_sov` now also matches mentions by
+competitor brand name.
+
+---
+
+## SC-5 — Branded-Demand Competitive Benchmark  · **✅ SHIPPED**
+
+**What shipped.** `src/brand_demand.py`: per competitor, expand a branded query set (brand +
+config modifiers), sum DataForSEO search volume (new hardened
+`DataForSEOClient.get_search_volume`), compute share + equal-window growth. Generic brand
+names are pruned (SC-5.4), never guessed. The client's own row is GSC-anchored (serp-discover
+D2) when that export exists — a soft dep not yet available, so `est_branded_click_share` is
+NULL/labelled and the report identifies the own row by domain. New `brand_demand_bench`
+table + `db.save_brand_demand`; report + Excel.
+
+**Acceptance criteria.** SC-5.1 `test_sc51_own_vs_estimated_labeling`; SC-5.2 `test_sc52_*`;
+SC-5.3 `test_sc53_growth_equal_windows`; SC-5.4 `test_sc54_generic_brand_pruned`.
+**Review-driven fixes.** An all-zero volume (DataForSEO outage) renders as
+`estimation_basis='volume_unavailable'` (not "zero demand"); the own row is identifiable by
+domain regardless of the anchor. The live search-volume fetch is integration-only (mocked in
+tests); the D2 own-anchor is a documented follow-up.
+
+---
+
+## SC-8 — Reputation-Risk Radar  · **✅ SHIPPED** · reuse-heavy
+
+**What shipped.** `src/risk_radar.py`: `visibility_cliff` (a recent-window step-drop),
+`parasite_subfolder` (topical mismatch AND commercial intent — never the subfolder name
+alone), and `ranking_volatility` (fed from `get_volatility_alerts`), unified into one feed
+with own-site signals separated from competitor intel (SC-8.3) and labelled **pattern
+detections, not confirmed penalties**. New `risk_signal` table + `db.save_risk_signals` +
+`db.get_visibility_series` / `db.get_parasite_candidates`; report + Excel.
+
+**Acceptance criteria.** SC-8.1 `test_sc81_visibility_cliff_high_with_drop_pct`; SC-8.2
+`test_sc82_parasite_requires_mismatch_and_commercial` (+ `_word_boundary_no_false_positive`,
+`_subfolder_name_alone_does_not_flag`); SC-8.3 `test_sc83_own_and_competitor_signals_separated`.
+**Review-driven fixes.** The cliff peak is bounded to a recent lookback (a months-ago
+collapse no longer re-flags forever) and the severity tiers are live (`cliff_drop_pct` 0.3);
+the parasite commercial-term match is word-boundary (so "dealing" ≠ "deal") with a trimmed vocab.
 
 ---
 

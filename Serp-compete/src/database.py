@@ -304,6 +304,62 @@ class DatabaseManager:
             ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_positioning_run ON positioning(run_id)')
 
+            # C1 / SC-3: AI Answer Share-of-Voice (per engine, per entity). Consumed
+            # from serp-discover's AI-visibility export; competitors keyed by domain.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS sov_daily (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    engine TEXT,
+                    snapshot_date TEXT,
+                    entity TEXT,
+                    entity_type TEXT,
+                    is_client BOOLEAN,
+                    category TEXT,
+                    mention_share REAL,
+                    citation_share REAL,
+                    presence_rate REAL,
+                    avg_sentiment REAL,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_sov_daily_run ON sov_daily(run_id)')
+
+            # C3 / SC-5: Branded-Demand Competitive Benchmark. Domain-keyed.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS brand_demand_bench (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    domain TEXT,
+                    brand TEXT,
+                    period TEXT,
+                    branded_search_volume INTEGER,
+                    branded_volume_share REAL,
+                    branded_growth REAL,
+                    est_branded_click_share REAL,
+                    estimation_basis TEXT,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_brand_demand_run ON brand_demand_bench(run_id)')
+
+            # C6 / SC-8: Reputation-Risk Radar. Domain-keyed; is_own_site separates
+            # own-site warnings from competitor intel.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS risk_signal (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    domain TEXT,
+                    is_own_site BOOLEAN,
+                    detected_at TEXT,
+                    signal_type TEXT,
+                    severity TEXT,
+                    evidence_json TEXT,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_risk_signal_run ON risk_signal(run_id)')
+
             conn.commit()
 
     def create_run(self, client_domain: str) -> int:
@@ -484,6 +540,100 @@ class DatabaseManager:
                 (run_id, r["domain"], int(bool(r.get("is_client"))), computed_at,
                  r.get("authority_score"), r.get("focus_score"), r.get("quadrant"),
                  json.dumps(r.get("rationale", {})), r.get("estimation_basis"))
+                for r in rows
+            ])
+            conn.commit()
+
+    def save_sov(self, run_id: int, rows: List[Dict[str, Any]]):
+        """C1/SC-3: persist per-engine share-of-voice rows (from the AV export)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT INTO sov_daily (run_id, engine, snapshot_date, entity, entity_type,
+                    is_client, category, mention_share, citation_share, presence_rate, avg_sentiment)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', [
+                (run_id, r.get("engine"), r.get("snapshot_date"), r.get("entity"),
+                 r.get("entity_type"), int(bool(r.get("is_client"))), r.get("category"),
+                 r.get("mention_share"), r.get("citation_share"), r.get("presence_rate"),
+                 r.get("avg_sentiment"))
+                for r in rows
+            ])
+            conn.commit()
+
+    def save_risk_signals(self, run_id: int, rows: List[Dict[str, Any]], detected_at: str = None):
+        """C6/SC-8: persist reputation-risk signals (pattern detections)."""
+        import json as _json
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT INTO risk_signal (run_id, domain, is_own_site, detected_at,
+                    signal_type, severity, evidence_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', [
+                (run_id, r.get("domain"), int(bool(r.get("is_own_site"))), detected_at,
+                 r.get("signal_type"), r.get("severity"), _json.dumps(r.get("evidence", {})))
+                for r in rows
+            ])
+            conn.commit()
+
+    def get_visibility_series(self, domain: str) -> List[float]:
+        """C6/SC-8: a per-domain visibility series (top-10 ranking count per snapshot
+        date) from market_history, oldest→newest. [] when the table/data is absent."""
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute('''
+                    SELECT DATE(timestamp) AS d, SUM(CASE WHEN rank <= 10 THEN 1 ELSE 0 END)
+                    FROM market_history WHERE domain = ?
+                    GROUP BY d ORDER BY d
+                ''', (domain,)).fetchall()
+            return [float(v or 0) for _d, v in rows]
+        except sqlite3.OperationalError:
+            return []
+
+    def get_parasite_candidates(self, run_id: int) -> List[Dict[str, Any]]:
+        """C6/SC-8: per (domain, subfolder) keyword sets + the domain's core terms (from
+        its OTHER subfolders) so a genuinely off-topic subfolder reads as a mismatch."""
+        from urllib.parse import urlparse
+        by_domain: Dict[str, Dict[str, set]] = {}
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT domain, url, keyword FROM competitor_metrics "
+                "WHERE run_id = ? AND keyword IS NOT NULL AND url IS NOT NULL", (run_id,)
+            ).fetchall()
+        for domain, url, keyword in rows:
+            path = urlparse(str(url)).path.strip("/")
+            subfolder = "/" + path.split("/")[0] if path else "/"
+            by_domain.setdefault(domain, {}).setdefault(subfolder, set()).add(keyword)
+        candidates: List[Dict[str, Any]] = []
+        for domain, subs in by_domain.items():
+            for sub, kws in subs.items():
+                if sub == "/":
+                    continue  # the root is not a "parasite subfolder"
+                core = set()
+                for other_sub, other_kws in subs.items():
+                    if other_sub != sub:
+                        core |= other_kws
+                if not core:
+                    continue  # single-subfolder domain → can't judge mismatch
+                candidates.append({"domain": domain, "subfolder": sub,
+                                   "keywords": list(kws), "core_terms": list(core)})
+        return candidates
+
+    def save_brand_demand(self, run_id: int, rows: List[Dict[str, Any]]):
+        """C3/SC-5: persist the branded-demand benchmark rows."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT INTO brand_demand_bench (run_id, domain, brand, period,
+                    branded_search_volume, branded_volume_share, branded_growth,
+                    est_branded_click_share, estimation_basis)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', [
+                (run_id, r.get("domain"), r.get("brand"), r.get("period"),
+                 r.get("branded_search_volume"), r.get("branded_volume_share"),
+                 r.get("branded_growth"), r.get("est_branded_click_share"),
+                 r.get("estimation_basis"))
                 for r in rows
             ])
             conn.commit()
