@@ -163,14 +163,18 @@ def compute_sov(export: Optional[Dict[str, Any]], competitor_domains: List[str],
             domain = _norm_domain(c.get("domain"))
             category = _classify(bool(c.get("is_client")), domain, competitor_set)
             count = int(c.get("cite_count") or 0)
+            # A "cited but you're not" gap = a competitor domain this engine cites while
+            # the client is absent. Computed ONCE here (persisted on the row); the report
+            # reads the flag rather than re-deriving it, so the two can't drift.
+            cited_gap = category == "competitor" and not client_cited
             rows.append({
                 "engine": engine, "snapshot_date": snapshot_date, "entity": c.get("domain"),
                 "entity_type": "domain", "is_client": bool(c.get("is_client")), "category": category,
                 "mention_share": None,
                 "citation_share": round(100.0 * count / total_cites, 2) if total_cites else 0.0,
-                "presence_rate": None, "avg_sentiment": None,
+                "presence_rate": None, "avg_sentiment": None, "cited_gap": cited_gap,
             })
-            if category == "competitor" and not client_cited:
+            if cited_gap:
                 gaps.append({"engine": engine, "domain": c.get("domain"), "cite_count": count})
 
     return {"data_available": True, "rows": rows, "gaps": gaps}

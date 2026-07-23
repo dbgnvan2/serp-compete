@@ -327,7 +327,7 @@ class ReportGenerator:
             # 3f. Competitive AI Share-of-Voice (C1 / SC-3)
             df_sov = pd.read_sql_query('''
                 SELECT engine, entity, entity_type, is_client, category,
-                       mention_share, citation_share, avg_sentiment
+                       mention_share, citation_share, avg_sentiment, cited_gap
                 FROM sov_daily WHERE run_id = ?
             ''', conn, params=(run_id,))
 
@@ -345,13 +345,10 @@ class ReportGenerator:
                         report.append("**Mention share:** " + ", ".join(
                             f"{r['entity']}{' (you)' if r['is_client'] else ''} "
                             f"{(r['mention_share'] or 0):.0f}%" for _, r in men.iterrows()))
-                    client_cited = bool(((eng['entity_type'] == 'domain') & (eng['is_client'] == 1) &
-                                         (eng['citation_share'] > 0)).any())
-                    comp_cites = eng[(eng['entity_type'] == 'domain') &
-                                     (eng['category'] == 'competitor') & (eng['citation_share'] > 0)]
-                    if not comp_cites.empty and not client_cited:
+                    gap_rows = eng[eng['cited_gap'] == 1]   # single source: the persisted flag
+                    if not gap_rows.empty:
                         report.append("⚔️ **Cited but you're not:** "
-                                      + ", ".join(sorted(comp_cites['entity'].dropna().unique())))
+                                      + ", ".join(sorted(gap_rows['entity'].dropna().unique())))
 
             # 3g. Branded-Demand Benchmark (C3 / SC-5)
             df_brand = pd.read_sql_query('''

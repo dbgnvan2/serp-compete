@@ -218,6 +218,14 @@ class DatabaseManager:
             except sqlite3.OperationalError:
                 pass # Already exists
 
+            try:
+                # C1/SC-3: add cited_gap to an EXISTING sov_daily (the C1 commit created the
+                # table without it). Fresh DBs get it from CREATE TABLE below; this repairs
+                # DBs created between the two commits so save_sov + the report don't break.
+                cursor.execute("ALTER TABLE sov_daily ADD COLUMN cited_gap BOOLEAN")
+            except sqlite3.OperationalError:
+                pass # Already exists, or sov_daily not yet created (fresh DB)
+
             # SC-1: GEO / Extractability Profiles Table
             # (Spec: suite_enhancement_spec_v1.md#SC-1)
             cursor.execute('''
@@ -320,6 +328,7 @@ class DatabaseManager:
                     citation_share REAL,
                     presence_rate REAL,
                     avg_sentiment REAL,
+                    cited_gap BOOLEAN,
                     FOREIGN KEY(run_id) REFERENCES runs(id)
                 )
             ''')
@@ -550,13 +559,14 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.executemany('''
                 INSERT INTO sov_daily (run_id, engine, snapshot_date, entity, entity_type,
-                    is_client, category, mention_share, citation_share, presence_rate, avg_sentiment)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_client, category, mention_share, citation_share, presence_rate,
+                    avg_sentiment, cited_gap)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', [
                 (run_id, r.get("engine"), r.get("snapshot_date"), r.get("entity"),
                  r.get("entity_type"), int(bool(r.get("is_client"))), r.get("category"),
                  r.get("mention_share"), r.get("citation_share"), r.get("presence_rate"),
-                 r.get("avg_sentiment"))
+                 r.get("avg_sentiment"), int(bool(r.get("cited_gap"))))
                 for r in rows
             ])
             conn.commit()

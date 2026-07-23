@@ -116,6 +116,16 @@ def test_find_av_export_none_when_absent(tmp_path):
 
 # ── DB persistence ────────────────────────────────────────────────────────────
 
+def test_f8_cited_gap_flag_is_single_source():
+    """Sweep F8: the persisted `cited_gap` flag is the one source of the gap list — it
+    matches `gaps` exactly, so the report can read it instead of re-deriving (no drift)."""
+    res = compute_sov(EXPORT, COMPETITORS, "d")
+    flagged = {(r["engine"], r["entity"]) for r in res["rows"] if r.get("cited_gap")}
+    from_gaps = {(g["engine"], g["domain"]) for g in res["gaps"]}
+    assert flagged == from_gaps
+    assert ("openai", "theravive.com") in flagged   # openai cites theravive, not the client
+
+
 def test_mentioned_but_not_cited_competitor_matched_by_brand():
     """Sweep F5: a competitor mentioned but never cited is still classified 'competitor'
     (matched by brand name), not silently dropped into the 'other' bucket."""
@@ -127,6 +137,27 @@ def test_mentioned_but_not_cited_competitor_matched_by_brand():
                       competitor_brands=["BetterHelp"])
     bh = next(r for r in res["rows"] if r["entity"] == "BetterHelp")
     assert bh["category"] == "competitor"   # matched by brand name despite no citation
+
+
+def test_f1_cited_gap_migrates_on_existing_db(tmp_path):
+    """Sweep F1 (P8 dirty-state): a DB whose sov_daily predates the cited_gap column (as
+    the C1 commit created it) must be ALTER-migrated, so the next run's save_sov + the
+    report's `SELECT cited_gap` don't break. Fresh-DB tests miss this."""
+    import sqlite3
+    dbfile = str(tmp_path / "old.db")
+    with sqlite3.connect(dbfile) as conn:   # the pre-cited_gap schema
+        conn.execute("""CREATE TABLE sov_daily (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, engine TEXT,
+            snapshot_date TEXT, entity TEXT, entity_type TEXT, is_client BOOLEAN,
+            category TEXT, mention_share REAL, citation_share REAL, presence_rate REAL,
+            avg_sentiment REAL)""")
+        conn.commit()
+    db = DatabaseManager(dbfile)             # init runs the ALTER migration
+    with db._get_connection() as conn:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(sov_daily)")}
+    assert "cited_gap" in cols
+    run_id = db.create_run("c.com")
+    db.save_sov(run_id, compute_sov(EXPORT, COMPETITORS, "d")["rows"])   # must not raise
 
 
 def test_save_sov_roundtrip(tmp_path):

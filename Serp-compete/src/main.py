@@ -476,130 +476,13 @@ def run_audit():
     if all_metrics_to_save:
         db.save_competitor_metrics(all_metrics_to_save, run_id=run_id)
 
-    # Client's own GSC positions — shared by C4 (SERP overlap) and C2 (positioning).
-    # get_query_position_map catches its own fetch errors (returns {}), so this is
-    # safe to compute once outside the per-feature guards.
-    client_positions = gsc.get_query_position_map() if gsc else {}
-
-    # C4 / SC-6: SERP Overlap & Differentiation Gap — the single wired who-ranks-
-    # where matrix + the previously-unwired AnalysisEngine keyword-intersection gap
-    # and feasibility. Competitor positions come from competitor_metrics; the
-    # client's own positions from first-party GSC (the handoff is competitor-only).
-    try:
-        from src.serp_overlap import analyze_serp_overlap
-        overlap = analyze_serp_overlap(
-            competitor_positions=db.get_competitor_positions(run_id),
-            client_positions=client_positions,
-            competitor_keywords=competitor_keywords,
-            client_keywords=set(client_positions.keys()),
-            client_domain=client_domain,
-            client_da=shared_config.get("client", {}).get("da", 0),
-            competitor_das=db.get_competitor_das(),
-            config=shared_config.get("serp_overlap", {}),
-            snapshot_date=datetime.datetime.now().strftime("%Y-%m-%d"),
-            keyword_volumes=db.get_keyword_volumes(run_id),
-        )
-        db.save_serp_overlap(run_id, overlap["rows"])
-        db.save_competitor_feasibility(
-            run_id, shared_config.get("client", {}).get("da", 0), overlap["feasibility"])
-        if not overlap["client_positions_available"]:
-            print("   ⚠️ SERP overlap: client GSC positions unavailable this run — "
-                  "self-presence UNKNOWN; exclusive-competitor/self claims withheld.")
-        print(f"   🗺️  SERP overlap: {len(overlap['rows'])} keywords classified — "
-              f"{len(overlap['action_exclusive_competitor'])} exclusive-competitor, "
-              f"{len(overlap['action_shared_commodity'])} shared-commodity, "
-              f"{len(overlap['gap_keywords'])} all-competitor gaps; "
-              f"{len(overlap['feasibility'])} competitors scored for feasibility.")
-    except Exception as overlap_err:
-        print(f"⚠️ SERP overlap analysis skipped: {overlap_err}")
-
-    # C2 / SC-4: Barbell Positioning Diagnostic — authority x focus 2x2 over the
-    # competitors (authority from Moz DA + top-10 rankings, focus from tier identity)
-    # plus the client (always plotted; its authority from config DA + GSC top-10, its
-    # focus from classifying its GSC queries into tiers, since Compete doesn't audit it).
-    # get_positioning_inputs now includes moz_da so competitors use the client's formula.
-    try:
-        from src.positioning import compute_positioning, classify_query_tiers
-        pos_cfg = shared_config.get("positioning", {})
-        comp_inputs = db.get_positioning_inputs(run_id)
-        client_med, client_sys = classify_query_tiers(
-            list(client_positions.keys()), shared_config.get("clinical", {}))
-        client_inputs = {
-            "moz_da": shared_config.get("client", {}).get("da"),
-            "top10_count": sum(1 for p in client_positions.values() if p <= 10),
-            "medical_total": client_med, "systems_total": client_sys,
-        }
-        pos_rows = compute_positioning(comp_inputs, client_domain, client_inputs, pos_cfg)
-        db.save_positioning(run_id, pos_rows,
-                            computed_at=datetime.datetime.now().strftime("%Y-%m-%d"))
-        quads = {}
-        for r in pos_rows:
-            quads[r["quadrant"]] = quads.get(r["quadrant"], 0) + 1
-        print("   🧭 Positioning: " + ", ".join(f"{q}: {n}" for q, n in sorted(quads.items())))
-    except Exception as pos_err:
-        print(f"⚠️ Positioning analysis skipped: {pos_err}")
-
-    # C1 / SC-3: AI Answer Share-of-Voice — CONSUME serp-discover's AI-visibility export
-    # (no probing here; the single AI-probe runner lives in serp-discover). Computes
-    # per-engine mention/citation share vs the run's competitors + a cited-but-you're-not
-    # gap list. Absent export → data_available:false (the section just doesn't render).
-    try:
-        from src.sov_analyzer import find_av_export, load_av_export, compute_sov
-        from src.competitor_mining import derive_brand_name
-        export_path = find_av_export(PROJECT_ROOT, shared_config)
-        sov = compute_sov(load_av_export(export_path),
-                          competitor_domains=list(competitor_keywords.keys()),
-                          snapshot_date=datetime.datetime.now().strftime("%Y-%m-%d"),
-                          competitor_brands=[derive_brand_name(d) for d in competitor_keywords.keys()])
-        if sov["data_available"]:
-            db.save_sov(run_id, sov["rows"])
-            print(f"   📣 AI Share-of-Voice: {len(sov['rows'])} entity rows, "
-                  f"{len(sov['gaps'])} cited-but-you're-not gaps "
-                  f"(from {os.path.basename(export_path) if export_path else '?'}).")
-        else:
-            print("   ℹ️ AI Share-of-Voice: no serp-discover AI-visibility export found — skipped.")
-    except Exception as sov_err:
-        print(f"⚠️ AI Share-of-Voice analysis skipped: {sov_err}")
-
-    # C3 / SC-5: Branded-Demand Competitive Benchmark — estimate each competitor's
-    # brand-search demand from public search volume (live DataForSEO; graceful zero when
-    # unavailable). The client's own figure is GSC-anchored (serp-discover D2) when that
-    # export exists — otherwise NULL, labelled, so own vs estimated stay distinct.
-    try:
-        from src.brand_demand import compute_branded_demand
-        from src.competitor_mining import derive_brand_name
-        bd_cfg = shared_config.get("branded_demand", {})
-        brand_by_domain = {d: derive_brand_name(d) for d in competitor_keywords.keys()}
-        client_brands = shared_config.get("client", {}).get("brand_names") or []
-        brand_by_domain[client_domain] = (client_brands[0] if client_brands
-                                          else derive_brand_name(client_domain))
-        bd_rows = compute_branded_demand(
-            brand_by_domain, dfs_client.get_search_volume, bd_cfg,
-            period=datetime.datetime.now().strftime("%Y-%m"),
-            own_domain=client_domain, own_anchor=None)
-        db.save_brand_demand(run_id, bd_rows)
-        print(f"   💷 Branded demand: {len(bd_rows)} brands benchmarked.")
-    except Exception as bd_err:
-        print(f"⚠️ Branded-demand benchmark skipped: {bd_err}")
-
-    # C6 / SC-8: Reputation-Risk Radar — visibility cliffs, parasite/affiliate subfolders,
-    # and ranking volatility, as PATTERN DETECTIONS (not confirmed Google penalties).
-    # Own-site signals are separated from competitor intel.
-    try:
-        from src.risk_radar import compute_risk_signals
-        series_by_domain = {d: db.get_visibility_series(d) for d in competitor_keywords.keys()}
-        series_by_domain[client_domain] = db.get_visibility_series(client_domain)
-        risk_rows = compute_risk_signals(
-            volatility_alerts=db.get_volatility_alerts(run_id),
-            series_by_domain=series_by_domain,
-            parasite_candidates=db.get_parasite_candidates(run_id),
-            own_domain=client_domain, config=shared_config.get("risk_signals", {}))
-        db.save_risk_signals(run_id, risk_rows,
-                             detected_at=datetime.datetime.now().strftime("%Y-%m-%d"))
-        own_risks = sum(1 for r in risk_rows if r["is_own_site"])
-        print(f"   🚨 Reputation risk: {len(risk_rows)} signals ({own_risks} own-site).")
-    except Exception as risk_err:
-        print(f"⚠️ Reputation-risk radar skipped: {risk_err}")
+    # Comparison layer (C4 SERP-overlap / C2 positioning / C1 AI share-of-voice /
+    # C3 branded-demand / C6 reputation-risk) — extracted to src/comparison_features.py
+    # so the assembly (read inputs → compute → persist) is unit-testable; each feature is
+    # independently guarded there (see tests/test_comparison_features.py).
+    from src.comparison_features import run_comparison_features
+    run_comparison_features(db, run_id, shared_config, client_domain, competitor_keywords,
+                            gsc, dfs_client, PROJECT_ROOT)
 
     # Strategic Logic with PAA context from Handover
     print("Identifying Strategic Openings...")

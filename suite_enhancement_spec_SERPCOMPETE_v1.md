@@ -121,14 +121,34 @@ be fully recomputed.
 
 ## Verification
 
-Full local suite: **135 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
+Full local suite: **139 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
 — geo profiler, wire-up + cache-hit carry-forward, the extracted enrichment wiring, the
 **SC-6 SERP-overlap matrix**, **SC-4 barbell positioning**, **SC-3 AI share-of-voice**,
 **SC-5 branded-demand benchmark**, and **SC-8 reputation-risk radar** all covered; modules
 byte-compile. The root v3 suite (`PYTHONPATH=Serp-compete pytest tests/ -q`) stays at
-**158 passing**. The `run_audit` **assembly** of the comparison features (which glues the
-tested compute + persistence units) is integration-only, as are the live DataForSEO /
-serp-discover-export inputs — flagged, not implied-covered.
+**158 passing**. The comparison-layer **assembly** is now unit-tested too — the five features
+were extracted into `src/comparison_features.py::run_comparison_features` with a smoke test
+(`tests/test_comparison_features.py`) that fails if any `save_*` wiring is removed. Only the
+live DataForSEO / serp-discover-export **inputs** remain integration-only. A run-through
+checklist for a real audit lives in `docs/TEST_RUN_CHECKLIST.md`.
+
+**Post-batch review-driven fixes.** F7: extracting the assembly (above) and its smoke test
+**caught a real bug** — `src/competitor_mining.py` uses bare `from api_clients import` /
+`from reframe_engine import` (should be `from src.…`), so it's un-importable as a submodule,
+which was silently disabling C1/C3 via their guarded `try/except`. Worked around by inlining
+`_derive_brand_name` in `comparison_features.py`; **the competitor_mining import bug is flagged
+as an adjacent issue, not swept**. F8: the SoV "cited-but-you're-not" gap is now a single
+persisted `cited_gap` flag (computed once in `compute_sov`, read by the report) instead of two
+implementations that could drift.
+
+A **second sweep** on the F7/F8 diff caught two more (both fixed + regression-tested, hence
+139): **F1 (P8, HIGH)** — `cited_gap` was added only to `CREATE TABLE IF NOT EXISTS sov_daily`,
+so a DB that already had `sov_daily` (from the C1 commit) never got the column; the next real
+run would silently disable C1 on save **and** crash the unguarded report `SELECT cited_gap`. Now
+migrated via `ALTER TABLE … ADD COLUMN` in the migrations block, locked by a dirty-state test.
+**F2 (P12, MED)** — the extraction unified all DA reads to a `0` default, but C2 authority must
+receive `None` for a missing client DA (compute_authority *excludes* it, never scores it as 0);
+restored the `None` default for C2 only (C4 still uses `0`), with a regression test.
 
 ## Read first (this repo)
 
