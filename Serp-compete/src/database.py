@@ -247,6 +247,45 @@ class DatabaseManager:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_geo_profiles_url ON geo_profiles(url)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_geo_profiles_run ON geo_profiles(run_id)')
 
+            # C4 / SC-6: SERP Overlap & Differentiation Gap matrix
+            # (Spec: suite_enhancement_spec_v1.md#C4). Competitors keyed by domain.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS serp_overlap (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    keyword TEXT NOT NULL,
+                    snapshot_date TEXT,
+                    competitors_ranking_json TEXT,
+                    self_position INTEGER,
+                    overlap_count INTEGER,
+                    commodity_score REAL,
+                    keyword_volume REAL,
+                    cell TEXT,
+                    all_competitor_gap BOOLEAN,
+                    config_ref TEXT,
+                    estimation_basis TEXT,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_serp_overlap_run ON serp_overlap(run_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_serp_overlap_cell ON serp_overlap(cell)')
+
+            # C4 / SC-6: per-competitor feasibility (client DA vs each competitor DA),
+            # the check_feasibility half of the AnalysisEngine wiring.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS competitor_feasibility (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    domain TEXT NOT NULL,
+                    client_da INTEGER,
+                    competitor_da INTEGER,
+                    feasible BOOLEAN,
+                    suggestion TEXT,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_competitor_feasibility_run ON competitor_feasibility(run_id)')
+
             conn.commit()
 
     def create_run(self, client_domain: str) -> int:
@@ -368,9 +407,92 @@ class DatabaseManager:
                 cursor.execute('''
                     INSERT INTO competitor_metrics (run_id, domain, url, keyword, position, traffic)
                     VALUES (?, ?, ?, ?, ?, ?)
-                ''', (run_id, metric['domain'], metric['url'], metric.get('keyword'), 
+                ''', (run_id, metric['domain'], metric['url'], metric.get('keyword'),
                       metric.get('position'), metric.get('traffic')))
             conn.commit()
+
+    def save_serp_overlap(self, run_id: int, rows: List[Dict[str, Any]]):
+        """C4/SC-6: persist the classified who-ranks-where matrix rows.
+
+        Spec:  suite_enhancement_spec_v1.md#C4
+        Tests: tests/test_serp_overlap.py::test_sc6_save_and_read_roundtrip
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT INTO serp_overlap (
+                    run_id, keyword, snapshot_date, competitors_ranking_json,
+                    self_position, overlap_count, commodity_score, keyword_volume,
+                    cell, all_competitor_gap, config_ref, estimation_basis)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', [
+                (run_id, r["keyword"], r.get("snapshot_date"),
+                 json.dumps(r.get("competitors_ranking", {})),
+                 r.get("self_position"), r.get("overlap_count"),
+                 r.get("commodity_score"), r.get("keyword_volume"), r.get("cell"),
+                 int(bool(r.get("all_competitor_gap"))), r.get("config_ref"),
+                 r.get("estimation_basis"))
+                for r in rows
+            ])
+            conn.commit()
+
+    def save_competitor_feasibility(self, run_id: int, client_da: int,
+                                    feasibility: Dict[str, Dict[str, Any]]):
+        """C4/SC-6: persist per-competitor feasibility (check_feasibility output), the
+        second half of the AnalysisEngine wiring — surfaced, not discarded."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT INTO competitor_feasibility
+                    (run_id, domain, client_da, competitor_da, feasible, suggestion)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', [
+                (run_id, domain, int(client_da or 0), v.get("competitor_da"),
+                 int(bool(v.get("feasible"))), v.get("suggestion"))
+                for domain, v in (feasibility or {}).items()
+            ])
+            conn.commit()
+
+    def get_competitor_positions(self, run_id: int) -> Dict[str, Dict[str, int]]:
+        """C4/SC-6: {keyword: {domain: best (lowest) position}} from competitor_metrics."""
+        positions: Dict[str, Dict[str, int]] = {}
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT keyword, domain, MIN(position) FROM competitor_metrics
+                WHERE run_id = ? AND keyword IS NOT NULL AND position IS NOT NULL
+                GROUP BY keyword, domain
+            ''', (run_id,))
+            for keyword, domain, position in cursor.fetchall():
+                positions.setdefault(keyword, {})[domain] = int(position)
+        return positions
+
+    def get_keyword_volumes(self, run_id: int) -> Dict[str, float]:
+        """C4/SC-6: {keyword: max est-traffic} — per-keyword volume for cell rollups."""
+        volumes: Dict[str, float] = {}
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT keyword, MAX(traffic) FROM competitor_metrics
+                WHERE run_id = ? AND keyword IS NOT NULL
+                GROUP BY keyword
+            ''', (run_id,))
+            for keyword, traffic in cursor.fetchall():
+                volumes[keyword] = float(traffic or 0.0)
+        return volumes
+
+    def get_competitor_das(self) -> Dict[str, int]:
+        """C4/SC-6: {domain: avg_da} from the competitors table (feasibility input).
+
+        Returns {} when no DA data is stored — feasibility then degrades gracefully.
+        """
+        das: Dict[str, int] = {}
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT domain, avg_da FROM competitors WHERE avg_da IS NOT NULL')
+            for domain, avg_da in cursor.fetchall():
+                das[domain] = int(avg_da)
+        return das
 
     def save_semantic_audit(self, url: str, medical_score: int, systems_score: float, run_id: int, label: str = "Standard"):
         with self._get_connection() as conn:

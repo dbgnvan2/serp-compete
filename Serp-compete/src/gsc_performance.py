@@ -88,6 +88,29 @@ class GSCManager:
             print(f"⚠️ GSC Data Fetch Error for {site_url}: {e}")
             return []
 
+    def get_query_position_map(self) -> dict:
+        """C4/SC-6: {normalized query: best (lowest) client position} from GSC.
+
+        The client's own SERP rank per query — the source of ``self_position`` in
+        the overlap matrix (the competitor handoff excludes the client, so the
+        client's positions can only come from first-party GSC). Aggregates to the
+        best position across pages. Absent/failed GSC data → ``{}`` (graceful; the
+        client is then treated as absent from the top-N, never fabricated present).
+        """
+        best: dict = {}
+        for r in self.fetch_performance_data() or []:
+            keys = r.get('keys') or []
+            pos = r.get('position')
+            if not keys or pos is None:
+                continue
+            query = str(keys[0] or "").strip().lower()
+            if not query:
+                continue
+            pos = int(round(float(pos)))
+            if query not in best or pos < best[query]:
+                best[query] = pos
+        return best
+
     def list_sites(self):
         if self._cached_sites:
             return self._cached_sites

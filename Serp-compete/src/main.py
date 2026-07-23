@@ -470,6 +470,39 @@ def run_audit():
     if all_metrics_to_save:
         db.save_competitor_metrics(all_metrics_to_save, run_id=run_id)
 
+    # C4 / SC-6: SERP Overlap & Differentiation Gap — the single wired who-ranks-
+    # where matrix + the previously-unwired AnalysisEngine keyword-intersection gap
+    # and feasibility. Competitor positions come from competitor_metrics; the
+    # client's own positions from first-party GSC (the handoff is competitor-only).
+    try:
+        from src.serp_overlap import analyze_serp_overlap
+        client_positions = gsc.get_query_position_map() if gsc else {}
+        overlap = analyze_serp_overlap(
+            competitor_positions=db.get_competitor_positions(run_id),
+            client_positions=client_positions,
+            competitor_keywords=competitor_keywords,
+            client_keywords=set(client_positions.keys()),
+            client_domain=client_domain,
+            client_da=shared_config.get("client", {}).get("da", 0),
+            competitor_das=db.get_competitor_das(),
+            config=shared_config.get("serp_overlap", {}),
+            snapshot_date=datetime.datetime.now().strftime("%Y-%m-%d"),
+            keyword_volumes=db.get_keyword_volumes(run_id),
+        )
+        db.save_serp_overlap(run_id, overlap["rows"])
+        db.save_competitor_feasibility(
+            run_id, shared_config.get("client", {}).get("da", 0), overlap["feasibility"])
+        if not overlap["client_positions_available"]:
+            print("   ⚠️ SERP overlap: client GSC positions unavailable this run — "
+                  "self-presence UNKNOWN; exclusive-competitor/self claims withheld.")
+        print(f"   🗺️  SERP overlap: {len(overlap['rows'])} keywords classified — "
+              f"{len(overlap['action_exclusive_competitor'])} exclusive-competitor, "
+              f"{len(overlap['action_shared_commodity'])} shared-commodity, "
+              f"{len(overlap['gap_keywords'])} all-competitor gaps; "
+              f"{len(overlap['feasibility'])} competitors scored for feasibility.")
+    except Exception as overlap_err:
+        print(f"⚠️ SERP overlap analysis skipped: {overlap_err}")
+
     # Strategic Logic with PAA context from Handover
     print("Identifying Strategic Openings...")
     openings = db.identify_strategic_openings(run_id)

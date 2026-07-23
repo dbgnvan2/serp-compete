@@ -32,6 +32,8 @@ class ReportGenerator:
         df_metrics = pd.DataFrame()
         df_magnets = pd.DataFrame()
         df_geo = pd.DataFrame()
+        df_overlap = pd.DataFrame()
+        df_feasibility = pd.DataFrame()
 
         if gsc_findings:
             report.append("\n## 📈 Internal GSC Performance Gaps")
@@ -219,6 +221,72 @@ class ReportGenerator:
                 report.append("\n_Heuristic structural proxies for AI citability, not measured citations. "
                               "Answer-first placement and FAQ-answers-in-HTML are not yet measured._")
 
+            # 3c. SERP Overlap & Differentiation Gap (C4 / SC-6)
+            df_overlap = pd.read_sql_query('''
+                SELECT keyword, cell, self_position, overlap_count, commodity_score,
+                       keyword_volume, all_competitor_gap, estimation_basis,
+                       competitors_ranking_json
+                FROM serp_overlap
+                WHERE run_id = ?
+                ORDER BY overlap_count DESC, keyword
+            ''', conn, params=(run_id,))
+
+            if not df_overlap.empty:
+                report.append("\n## SERP Overlap & Differentiation Gap")
+                report.append("Where you and tracked competitors collide on shared SERPs "
+                              "(AI-absorption risk) vs. where you're uniquely present "
+                              "(defensible). Cells: `shared_commodity` / `shared_defensible` / "
+                              "`exclusive_self` / `exclusive_competitor` / `absent`. "
+                              "_'Commodity' is a local overlap-density proxy — a strategic "
+                              "framing, not a measured index._")
+                # If the client's GSC positions were unavailable this run, self-presence
+                # is UNKNOWN — say so loudly rather than imply "you're absent".
+                if 'self_unknown' in set(df_overlap['cell']):
+                    report.append("\n> ⚠️ **Client GSC positions were unavailable this run** — "
+                                  "self-presence is UNKNOWN for these keywords (shown as "
+                                  "`self_unknown`); exclusive-competitor / exclusive-self "
+                                  "classifications are withheld to avoid a false 'you're absent'.")
+                counts = df_overlap['cell'].value_counts().to_dict()
+                report.append("\n**Cell distribution:** "
+                              + ", ".join(f"{cell}: {n}" for cell, n in sorted(counts.items())))
+                vol = df_overlap.groupby('cell')['keyword_volume'].sum().to_dict()
+                report.append("**Volume by cell (est. traffic):** "
+                              + ", ".join(f"{cell}: {int(v)}" for cell, v in sorted(vol.items())))
+                excl = df_overlap[df_overlap['cell'] == 'exclusive_competitor']
+                if not excl.empty:
+                    n = len(excl)
+                    report.append("\n### ⚔️ Action queue — exclusive-competitor (rivals rank, you're absent)"
+                                  + (f"  _(top 15 of {n})_" if n > 15 else ""))
+                    for _, r in excl.head(15).iterrows():
+                        gap = " — **every tracked rival ranks**" if r['all_competitor_gap'] else ""
+                        report.append(f"- **{r['keyword']}** ({int(r['overlap_count'])} rivals in top-N){gap}")
+                comm = df_overlap[df_overlap['cell'] == 'shared_commodity']
+                if not comm.empty:
+                    n = len(comm)
+                    report.append("\n### 🔁 Action queue — shared-commodity (differentiate or deprioritize)"
+                                  + (f"  _(top 15 of {n})_" if n > 15 else ""))
+                    for _, r in comm.head(15).iterrows():
+                        report.append(f"- **{r['keyword']}** (you + {int(r['overlap_count'])} rivals; commoditized SERP)")
+                report.append("\n_Folds in the Systemic Vacuum list above (not duplicated). "
+                              "Competitor positions are SERP-measured; self_position is "
+                              "first-party GSC (see estimation_basis in the Excel sheet)._")
+
+            # 3d. Competitor Feasibility (C4 / SC-6: check_feasibility, surfaced)
+            df_feasibility = pd.read_sql_query('''
+                SELECT domain, competitor_da, feasible, suggestion
+                FROM competitor_feasibility
+                WHERE run_id = ?
+                ORDER BY feasible DESC, domain
+            ''', conn, params=(run_id,))
+
+            if not df_feasibility.empty:
+                report.append("\n### 🎯 Competitor Feasibility (your DA vs. each competitor)")
+                report.append("Whether a systemic counter-page can realistically compete, from "
+                              "the Domain Authority gap (feasible when client DA + 5 ≥ competitor DA).")
+                df_feasibility['feasible'] = df_feasibility['feasible'].apply(
+                    lambda x: "✅" if x else "❌")
+                report.append(df_feasibility.to_markdown(index=False))
+
             # 4. Strategic Openings & Reframes
             if reframes:
                 report.append("\n## 🎯 Automated Bowen Reframes")
@@ -251,6 +319,10 @@ class ReportGenerator:
                     df_clusters.to_excel(writer, sheet_name='Cluster Analysis', index=False)
                 if not df_geo.empty:
                     df_geo.to_excel(writer, sheet_name='GEO Extractability', index=False)
+                if not df_overlap.empty:
+                    df_overlap.to_excel(writer, sheet_name='SERP Overlap', index=False)
+                if not df_feasibility.empty:
+                    df_feasibility.to_excel(writer, sheet_name='Feasibility', index=False)
                 if reframes:
                     df_reframes = pd.DataFrame([{"keyword": r['keyword'], "url": r['url'], "reframe": r['reframe'][:500]} for r in reframes])
                     df_reframes.to_excel(writer, sheet_name='Automated Reframes', index=False)

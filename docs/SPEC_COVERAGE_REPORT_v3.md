@@ -16,6 +16,13 @@ All specification requirements for Tool 2 v3 have been implemented and tested:
 - ✅ **4/4 Third-Party Integration Skeleton** (Ahrefs, Moz placeholders)
 - ✅ **158/158 Tests Passing** (100% pass rate)
 
+> **Post-v3 enhancements** (tracked in `suite_enhancement_spec_SERPCOMPETE_v1.md`, not
+> counted in the v3 totals above): **SC-1** — competitor GEO / extractability (shipped);
+> **SC-6** — SERP Overlap & Differentiation Gap (shipped: the wired who-ranks-where
+> matrix + the previously-unwired `AnalysisEngine.find_keyword_intersection`/
+> `check_feasibility`, new `serp_overlap` + `competitor_feasibility` tables). The core
+> suite beside the source is now **87 passing**; this v3 root suite (`tests/`) remains **158/158**.
+
 ---
 
 ## Part 1: Gap Refinements

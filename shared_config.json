@@ -123,6 +123,11 @@
     "hub_in_degree_threshold": 2,
     "min_pages_for_signal": 3
   },
+  "serp_overlap": {
+    "top_n": 10,
+    "commodity_high_overlap": 3,
+    "framework_caption": "SERP overlap is a strategic framing of shared vs. defensible ground, not a measured commodity index. 'Commodity' here is a local overlap-density proxy (how many tracked rivals share the SERP); upgrade to the serp-discover D4 commodity export when it exists."
+  },
   "clinical_pivots": {
     "avoidant attachment": "Emotional Distance / Pursuer-Distancer",
     "anxious attachment": "Emotional Fusion / Pursuit",

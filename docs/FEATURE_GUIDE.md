@@ -234,6 +234,38 @@ available for the run).
 
 ---
 
+### 4.4 SERP Overlap & Differentiation Gap — where you collide vs. where you're safe  ⭐ newest
+**What it does:** builds a keyword-by-keyword matrix of *who ranks where* — your
+tracked competitors' SERP positions (from the audit) plus your own positions (from
+Google Search Console) — and sorts every target keyword into one of five cells:
+**shared_commodity** (you + several rivals on a commoditized SERP),
+**shared_defensible** (you + a rival or two, still differentiated), **exclusive_self**
+(only you rank), **exclusive_competitor** (rivals rank, you're absent), or **absent**.
+It also flags the keywords *every* tracked rival ranks for but you don't.
+
+**What it lets you understand:** the shape of the battlefield — which keywords are
+crowded, commoditized ground (high AI-absorption risk, low differentiation payoff)
+versus where you hold a defensible or exclusive position, and exactly where rivals are
+winning while you're not on the board.
+
+**What you can then do:** work the two action queues. **exclusive-competitor**
+(especially "every rival ranks, you don't") = your clearest content gaps to fill;
+**shared-commodity** = differentiate hard or deprioritize (don't fight for
+undifferentiated ground). The feasibility read (your Domain Authority vs each
+competitor's) flags which are realistic.
+
+**Where you see it:** the *SERP Overlap & Differentiation Gap* section (cell
+distribution + both action queues) and the *SERP Overlap* Excel sheet. It **folds in**
+the Systemic Vacuum list rather than repeating it.
+
+> **Read it honestly:** competitor positions are SERP-measured; your `self_position`
+> is first-party GSC (a keyword you rank for only shows if it's in your Search Console
+> data). If GSC is unavailable for a run, your presence is marked **unknown** (not
+> "absent") and those keywords are withheld from the action queues. "Commodity" is a
+> **local overlap-density proxy** (how many rivals share the SERP) — a strategic
+> framing, not a measured index. A companion **Competitor Feasibility** read (your
+> Domain Authority vs each competitor's) flags which targets are realistic.
+
 ## 5. Movement-over-time features (longitudinal memory)
 
 Each run records a snapshot, so later runs can compare against earlier ones.
@@ -309,11 +341,12 @@ and `audit_results_run_12.xlsx`).
 | GEO / Extractability | *Why* AI engines cite each page | Copy the structure that earns citations |
 | Identified 'Traffic Magnets' | Highest-value keyword pages | Your content backlog |
 | ⚡ Systemic Vacuums | Traffic with no systemic answer | Write these first |
+| SERP Overlap & Differentiation Gap | Where you collide (commodity) vs. are exclusive | Fill exclusive-competitor gaps; differentiate/skip commodity |
 | 🎯 Automated Bowen Reframes | Draft outlines to counter each page | Brief your writer |
 
 ### 8.2 Excel workbook — sheet-by-sheet
 `Competitor Summary` · `Traffic Magnets` · `EEAT Scores` · `Cluster Analysis` ·
-`GEO Extractability` · `Automated Reframes` · `AI Usage Stats`. Each sheet is the
+`GEO Extractability` · `SERP Overlap` · `Feasibility` · `Automated Reframes` · `AI Usage Stats`. Each sheet is the
 tabular form of the matching briefing section — use it to sort/filter (e.g. sort
 *GEO Extractability* by tier, or *Traffic Magnets* by traffic) and to paste into a
 content plan. A sheet only appears if that run produced data for it.
@@ -335,11 +368,15 @@ content plan. A sheet only appears if that run produced data for it.
   re-scraped. The console **"Enrichment coverage"** line tells you, each run, how many
   profiles were fresh vs. carried vs. failed — check it if a section looks unchanged.
 - **High-authority domains (avg Page Authority > 50) are absent by design.**
+- **SERP-overlap "commodity" is a local proxy** (how many tracked rivals share the
+  SERP), not a measured commodity index; and your `self_position` comes only from GSC,
+  so a keyword you rank for won't show as "yours" unless it's in your Search Console
+  data (and a page-2 position is treated as absent from the top-N battle).
 - **Reframes are AI-drafted scaffolds**, not clinical copy — always apply your own
   judgement.
 
 ---
 
-*This guide describes the behaviour shipped in the code as of the SC-1 (GEO /
-Extractability) release. If a feature's behaviour changes, update this file alongside
-`suite_enhancement_spec_SERPCOMPETE_v1.md`.*
+*This guide describes the behaviour shipped in the code as of the SC-6 (SERP Overlap
+& Differentiation Gap) release. If a feature's behaviour changes, update this file
+alongside `suite_enhancement_spec_SERPCOMPETE_v1.md`.*

@@ -121,12 +121,14 @@ be fully recomputed.
 
 ## Verification
 
-Full local suite: **63 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
-— geo profiler, wire-up persistence, cache-hit carry-forward, and the extracted
-enrichment wiring (fresh / cache-hit / mixed-domain cluster gate) all covered;
-`main.py` + `src/enrichment.py` byte-compile. The root v3 suite (`PYTHONPATH=Serp-compete
-pytest tests/ -q`) stays at **158 passing**. Only the outer SERP loop of `run_audit`
-(DataForSEO / Moz / spaCy / OpenAI) remains integration-only.
+Full local suite: **87 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
+— geo profiler, wire-up persistence, cache-hit carry-forward, the extracted
+enrichment wiring, and the **SC-6 SERP-overlap matrix** (cell classification incl.
+the GSC-unavailable `self_unknown` path, case-insensitive join, volume rollups,
+AnalysisEngine gap + feasibility, DB readers) all covered; modules byte-compile. The
+root v3 suite (`PYTHONPATH=Serp-compete pytest tests/ -q`) stays at **158 passing**.
+Only the outer SERP loop of `run_audit` (DataForSEO / Moz / spaCy / OpenAI) remains
+integration-only.
 
 ## Read first (this repo)
 
@@ -171,6 +173,66 @@ reach.
   `shared_config.json`; no new hardcoded editorial content in Python.
 - SC-1.4 Existing serp-compete suites stay green; new logic covered per the v3 test
   conventions.
+
+---
+
+## SC-6 — SERP Overlap & Differentiation Gap  · **✅ SHIPPED** · reuse-heavy (the tool's spine)
+
+**Problem.** Where do you and competitors collide on commoditized SERPs (shared
+AI-absorption risk), and where are you uniquely present (defensible)? The
+differentiation gap (Systemic Vacuum) was wired, but the who-ranks-where keyword
+matrix and the `AnalysisEngine` keyword-intersection gap were scattered/unwired.
+
+**What shipped.** A single, wired who-ranks-where matrix:
+- `src/serp_overlap.py` — pure, deterministic `classify_cell` / `build_overlap_rows`
+  / `rollup_by_cell` + `analyze_serp_overlap`, which also wires the previously-unwired
+  `analysis.py::AnalysisEngine.find_keyword_intersection` (keywords ALL competitors
+  rank for but the client doesn't) and `check_feasibility` (client DA vs each
+  competitor DA).
+- Competitor positions from `competitor_metrics` (`db.get_competitor_positions`); the
+  client's own positions from first-party GSC (`GSCManager.get_query_position_map` →
+  `self_position`) since the handoff is competitor-only. "Ranks top-N" is symmetric
+  for client and competitors (a page-2 client is not "present").
+- Cells: `shared_commodity` / `shared_defensible` / `exclusive_self` /
+  `exclusive_competitor` / `absent`. `commodity_score` is a LOCAL overlap-density
+  proxy (`estimation_basis="local_overlap_density"` — a framing, not a measured index;
+  upgrade to the serp-discover D4 commodity export when it exists).
+- Persisted to a new `serp_overlap` table (`db.save_serp_overlap`); rendered as a
+  "SERP Overlap & Differentiation Gap" report section + Excel sheet with
+  `exclusive_competitor` and `shared_commodity` action queues; folds in the Systemic
+  Vacuum list (not duplicated). Wired into `run_audit()` after `save_competitor_metrics`
+  (guarded). Config: `shared_config.json → serp_overlap` (`top_n` 10,
+  `commodity_high_overlap` 3, `framework_caption`).
+
+**Acceptance criteria.**
+- SC-6.1 cell classification deterministic given snapshot + commodity + config top-N —
+  `tests/test_serp_overlap.py::test_sc61_classify_cell_all_quadrants` +
+  `::test_sc61_build_rows_is_deterministic`.
+- SC-6.2 `exclusive_self` requires zero competitors in top-N —
+  `::test_sc62_exclusive_self_requires_zero_competitors`.
+- SC-6.3 volume rollups match member keyword volumes — `::test_sc63_rollup_matches_member_volumes`.
+- SC-6.4 `AnalysisEngine.find_keyword_intersection` wired into `run_audit()` + covered
+  beyond `test_analysis.py` — `::test_sc64_analysis_engine_intersection_gap_wired`
+  (+ `::test_sc64_feasibility_wired`). Plus the top-N-symmetry adversarial case
+  `::test_adversarial_client_page2_is_not_shared`.
+
+**Review-driven fixes (pre-push sweep).** (1) A GSC-unavailable run (empty client
+map) no longer classifies every keyword as `exclusive_competitor` — self-presence is
+UNKNOWN (`self_unknown` cell), the exclusive queues are withheld, and the report
+prints a loud caveat (never a false "you're absent"). (2) The join key is normalized
+(lower/trim) on both sides, so a competitor `"Couples Therapy"` and GSC
+`"couples therapy"` are one keyword, not a false exclusive-competitor/exclusive-self
+split. (3) The SC-6.3 volume rollup and the `check_feasibility` half are surfaced, not
+discarded: `keyword_volume` per row + a "Volume by cell" line, and a new
+`competitor_feasibility` table rendered as a "Competitor Feasibility" section + Excel
+sheet.
+
+**Known limitation.** A page-2 client (GSC position > `top_n`) is treated as absent
+from the top-N battle for cell purposes (raw `self_position` retained for
+transparency). The keyword universe is "who ranked" (competitors' + the client's GSC
+keywords), so the `absent` cell only becomes reachable if a full target-keyword list
+is later plumbed in. `commodity_score` is a local overlap-density proxy until the
+serp-discover D4 commodity export exists (soft dependency, plan §12.4).
 
 ---
 
