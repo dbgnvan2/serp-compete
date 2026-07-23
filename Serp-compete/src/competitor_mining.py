@@ -3,8 +3,12 @@ import pandas as pd
 import csv
 import re
 from typing import List, Set
-from api_clients import DataForSEOClient
-from reframe_engine import ReframeEngine
+try:  # importable as a submodule: `from src.competitor_mining import derive_brand_name`
+    from src.api_clients import DataForSEOClient
+    from src.reframe_engine import ReframeEngine
+except ImportError:  # run standalone: `python3 src/competitor_mining.py` (src/ is on sys.path)
+    from api_clients import DataForSEOClient
+    from reframe_engine import ReframeEngine
 
 # Paths
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -32,8 +36,8 @@ def get_top_domains(path: str, limit: int = 5) -> List[str]:
     return df['domain'].head(limit).tolist()
 
 def derive_brand_name(domain: str) -> str:
-    """Extract 'jericho' from 'jerichocounselling.com'"""
-    name = domain.split('.')[0]
+    """Extract 'jericho' from 'jerichocounselling.com'. None-safe (returns '')."""
+    name = str(domain or "").split('.')[0]
     # Handle common counselor/counselling suffix removal
     for suffix in ['counselling', 'counseling', 'therapy', 'counselor', 'counsellor', 'psychology']:
         if name.endswith(suffix):

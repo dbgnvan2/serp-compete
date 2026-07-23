@@ -121,7 +121,7 @@ be fully recomputed.
 
 ## Verification
 
-Full local suite: **139 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
+Full local suite: **147 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
 — geo profiler, wire-up + cache-hit carry-forward, the extracted enrichment wiring, the
 **SC-6 SERP-overlap matrix**, **SC-4 barbell positioning**, **SC-3 AI share-of-voice**,
 **SC-5 branded-demand benchmark**, and **SC-8 reputation-risk radar** all covered; modules
@@ -133,16 +133,19 @@ live DataForSEO / serp-discover-export **inputs** remain integration-only. A run
 checklist for a real audit lives in `docs/TEST_RUN_CHECKLIST.md`.
 
 **Post-batch review-driven fixes.** F7: extracting the assembly (above) and its smoke test
-**caught a real bug** — `src/competitor_mining.py` uses bare `from api_clients import` /
-`from reframe_engine import` (should be `from src.…`), so it's un-importable as a submodule,
-which was silently disabling C1/C3 via their guarded `try/except`. Worked around by inlining
-`_derive_brand_name` in `comparison_features.py`; **the competitor_mining import bug is flagged
-as an adjacent issue, not swept**. F8: the SoV "cited-but-you're-not" gap is now a single
+**caught a real bug** — `src/competitor_mining.py` used bare `from api_clients import` /
+`from reframe_engine import` (should be `from src.…`), so it was un-importable as a submodule,
+silently disabling C1/C3 (which consume its `derive_brand_name`) via their guarded `try/except`.
+**Root-fixed:** the imports are now dual-mode (resolve both as `python3 src/competitor_mining.py`
+AND as `from src.competitor_mining import …`), the temporary inlined `_derive_brand_name` in
+`comparison_features.py` was removed so brand derivation has **one** canonical source, and
+`tests/test_competitor_mining.py` locks both the submodule import and the shared function
+(incl. a None-guard that was a latent crash). F8: the SoV "cited-but-you're-not" gap is now a single
 persisted `cited_gap` flag (computed once in `compute_sov`, read by the report) instead of two
 implementations that could drift.
 
-A **second sweep** on the F7/F8 diff caught two more (both fixed + regression-tested, hence
-139): **F1 (P8, HIGH)** — `cited_gap` was added only to `CREATE TABLE IF NOT EXISTS sov_daily`,
+A **second sweep** on the F7/F8 diff caught two more (both fixed + regression-tested):
+**F1 (P8, HIGH)** — `cited_gap` was added only to `CREATE TABLE IF NOT EXISTS sov_daily`,
 so a DB that already had `sov_daily` (from the C1 commit) never got the column; the next real
 run would silently disable C1 on save **and** crash the unguarded report `SELECT cited_gap`. Now
 migrated via `ALTER TABLE … ADD COLUMN` in the migrations block, locked by a dirty-state test.

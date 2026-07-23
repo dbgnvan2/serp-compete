@@ -20,19 +20,6 @@ import os
 from typing import Any, Dict
 
 
-def _derive_brand_name(domain: str) -> str:
-    """Brand stub from a domain ('jerichocounselling.com' -> 'jericho'). Mirrors
-    competitor_mining.derive_brand_name, inlined so this run-path module does NOT import
-    that standalone script — whose bare `from api_clients import ...` (should be
-    `from src.api_clients`) makes it un-importable as a submodule and would silently
-    disable C1/C3 via the guarded try/except. (Adjacent bug flagged, not swept.)"""
-    name = str(domain or "").split(".")[0]
-    for suffix in ("counselling", "counseling", "therapy", "counselor", "counsellor", "psychology"):
-        if name.endswith(suffix):
-            name = name[:-len(suffix)]
-    return name.lower()
-
-
 def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
                             client_domain: str, competitor_keywords: Dict[str, Any],
                             gsc: Any, dfs_client: Any, project_root: str) -> Dict[str, Any]:
@@ -43,6 +30,11 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
     from src.sov_analyzer import find_av_export, load_av_export, compute_sov
     from src.brand_demand import compute_branded_demand
     from src.risk_radar import compute_risk_signals
+    # F7 root fix: competitor_mining's bare imports are now dual-mode, so it's importable
+    # as a submodule — the run path uses the ONE canonical derive_brand_name (no inlined
+    # copy to drift). Lazy import keeps the offline script's pandas/API deps off the hot path
+    # until this function actually runs (where main.py has already loaded them).
+    from src.competitor_mining import derive_brand_name
 
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     client_da = shared_config.get("client", {}).get("da", 0)
@@ -103,7 +95,7 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         export_path = find_av_export(project_root, shared_config)
         sov = compute_sov(load_av_export(export_path), competitor_domains=domains,
                           snapshot_date=today,
-                          competitor_brands=[_derive_brand_name(d) for d in domains])
+                          competitor_brands=[derive_brand_name(d) for d in domains])
         summary["sov_available"] = sov["data_available"]
         if sov["data_available"]:
             db.save_sov(run_id, sov["rows"])
@@ -118,10 +110,10 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
 
     # C3 / SC-5: Branded-Demand Competitive Benchmark.
     try:
-        brand_by_domain = {d: _derive_brand_name(d) for d in domains}
+        brand_by_domain = {d: derive_brand_name(d) for d in domains}
         client_brands = shared_config.get("client", {}).get("brand_names") or []
         brand_by_domain[client_domain] = (client_brands[0] if client_brands
-                                          else _derive_brand_name(client_domain))
+                                          else derive_brand_name(client_domain))
         bd_rows = compute_branded_demand(
             brand_by_domain, dfs_client.get_search_volume, shared_config.get("branded_demand", {}),
             period=datetime.datetime.now().strftime("%Y-%m"),
