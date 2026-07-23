@@ -34,6 +34,7 @@ class ReportGenerator:
         df_geo = pd.DataFrame()
         df_overlap = pd.DataFrame()
         df_feasibility = pd.DataFrame()
+        df_positioning = pd.DataFrame()
 
         if gsc_findings:
             report.append("\n## 📈 Internal GSC Performance Gaps")
@@ -287,6 +288,39 @@ class ReportGenerator:
                     lambda x: "✅" if x else "❌")
                 report.append(df_feasibility.to_markdown(index=False))
 
+            # 3e. Barbell Positioning Diagnostic (C2 / SC-4)
+            df_positioning = pd.read_sql_query('''
+                SELECT domain, is_client, authority_score, focus_score, quadrant
+                FROM positioning WHERE run_id = ?
+                ORDER BY is_client DESC,
+                    CASE quadrant WHEN 'authoritative' THEN 0 WHEN 'niche_owner' THEN 1
+                        WHEN 'middle' THEN 2 WHEN 'emerging' THEN 3 ELSE 4 END, domain
+            ''', conn, params=(run_id,))
+
+            if not df_positioning.empty:
+                report.append("\n## Barbell Positioning Diagnostic")
+                report.append("Each domain on an **authority** (Moz DA + top-10 ranking count, "
+                              "the same formula for you and competitors) vs. **focus** "
+                              "(medical/systems tier-identity concentration) 2×2. "
+                              "_Barbell framing: winners are large-and-authoritative "
+                              "(`authoritative`) or small-and-niche (`niche_owner`); the "
+                              "undifferentiated `middle` is the danger zone. `emerging` / "
+                              "`insufficient_data` = too little signal to place, never silently "
+                              "`middle`. Rivals with avg PA > 50 are filtered upstream, so an "
+                              "empty `authoritative` quadrant does not mean none exist._")
+                quad_counts = df_positioning['quadrant'].value_counts().to_dict()
+                report.append("\n**Quadrant distribution:** "
+                              + ", ".join(f"{q}: {n}" for q, n in sorted(quad_counts.items())))
+                disp = df_positioning.copy()
+                disp['domain'] = disp.apply(
+                    lambda r: f"⭐ {r['domain']} (you)" if r['is_client'] else r['domain'], axis=1)
+                report.append(disp[['domain', 'authority_score', 'focus_score', 'quadrant']]
+                              .to_markdown(index=False))
+                mid = df_positioning[df_positioning['quadrant'] == 'middle']
+                if not mid.empty:
+                    report.append("\n⚠️ **Danger zone (undifferentiated middle):** "
+                                  + ", ".join(mid['domain'].tolist()) + ".")
+
             # 4. Strategic Openings & Reframes
             if reframes:
                 report.append("\n## 🎯 Automated Bowen Reframes")
@@ -323,6 +357,8 @@ class ReportGenerator:
                     df_overlap.to_excel(writer, sheet_name='SERP Overlap', index=False)
                 if not df_feasibility.empty:
                     df_feasibility.to_excel(writer, sheet_name='Feasibility', index=False)
+                if not df_positioning.empty:
+                    df_positioning.to_excel(writer, sheet_name='Positioning', index=False)
                 if reframes:
                     df_reframes = pd.DataFrame([{"keyword": r['keyword'], "url": r['url'], "reframe": r['reframe'][:500]} for r in reframes])
                     df_reframes.to_excel(writer, sheet_name='Automated Reframes', index=False)

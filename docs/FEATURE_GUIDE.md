@@ -266,6 +266,35 @@ the Systemic Vacuum list rather than repeating it.
 > framing, not a measured index. A companion **Competitor Feasibility** read (your
 > Domain Authority vs each competitor's) flags which targets are realistic.
 
+### 4.5 Barbell Positioning — the shape of the competitive field  ⭐ newest
+**What it does:** places every competitor (and you) on a 2×2 — an **authority** axis
+(Moz Domain Authority plus how many keywords they rank top-10 for — the *same* formula
+for you and competitors) against a **focus** axis (how concentrated their language
+identity is: a clear
+medical *or* systems voice = focused; a mix = broad). Each domain lands in a quadrant:
+**authoritative** (big & credible), **niche_owner** (small & sharply focused),
+**middle** (undifferentiated), or **emerging** / **insufficient_data** when there's too
+little signal to place them.
+
+**What it lets you understand:** the strategic shape of your market. The "barbell"
+idea: winners sit at the two ends — large-and-authoritative or small-and-niche — while
+the **undifferentiated middle loses**. It shows which competitors are entrenched
+authorities, which are focused specialists, and which are stuck in the beatable middle.
+
+**What you can then do:** pick your play by where rivals sit. Middle-quadrant
+competitors are the softest targets. To win, lean into an end of the barbell — a
+sharply focused systemic niche (`niche_owner`) rather than competing broadly with an
+`authoritative` incumbent.
+
+**Where you see it:** the *Barbell Positioning Diagnostic* section (quadrant
+distribution + a per-domain authority/focus/quadrant table, with **you** always plotted
+and the danger-zone middle flagged) and the *Positioning* Excel sheet.
+
+> **Read it honestly:** these are heuristic axes, not a measured market model. "Focus"
+> is *tier-identity concentration* (medical vs. systems language), not topic-count
+> breadth. You're always plotted, but since Search Console (not a page audit) feeds your
+> own axes, a run without GSC leaves you `insufficient_data` rather than mis-placed.
+
 ## 5. Movement-over-time features (longitudinal memory)
 
 Each run records a snapshot, so later runs can compare against earlier ones.
@@ -342,11 +371,12 @@ and `audit_results_run_12.xlsx`).
 | Identified 'Traffic Magnets' | Highest-value keyword pages | Your content backlog |
 | ⚡ Systemic Vacuums | Traffic with no systemic answer | Write these first |
 | SERP Overlap & Differentiation Gap | Where you collide (commodity) vs. are exclusive | Fill exclusive-competitor gaps; differentiate/skip commodity |
+| Barbell Positioning Diagnostic | The 2×2 shape of the field (who's authoritative / niche / stuck in the middle) | Target the middle; win by picking a barbell end |
 | 🎯 Automated Bowen Reframes | Draft outlines to counter each page | Brief your writer |
 
 ### 8.2 Excel workbook — sheet-by-sheet
 `Competitor Summary` · `Traffic Magnets` · `EEAT Scores` · `Cluster Analysis` ·
-`GEO Extractability` · `SERP Overlap` · `Feasibility` · `Automated Reframes` · `AI Usage Stats`. Each sheet is the
+`GEO Extractability` · `SERP Overlap` · `Feasibility` · `Positioning` · `Automated Reframes` · `AI Usage Stats`. Each sheet is the
 tabular form of the matching briefing section — use it to sort/filter (e.g. sort
 *GEO Extractability* by tier, or *Traffic Magnets* by traffic) and to paste into a
 content plan. A sheet only appears if that run produced data for it.
@@ -372,11 +402,15 @@ content plan. A sheet only appears if that run produced data for it.
   SERP), not a measured commodity index; and your `self_position` comes only from GSC,
   so a keyword you rank for won't show as "yours" unless it's in your Search Console
   data (and a page-2 position is treated as absent from the top-N battle).
+- **Barbell positioning axes are heuristic**, not a measured market model. "Focus" is
+  language-tier concentration (medical vs. systems), not topic breadth; and because
+  your own axes come from GSC (not a page audit), a run without GSC marks you
+  `insufficient_data` rather than mis-plotting you.
 - **Reframes are AI-drafted scaffolds**, not clinical copy — always apply your own
   judgement.
 
 ---
 
-*This guide describes the behaviour shipped in the code as of the SC-6 (SERP Overlap
-& Differentiation Gap) release. If a feature's behaviour changes, update this file
-alongside `suite_enhancement_spec_SERPCOMPETE_v1.md`.*
+*This guide describes the behaviour shipped in the code as of the C2/SC-4 (Barbell
+Positioning) release. If a feature's behaviour changes, update this file alongside
+`suite_enhancement_spec_SERPCOMPETE_v1.md`.*

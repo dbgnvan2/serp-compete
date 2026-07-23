@@ -128,6 +128,14 @@
     "commodity_high_overlap": 3,
     "framework_caption": "SERP overlap is a strategic framing of shared vs. defensible ground, not a measured commodity index. 'Commodity' here is a local overlap-density proxy (how many tracked rivals share the SERP); upgrade to the serp-discover D4 commodity export when it exists."
   },
+  "positioning": {
+    "authority_threshold": 50,
+    "focus_threshold": 50,
+    "authority_weights": { "moz_da": 0.7, "top10": 0.3 },
+    "top10_saturation": 10,
+    "min_signal_rankings": 2,
+    "framework_caption": "The barbell is a strategic framing — winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses — not a measured law. Authority = Moz DA + top-10 ranking count (the same formula for you and competitors); focus is tier-identity concentration (medical vs. systems language), not topic-count breadth. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist."
+  },
   "clinical_pivots": {
     "avoidant attachment": "Emotional Distance / Pursuer-Distancer",
     "anxious attachment": "Emotional Fusion / Pursuit",

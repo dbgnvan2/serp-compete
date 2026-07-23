@@ -20,8 +20,10 @@ All specification requirements for Tool 2 v3 have been implemented and tested:
 > counted in the v3 totals above): **SC-1** — competitor GEO / extractability (shipped);
 > **SC-6** — SERP Overlap & Differentiation Gap (shipped: the wired who-ranks-where
 > matrix + the previously-unwired `AnalysisEngine.find_keyword_intersection`/
-> `check_feasibility`, new `serp_overlap` + `competitor_feasibility` tables). The core
-> suite beside the source is now **87 passing**; this v3 root suite (`tests/`) remains **158/158**.
+> `check_feasibility`, new `serp_overlap` + `competitor_feasibility` tables); **SC-4** —
+> Barbell Positioning Diagnostic (shipped: authority×focus 2×2, new `positioning` table;
+> also wires competitor-DA persistence, which repairs C4 feasibility). The core suite
+> beside the source is now **106 passing**; this v3 root suite (`tests/`) remains **158/158**.
 
 ---
 

@@ -350,6 +350,12 @@ def run_audit():
             print(f"  Skipping high-authority domain (Avg PA {avg_pa:.1f} > 50): {domain}")
             continue
 
+        # C2/C4: persist this competitor's Domain Authority (avg Moz PA) so positioning
+        # (authority axis) and feasibility use the same DA basis as the client. Without
+        # this the competitors table stays empty and both features degrade silently.
+        if moz_metrics_map:
+            db.save_competitor_summary(domain, int(round(avg_pa)))
+
         domain_medical_total = 0
         domain_t2_total = 0
         domain_t3_total = 0
@@ -470,13 +476,17 @@ def run_audit():
     if all_metrics_to_save:
         db.save_competitor_metrics(all_metrics_to_save, run_id=run_id)
 
+    # Client's own GSC positions — shared by C4 (SERP overlap) and C2 (positioning).
+    # get_query_position_map catches its own fetch errors (returns {}), so this is
+    # safe to compute once outside the per-feature guards.
+    client_positions = gsc.get_query_position_map() if gsc else {}
+
     # C4 / SC-6: SERP Overlap & Differentiation Gap — the single wired who-ranks-
     # where matrix + the previously-unwired AnalysisEngine keyword-intersection gap
     # and feasibility. Competitor positions come from competitor_metrics; the
     # client's own positions from first-party GSC (the handoff is competitor-only).
     try:
         from src.serp_overlap import analyze_serp_overlap
-        client_positions = gsc.get_query_position_map() if gsc else {}
         overlap = analyze_serp_overlap(
             competitor_positions=db.get_competitor_positions(run_id),
             client_positions=client_positions,
@@ -502,6 +512,32 @@ def run_audit():
               f"{len(overlap['feasibility'])} competitors scored for feasibility.")
     except Exception as overlap_err:
         print(f"⚠️ SERP overlap analysis skipped: {overlap_err}")
+
+    # C2 / SC-4: Barbell Positioning Diagnostic — authority x focus 2x2 over the
+    # competitors (authority from Moz DA + top-10 rankings, focus from tier identity)
+    # plus the client (always plotted; its authority from config DA + GSC top-10, its
+    # focus from classifying its GSC queries into tiers, since Compete doesn't audit it).
+    # get_positioning_inputs now includes moz_da so competitors use the client's formula.
+    try:
+        from src.positioning import compute_positioning, classify_query_tiers
+        pos_cfg = shared_config.get("positioning", {})
+        comp_inputs = db.get_positioning_inputs(run_id)
+        client_med, client_sys = classify_query_tiers(
+            list(client_positions.keys()), shared_config.get("clinical", {}))
+        client_inputs = {
+            "moz_da": shared_config.get("client", {}).get("da"),
+            "top10_count": sum(1 for p in client_positions.values() if p <= 10),
+            "medical_total": client_med, "systems_total": client_sys,
+        }
+        pos_rows = compute_positioning(comp_inputs, client_domain, client_inputs, pos_cfg)
+        db.save_positioning(run_id, pos_rows,
+                            computed_at=datetime.datetime.now().strftime("%Y-%m-%d"))
+        quads = {}
+        for r in pos_rows:
+            quads[r["quadrant"]] = quads.get(r["quadrant"], 0) + 1
+        print("   🧭 Positioning: " + ", ".join(f"{q}: {n}" for q, n in sorted(quads.items())))
+    except Exception as pos_err:
+        print(f"⚠️ Positioning analysis skipped: {pos_err}")
 
     # Strategic Logic with PAA context from Handover
     print("Identifying Strategic Openings...")

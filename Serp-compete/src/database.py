@@ -286,6 +286,24 @@ class DatabaseManager:
             ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_competitor_feasibility_run ON competitor_feasibility(run_id)')
 
+            # C2 / SC-4: Barbell Positioning (authority x focus 2x2). Domain-keyed.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS positioning (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    domain TEXT NOT NULL,
+                    is_client BOOLEAN,
+                    computed_at TEXT,
+                    authority_score REAL,
+                    focus_score REAL,
+                    quadrant TEXT,
+                    rationale_json TEXT,
+                    estimation_basis TEXT,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_positioning_run ON positioning(run_id)')
+
             conn.commit()
 
     def create_run(self, client_domain: str) -> int:
@@ -452,6 +470,59 @@ class DatabaseManager:
                 for domain, v in (feasibility or {}).items()
             ])
             conn.commit()
+
+    def save_positioning(self, run_id: int, rows: List[Dict[str, Any]],
+                         computed_at: str = None):
+        """C2/SC-4: persist the barbell positioning rows (competitors + the client)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT INTO positioning (run_id, domain, is_client, computed_at,
+                    authority_score, focus_score, quadrant, rationale_json, estimation_basis)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', [
+                (run_id, r["domain"], int(bool(r.get("is_client"))), computed_at,
+                 r.get("authority_score"), r.get("focus_score"), r.get("quadrant"),
+                 json.dumps(r.get("rationale", {})), r.get("estimation_basis"))
+                for r in rows
+            ])
+            conn.commit()
+
+    def get_positioning_inputs(self, run_id: int) -> Dict[str, Dict[str, Any]]:
+        """C2/SC-4: per-competitor {moz_da, top10_count, medical_total, systems_total}.
+
+        Focus/tier signal from traffic_magnets; top-10 count from competitor_metrics;
+        Moz DA from the competitors table (populated per run by save_competitor_summary,
+        so competitors use the SAME authority formula as the client). Only domains
+        audited this run are included.
+        """
+        inputs: Dict[str, Dict[str, Any]] = {}
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # tier totals (the focus axis)
+            cursor.execute('''SELECT domain, SUM(medical_score), SUM(systems_score)
+                              FROM traffic_magnets WHERE run_id = ? GROUP BY domain''',
+                           (run_id,))
+            for domain, medical, systems in cursor.fetchall():
+                d = inputs.setdefault(domain, {})
+                d["medical_total"] = float(medical or 0)
+                d["systems_total"] = float(systems or 0)
+            # top-10 ranking count (an authority component)
+            cursor.execute('''SELECT domain, COUNT(*) FROM (
+                                SELECT domain, keyword, MIN(position) AS mp
+                                FROM competitor_metrics
+                                WHERE run_id = ? AND keyword IS NOT NULL AND position IS NOT NULL
+                                GROUP BY domain, keyword)
+                              WHERE mp <= 10 GROUP BY domain''', (run_id,))
+            for domain, count in cursor.fetchall():
+                inputs.setdefault(domain, {})["top10_count"] = int(count)
+            # Moz DA per domain (the authority axis, shared with the client). Only
+            # attach it to domains actually audited this run.
+            cursor.execute('SELECT domain, avg_da FROM competitors WHERE avg_da IS NOT NULL')
+            for domain, avg_da in cursor.fetchall():
+                if domain in inputs:
+                    inputs[domain]["moz_da"] = int(avg_da)
+        return inputs
 
     def get_competitor_positions(self, run_id: int) -> Dict[str, Dict[str, int]]:
         """C4/SC-6: {keyword: {domain: best (lowest) position}} from competitor_metrics."""

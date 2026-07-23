@@ -121,14 +121,13 @@ be fully recomputed.
 
 ## Verification
 
-Full local suite: **87 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
-— geo profiler, wire-up persistence, cache-hit carry-forward, the extracted
-enrichment wiring, and the **SC-6 SERP-overlap matrix** (cell classification incl.
-the GSC-unavailable `self_unknown` path, case-insensitive join, volume rollups,
-AnalysisEngine gap + feasibility, DB readers) all covered; modules byte-compile. The
-root v3 suite (`PYTHONPATH=Serp-compete pytest tests/ -q`) stays at **158 passing**.
-Only the outer SERP loop of `run_audit` (DataForSEO / Moz / spaCy / OpenAI) remains
-integration-only.
+Full local suite: **106 passing** (`cd Serp-compete && PYTHONPATH=. pytest tests/ -q`)
+— geo profiler, wire-up persistence, cache-hit carry-forward, the extracted enrichment
+wiring, the **SC-6 SERP-overlap matrix**, and the **SC-4 barbell positioning** (authority
+/ focus axes, quadrant assignment incl. emerging/insufficient guards, the DA-persistence
+path, DB readers) all covered; modules byte-compile. The root v3 suite
+(`PYTHONPATH=Serp-compete pytest tests/ -q`) stays at **158 passing**. Only the outer
+SERP loop of `run_audit` (DataForSEO / Moz / spaCy / OpenAI) remains integration-only.
 
 ## Read first (this repo)
 
@@ -173,6 +172,55 @@ reach.
   `shared_config.json`; no new hardcoded editorial content in Python.
 - SC-1.4 Existing serp-compete suites stay green; new logic covered per the v3 test
   conventions.
+
+---
+
+## SC-4 — Barbell Positioning Diagnostic  · **✅ SHIPPED** · reuse-heavy
+
+**Problem.** Winners are large-and-authoritative or small-and-niche; the undifferentiated
+middle loses. The discrete `tag_competitor_position` labels existed, but not the
+continuous authority×focus 2×2 quadrant.
+
+**What shipped.** `src/positioning.py` — an **authority** axis (0-100) × a **focus** axis
+(0-100) 2×2:
+- **authority** = a config-weighted composite of **Moz DA + top-10 ranking count**, the
+  SAME formula for competitors and the client (commensurability). Competitor DA is
+  persisted per run by `save_competitor_summary` (newly wired into `run_audit`); the
+  client's DA is `client.da`; top-10 counts come from GSC (client) / competitor_metrics.
+- **focus** = `1 - normalized_entropy([medical, systems])` — tier-identity concentration
+  from the traffic_magnets tier scores (the client: classify its GSC queries into tiers).
+- **quadrant** ∈ authoritative / niche_owner / middle / emerging / insufficient_data.
+  Thin or un-scoreable domains are emerging / insufficient_data, never silently `middle`;
+  the client is always plotted. New `positioning` table (`db.save_positioning`); report
+  "Barbell Positioning Diagnostic" section + Excel sheet. Config:
+  `shared_config.json → positioning`.
+
+**Acceptance criteria.**
+- SC-4.1 client always plotted — `tests/test_positioning.py::test_sc41_client_always_plotted`
+  (+ `::test_sc41_client_plotted_even_with_no_data`).
+- SC-4.2 thresholds from config — `::test_sc42_thresholds_read_from_config`.
+- SC-4.3 quadrant assignment at the corners — `::test_sc43_quadrant_corners` +
+  `::test_sc43_via_positioning_row`.
+- SC-4.4 rationale carries the numbers — `::test_sc44_rationale_has_numbers`.
+- Guards (never silently middle) — `::test_thin_domain_is_emerging_not_middle`,
+  `::test_no_tier_signal_is_insufficient_not_middle`.
+
+**Review-driven fixes (pre-push sweep).** (1) The authority axis was **incommensurable**:
+`competitors.avg_da` was never populated (its writer `save_competitor_summary` had no
+caller), so competitors used {EEAT, top-10} while the client used {DA, top-10} — two
+different formulas on one plot — and EEAT double-embeds DA. Fixed by wiring
+`save_competitor_summary(domain, avg_pa)` on the run path and using **{Moz DA, top-10} for
+both sides** (EEAT dropped from the axis; it stays in its own report section). **The same
+wiring also repairs C4 feasibility, which was latent-empty for the same missing-DA
+reason.** (2) The `emerging` gate now requires thin evidence **and** low authority, so an
+established high-DA rival that just doesn't rank in the niche isn't mislabelled emerging.
+(3) The report/config caption now matches the actual formula and notes that avg-PA > 50
+rivals are filtered upstream (an empty `authoritative` quadrant ≠ none exist).
+
+**Known limitation.** "Focus" is tier-identity concentration (medical vs. systems), not
+topic-count breadth. The client's axes come from GSC (not a page audit), so a GSC-less run
+leaves the client `insufficient_data` (still plotted). Genuinely authoritative rivals
+(avg PA > 50) are filtered upstream and won't appear.
 
 ---
 
