@@ -1,8 +1,11 @@
 # SC-7-YT — YouTube Share-of-Attention (phase 1 of SC-7)
 
-**Status:** SPEC — awaiting owner approval. **No code until approved** (per `~/.claude/CLAUDE.md`
-planning rules). Supersedes the YouTube portion of `compete-spec.md#C5` (Off-Platform
-Share-of-Attention Tracker), which remains DEFERRED for all other platforms.
+**Status:** SPEC. **Owner decision (2026-07-23):** proceed with the `ptd`-side export (§9 **step 1**)
+ONLY for now; the serp-compete consumer (§9 steps 2–8) is **ON HOLD pending decision D2** — whether
+the tracked competitors actually run YouTube channels (see `TODO.md`). **No code until the relevant
+part is approved/planned** (per `~/.claude/CLAUDE.md` planning rules). Supersedes the YouTube portion
+of `compete-spec.md#C5` (Off-Platform Share-of-Attention Tracker), which remains DEFERRED for all
+other platforms.
 
 **Spec ID:** `SC-7-YT` (phase 1 of the proposed `SC-7`). Sub-criteria `SC-7-YT.1 … SC-7-YT.13`.
 **Companion docs:** `compete-spec.md#C5` (original deferred design), `RECONCILIATION_CHANGES.md`
