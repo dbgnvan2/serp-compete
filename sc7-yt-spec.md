@@ -1,305 +1,343 @@
-# SC-7-YT — YouTube Share-of-Attention (phase 1 of SC-7)
+# SC-7-YT — YouTube Competitive Attention (phase 1 of SC-7)
 
-**Status:** SPEC. **Owner decision (2026-07-23):** proceed with the `ptd`-side export (§9 **step 1**)
-ONLY for now; the serp-compete consumer (§9 steps 2–8) is **ON HOLD pending decision D2** — whether
-the tracked competitors actually run YouTube channels (see `TODO.md`). **No code until the relevant
-part is approved/planned** (per `~/.claude/CLAUDE.md` planning rules). Supersedes the YouTube portion
-of `compete-spec.md#C5` (Off-Platform Share-of-Attention Tracker), which remains DEFERRED for all
-other platforms.
+**Status:** SPEC — awaiting approval to plan/build. **No implementation code until approved**
+(per `~/.claude/CLAUDE.md` planning rules). Supersedes the YouTube portion of `compete-spec.md#C5`
+(Off-Platform Share-of-Attention Tracker); all other platforms there remain DEFERRED.
 
-**Spec ID:** `SC-7-YT` (phase 1 of the proposed `SC-7`). Sub-criteria `SC-7-YT.1 … SC-7-YT.13`.
+**Owner decision (2026-07-23):** two-tier design — a cheap **Presence Check** inside serp-compete
+via the **official YouTube Data API**, then a heavier **Attention Dive** in `ptd` (yt-dlp), gated on
+the check. This **retires D2** (whether competitors run channels): the tool now *discovers* that
+instead of asking the owner.
+
+**Spec ID:** `SC-7-YT` (phase 1 of the proposed `SC-7`). Sub-criteria `SC-7-YT.P1.x` (Phase 1)
+and `SC-7-YT.P2.x` (Phase 2).
 **Companion docs:** `compete-spec.md#C5` (original deferred design), `RECONCILIATION_CHANGES.md`
-(why draft names were corrected), `suite_enhancement_spec_SERPCOMPETE_v1.md` (shipped SC-1…SC-8).
+(why draft names were corrected), `suite_enhancement_spec_SERPCOMPETE_v1.md` (shipped SC-1…SC-8),
+`TODO.md` (backlog + resume path).
 
 ---
 
 ## 1. Why this is being un-deferred (YouTube only)
 
-C5 was deferred on 2026-07-22 with this reasoning:
+C5 was deferred on 2026-07-22: *"each platform is a paid/rate-limited provider — low ROI for one
+nonprofit."* **Both halves of that are answerable for YouTube:**
 
-> "The blocker is data access, not effort: this is the only feature needing sources beyond the
-> three confirmed (SERP/rank, GSC, LLM APIs), and **each platform is a paid/rate-limited
-> provider** — low ROI for one nonprofit."
+- **Paid?** No. The `ptd` app (Podcast Tracker Dashboard, `/Volumes/davemini/ProjectsMini1/ptd`)
+  already does YouTube discovery + transcript retrieval with the **free `yt-dlp` binary** — verified:
+  zero `googleapis` / `googleapiclient` / `youtube/v3` references in it. And the *check* half (below)
+  uses the official Data API's **free daily quota** (10,000 units/day at time of writing — treat as a
+  current default to confirm, not a guarantee).
+- **Rate-limited?** Only the *scraping* path (yt-dlp) hits HTTP 429 with minutes-to-hours IP
+  cooldowns. The Data API is quota-bounded, not cooldown-bounded — a handful of competitor lookups is
+  a rounding error against the daily quota.
 
-**Half that premise is now disproven for YouTube.** The `ptd` app (Podcast Tracker Dashboard,
-`/Volumes/davemini/ProjectsMini1/ptd`) already performs YouTube discovery and transcript
-retrieval in production, and the code was inspected directly:
-
-- **No paid provider, no API key, no quota.** Verified: zero references to `googleapis`,
-  `googleapiclient`, `YOUTUBE_API_KEY`, or `youtube/v3` anywhere in the app. All access is the
-  free `yt-dlp` binary via `subprocess`.
-- **Rate limiting is real and remains the only constraint** — HTTP 429 with IP-wide cooldowns
-  lasting minutes to hours. `ptd` already absorbs this (`overnight_pipeline.py` retry loop,
-  per-call backoff).
-
-**Scope discipline:** only YouTube's blocker dissolved. **TikTok, Instagram, Reddit and podcasts
-stay DEFERRED** under the original C5 reasoning — they genuinely require paid providers. Any
-proposal to add them is out of scope for SC-7-YT.
+**Scope discipline:** only YouTube's blocker dissolved. **TikTok, Instagram, Reddit, podcasts stay
+DEFERRED** under the original C5 reasoning (real paid providers). Out of scope for SC-7-YT.
 
 ---
 
-## 2. Architecture decision — CONSUME an export, do not scrape from serp-compete
+## 2. Architecture — split the cheap *check* from the heavy *dive*; each gets the right tool
 
-**Decided approach:** `ptd` produces a YouTube attention export; serp-compete **consumes** it.
-serp-compete itself never calls YouTube.
+The core decision: **serp-compete never runs the *scraper*, but it may make bounded, sanctioned
+*API* calls.** The two jobs want different tools, and the tools' strengths map onto the jobs:
 
-This mirrors the already-shipped C1/SC-3 pattern exactly (serp-compete consumes serp-discover's
-AI-visibility export via `sov_analyzer.find_av_export` / `load_av_export`, degrading honestly with
-`data_available: false`). Three concrete reasons:
+| | **Phase 1 — Presence Check** | **Phase 2 — Attention Dive** |
+|---|---|---|
+| Question | Does competitor X have a channel? how big/active? | What's said in the niche; who's mentioned? |
+| Tool | **YouTube Data API** (HTTPS via `urllib`) | **yt-dlp** (transcripts) |
+| Where | **serp-compete** (`src/`), inline in `run_audit` | **`ptd`**, consumed as a JSON export |
+| Cost | ~1–102 quota units per competitor; bounded | Heavy; 429 IP-cooldowns (min–hours) |
+| ToS | Sanctioned official API | Grey — confined to the owner's research tool |
 
-1. **429 cooldowns must not stall an audit.** Cooldowns run minutes-to-hours. `run_audit()` is a
-   batch job the user watches; blocking it on YouTube rate limits is unacceptable. `ptd` already
-   has the patient offline runner for this.
-2. **serp-compete gains NO new runtime dependency.** No `yt-dlp` binary, no `curl_cffi`, no API
-   key. It reads a JSON file — nothing more. (Contrast: porting the fetchers would add all three.)
-3. **The ToS question stays contained.** yt-dlp scraping is against YouTube's Terms of Service;
-   the official Data API is not. Under this design that exposure lives entirely in `ptd`, which
-   the owner already operates for their own research — serp-compete, which is client-facing,
-   never scrapes anything. **This is an owner decision to ratify (§10, D1), not an assumption.**
+**Why the Data API can live in serp-compete when yt-dlp cannot** — it neutralises all three reasons
+the scraper was kept out:
+1. **No IP cooldowns.** Quota, not 429 cooldowns; can't stall `run_audit()`.
+2. **No binary dependency.** A plain HTTPS call via `urllib` — exactly how `api_clients.py` already
+   talks to DataForSEO / Moz, and `analyze_transcripts`-style LLM calls talk to OpenAI. Only a key is
+   added (env-only; §6).
+3. **ToS-clean.** The official API is sanctioned; no scraping in client-facing code.
 
-> **Rejected alternative (recorded for traceability, per the C1 precedent):** porting
-> `search_youtube` / `fetch_channel_videos` / `get_video_details` / `fetch_transcripts.py` into
-> `Serp-compete/src/`. Rejected because it duplicates `ptd`'s most-built part, drags 429 latency
-> into `run_audit()`, and adds three runtime deps. Revisit only if `ptd` is retired.
+**Why the split is natural, not redundant:** the Data API is good at exactly what the check needs
+(existence, subscriber count, upload cadence) and **cannot** readily deliver transcripts; yt-dlp is
+the reverse. So Phase 1 (metadata) → Data API, Phase 2 (transcripts) → yt-dlp. They do different
+jobs, not two versions of one.
 
-### What `ptd` already provides (inspected, not assumed)
+**Phase 2 still CONSUMES a `ptd` export — never scrapes from serp-compete** (the shipped C1/SC-3
+pattern: `sov_analyzer.find_av_export` / `load_av_export`, `data_available:false` honest
+degradation). This keeps 429 latency out of the audit and confines yt-dlp's ToS exposure to `ptd`.
 
-| `ptd` asset | Role in SC-7-YT |
+> **Rejected alternative (recorded for traceability, per the C1 precedent):** porting `ptd`'s yt-dlp
+> fetchers (`search_youtube` / `fetch_channel_videos` / `fetch_transcripts.py`) into
+> `Serp-compete/src/`. Rejected — duplicates `ptd`'s most-built part, drags 429 latency into
+> `run_audit()`, adds a binary+`curl_cffi` dep, and puts scraping in client-facing code. The Data
+> API in serp-compete is **not** this — it is a sanctioned metadata call, not the scraper.
+
+### The two phases gate each other
+
+Phase 1 **auto-discovers** which competitors have channels and produces candidate channel IDs.
+That output (owner-confirmed for ambiguous cases) **seeds Phase 2's channel list** — so Phase 2
+dives only channels worth diving, and the owner never hand-builds a channel map from scratch.
+**Phase 1 is self-contained in serp-compete and ships on its own value** ("who in your competitive
+set is on YouTube, and how active") even if Phase 2 is never built.
+
+### What `ptd` already provides for Phase 2 (inspected, not assumed)
+
+| `ptd` asset | Role |
 |---|---|
-| `fetch_channel_videos(handle_or_url, n)` — scans `/videos` + `/streams` + `/podcasts` | Per-competitor channel harvesting |
-| `get_video_details(id)` — full per-video metadata | views / likes / comments / duration |
-| `search_youtube(query, n)` — `ytsearch` topic discovery | Topic corpus for mention-SoV |
-| `fetch_transcripts.py` — VTT → clean text + timestamped segments | Brand-mention detection |
-| `channels` table (`channel_id`, `channel_name`, `handle`, `channel_url`) | Channel identity |
+| `fetch_channel_videos(handle_or_url, n)` — scans `/videos`+`/streams`+`/podcasts` | Per-channel video harvest |
+| `get_video_details(id)` | views / likes / comments / duration |
+| `search_youtube(query, n)` | Topic corpus for mention-SoV |
+| `fetch_transcripts.py` → clean text + timestamped segments; `dedup_rolling` | Brand-mention detection |
 
-These already meet this repo's standards: every yt-dlp call carries timeout + retry + 429 backoff
-(**P5**), and `BLOCKED_MARKERS` separates retryable `error` from terminal `not_available` (**P1** —
-the code cites "LEARNINGS P1"). `dedup_rolling` handles YouTube's rolling-caption duplication.
-**No quality downgrade is introduced by reusing them.**
+These already meet this repo's bar: every yt-dlp call has timeout+retry+429 backoff (**P5**);
+`BLOCKED_MARKERS` separates retryable `error` from terminal `not_available` (**P1**, cited in-code).
+No quality downgrade from reuse.
 
 ---
 
-## 3. Producer/consumer contract (P19 — the highest-risk seam)
+## 3. Phase 1 — YouTube Presence Check (serp-compete, Data API)
 
-The export is a **format contract between two repos**. P19 (producer/consumer drift that fails
-silent) is the dominant risk: a `ptd`-side change could make serp-compete parse zero rows and
-report success. The contract is therefore versioned, validated, and round-trip tested against a
-**real** artifact — never a synthetic ideal-shape fixture.
+**Goal:** for each competitor (and the client), determine channel existence and basic vitals, and
+report it. This is the D2 answer, produced in-audit.
 
-**File:** `youtube_attention_export_<profile>_<YYYYMMDDHHMM>.json`
-**Location:** serp-compete repo root or a path set in `shared_config.json → youtube_attention.export_path`.
-**Selection contract:** newest `data_available: true` by `source_run_ts` — identical semantics to
-`find_av_export`, and implemented by reusing that logic rather than a second copy (P19/DRY).
+**3.1 Inputs.** The competitor set is already in scope at audit time — domains + `client_brand_names`
+from the ingested handoff / `competitors` table. No new source.
+
+**3.2 Lookup (quota-aware).**
+- If `youtube_presence.channel_map` already names a channel/handle for a domain → `channels.list`
+  by handle/id (**1 unit** — cheap, deterministic). This is the steady-state path once channels are
+  confirmed.
+- Else auto-discover: `search.list?type=channel&q=<brand>` (**~100 units**) → top
+  `max_candidates_per_competitor`. Then `channels.list` (statistics + uploads playlist, **1 unit**)
+  and `playlistItems.list` on the uploads playlist (**1 unit**) for `last_upload_date` and a recent-
+  upload count. ~102 units/competitor discovering; ~2 units/competitor once mapped.
+
+**3.3 Matching & confidence (P7 — a same-name channel is NOT a confirmed match).** Score each
+candidate: exact/normalised brand↔title match, the competitor's **domain appearing in the channel's
+About/links** (strong signal), handle match. Emit `match_confidence` (high/medium/low) and
+`match_basis`. **`high` only for domain-in-about or an exact handle match**; a bare name match is at
+most `medium` (a `candidate`, owner-confirmable), never auto-`confirmed`. This is the adversarial
+guard: "Living Systems" the practice must not be confirmed as "Living Systems" some unrelated vlog.
+
+**3.4 Honest states (P1/P2 — "no channel" ≠ "couldn't check").** `check_status ∈
+{confirmed, candidate, none_found, error}`. A quota exhaustion / 5xx / network failure is `error`
+(retryable), **never** silently recorded as `none_found`. Counts are logged ("checked N, confirmed
+C, candidates K, none D, errors E, quota units used U").
+
+**3.5 Hardening (P5).** The Data API client is hardened exactly like its `api_clients.py` siblings —
+timeout + retry + backoff, transient (429/5xx/quotaExceeded) vs terminal distinguished. A
+`daily_quota_budget` cap stops and **announces** what it skipped (P9), never silently truncates.
+
+**3.6 Key handling.** The API key is read from env / `.env` only (`youtube_presence.api_key_env`,
+default `YOUTUBE_API_KEY`) — **never** committed to config or code (the repo's `client_secret_*`
+gitignore discipline). Absent key → Phase 1 skips honestly (`data_available:false`, no rows, section
+absent, console says so), never a crash.
+
+**3.7 Output.** A "YouTube Presence" report section + Excel sheet: per competitor — has-channel?,
+handle, subscribers, last-upload, recent-activity, confidence; the client marked (⭐). This section
+alone answers "who's on YouTube."
+
+### Phase 1 data model (domain-keyed)
+
+```
+yt_channel_presence (run_id INT, domain TEXT, checked_at TEXT,
+                     has_channel BOOLEAN,          -- true | false | NULL(unknown/error)
+                     channel_id TEXT, handle TEXT, channel_title TEXT, channel_url TEXT,
+                     subscriber_count INT, video_count INT,
+                     last_upload_date TEXT, uploads_recent INT,   -- activity in active_recency_days
+                     match_confidence TEXT,        -- high | medium | low
+                     match_basis TEXT,             -- domain_in_about | handle | name_exact | none
+                     check_status TEXT,            -- confirmed | candidate | none_found | error
+                     estimation_basis TEXT,
+                     PRIMARY KEY (run_id, domain, channel_id))
+```
+`competitor_id` is deliberately absent — the real `competitors` table is `domain TEXT PRIMARY KEY`
+(verified; the same correction `RECONCILIATION_CHANGES.md` records). New table via
+`CREATE TABLE IF NOT EXISTS`; any later column via the `ALTER TABLE … ADD COLUMN` migrations block
+(the F1/P8 lesson).
+
+---
+
+## 4. Phase 2 — YouTube Attention Dive (ptd export, consumed; gated on Phase 1)
+
+Runs only for competitors Phase 1 confirmed. Adds the transcript-derived depth the Data API can't
+give.
+
+**4.1 Producer/consumer contract (P19 — highest-risk seam).** `ptd` writes
+`youtube_attention_export_<profile>_<YYYYMMDDHHMM>.json`; serp-compete consumes it, selecting the
+newest `data_available:true` by `source_run_ts` — **reusing** `find_av_export`'s logic, not a second
+copy. Versioned + round-trip tested against a **real** artifact (never a synthetic ideal shape).
 
 ```jsonc
 {
-  "schema_version": "1.0",
-  "data_available": true,              // false = an honest stub; consumer skips the feature
-  "source_run_ts": "2026-07-23T09:00:00Z",
-  "profile": "seo-geo",
-  "window_days": 90,                   // the observation window these metrics cover
-  "channels": [                        // one row per tracked channel
-    { "channel_id": "UC…", "handle": "@example", "channel_url": "https://…",
-      "channel_name": "Example Counselling", "subscriber_count": 12500,  // null if unavailable
-      "verified": true }
-  ],
-  "channel_metrics": [                 // aggregate per channel over window_days
-    { "channel_id": "UC…", "video_count": 14, "total_views": 82000,
-      "avg_views_per_video": 5857.1, "avg_views_per_day": 911.1,
-      "engagement_rate": 0.031 }       // (likes+comments)/views; null if unavailable
-  ],
-  "brand_mentions": [                  // from TRANSCRIPTS (the capability upside)
-    { "brand": "Example Counselling", "mention_videos": 6, "mention_count": 11 }
-  ],
-  "corpus": { "videos_scanned": 210, "videos_with_transcript": 173 }  // coverage, for honesty
+  "schema_version": "1.0", "data_available": true,
+  "source_run_ts": "2026-07-23T09:00:00Z", "profile": "counselling", "window_days": 90,
+  "channels": [ { "channel_id": "UC…", "handle": "@ex", "channel_name": "Example Counselling",
+                  "domain": "example.com" } ],       // domain carried from Phase 1's confirmed map
+  "channel_metrics": [ { "channel_id": "UC…", "video_count": 14, "total_views": 82000,
+                         "avg_views_per_video": 5857.1, "avg_views_per_day": 911.1,
+                         "engagement_rate": 0.031 } ],
+  "brand_mentions": [ { "brand": "Example Counselling", "mention_videos": 6, "mention_count": 11 } ],
+  "corpus": { "videos_scanned": 210, "videos_with_transcript": 173 }
 }
 ```
 
-`subscriber_count` is nullable **by design**: it is not currently captured by `ptd`, and whether
-`yt-dlp` exposes it was deliberately **not** verified (that needs a live call which would consume
-the owner's YouTube rate limit). Producing it is a `ptd`-side task (§9, step 1); the consumer must
-work correctly when it is `null` (SC-7-YT.6).
+**4.2 Brand-mention SoV (the depth beyond the check).** Competitor brands via the canonical
+`brand_utils.derive_brand_name` (config vocab, case-insensitive) — no second implementation.
+Mention = **word-boundary / brand-term match, never substring** (the C1 rule). `mention_share` over
+all tracked entities; untracked → `other` so shares sum ~100% (mirrors SC-3.1).
 
----
+**4.3 `attention_index`.** Weighted mean of normalised 0–100 sub-scores (subscribers, avg views,
+engagement, mention share), weights in config. **A missing component is EXCLUDED and weights
+renormalised — never scored 0** (the C2 `compute_authority` rule; the exact F2/P12 defect fixed
+2026-07-23). `coverage_pct` reports how many components had data (P2).
 
-## 4. Data model — domain-keyed (correcting the C5 draft)
+**4.4 Honest degradation.** No export → `data_available:false`, no rows, section absent (not a table
+of zeros). Partial data → partial index + `coverage_pct`, never a hard failure.
 
-> **Correction carried forward from `RECONCILIATION_CHANGES.md`.** C5's draft model used
-> `attention_source (competitor_id, …)`. **`competitor_id` does not exist in this repo.** Verified:
-> `database.py` defines `CREATE TABLE competitors (domain TEXT PRIMARY KEY, avg_da INTEGER, …)`.
-> All SC-7-YT tables are keyed by **`domain`**, consistent with `serp_overlap`, `positioning`,
-> `sov_daily`, `brand_demand_bench`, and `risk_signal`.
-
-Added to `database.py::_create_tables()` via `CREATE TABLE IF NOT EXISTS`, with any later column
-added through the **`ALTER TABLE … ADD COLUMN` migrations block** (the F1/P8 lesson — a column
-added only to `CREATE TABLE` never reaches an existing DB).
+### Phase 2 data model (domain-keyed)
 
 ```
-yt_attention_source (domain TEXT, channel_id TEXT, handle TEXT, channel_url TEXT,
-                     channel_name TEXT, is_client BOOLEAN, verified BOOLEAN,
-                     match_basis TEXT,          -- config_map | handle_match | unmapped
-                     PRIMARY KEY (domain, channel_id))
-
 yt_attention_metric (run_id INT, domain TEXT, channel_id TEXT, snapshot_date TEXT,
                      subscriber_count INT, video_count INT, total_views INT,
-                     avg_views_per_video REAL, avg_views_per_day REAL,
-                     engagement_rate REAL, window_days INT,
-                     estimation_basis TEXT, data_available BOOLEAN)
+                     avg_views_per_video REAL, avg_views_per_day REAL, engagement_rate REAL,
+                     window_days INT, estimation_basis TEXT, data_available BOOLEAN)
 
-yt_mention_sov     (run_id INT, snapshot_date TEXT, entity TEXT, domain TEXT,
-                    is_client BOOLEAN, category TEXT,       -- client | competitor | other
+yt_mention_sov     (run_id INT, snapshot_date TEXT, entity TEXT, domain TEXT, is_client BOOLEAN,
+                    category TEXT,          -- client | competitor | other
                     mention_videos INT, mention_count INT, mention_share REAL,
                     videos_scanned INT, videos_with_transcript INT, estimation_basis TEXT)
 
 yt_attention_rollup (run_id INT, snapshot_date TEXT, domain TEXT, is_client BOOLEAN,
-                     has_presence BOOLEAN, attention_index REAL, coverage_pct REAL,
-                     estimation_basis TEXT)
+                     has_presence BOOLEAN, attention_index REAL, coverage_pct REAL, estimation_basis TEXT)
 ```
 
 ---
 
-## 5. Core logic
+## 5. Config (`shared_config.json`)
 
-**5.1 Channel ↔ competitor mapping.** A channel is tied to a competitor domain by an explicit map
-in `shared_config.json → youtube_attention.channel_map` (`{"example.com": ["@handle"]}`). Handle
-matching is a *suggestion* only. Channels that cannot be mapped are **counted and logged, never
-silently dropped** (P2), and `match_basis` records how each link was made. **Unverified channels
-are excluded from `attention_index`** (carried from C5's original acceptance criteria).
-
-**5.2 Brand-mention SoV (the upside beyond C5's spec).** Competitor brands are derived with the
-existing canonical `brand_utils.derive_brand_name` (config vocab, case-insensitive) — no second
-implementation. Mention detection is **word-boundary / brand-term matching, never substring**,
-matching the C1 rule ("mention = brand-term/domain match, not substring"). `mention_share` is
-computed over all tracked entities per snapshot; untracked brands roll into `other` so shares sum
-to ~100% (mirrors SC-3.1).
-
-**5.3 `attention_index`.** A weighted mean over normalized 0–100 sub-scores — subscribers, avg
-views, engagement rate, mention share — with weights in config. **A missing component is EXCLUDED
-and the weights renormalized; it is never scored as 0.** This is the C2/`compute_authority` rule
-and the exact F2/P12 defect fixed on 2026-07-23 — a missing metric must not drag a competitor down.
-`coverage_pct` reports the fraction of components that had data (P2: surface what's absent).
-
-**5.4 Honest degradation.** No export → `data_available: false`, no rows written, report section
-absent, console line says so — no crash, no fabricated zeros (the C1/C3 convention). Partial data
-degrades to a partial index plus `coverage_pct`, never a hard failure (C5's original AC).
-
-**5.5 `estimation_basis` on every row.** Required by compete-spec's cross-cutting rule: competitor
-metrics are third-party-observed, not first-party measured, and must say so in every output.
-
----
-
-## 6. Config (`shared_config.json → youtube_attention`)
-
-All editorial content and thresholds live here, never in Python (rule #9 / P4):
+All editorial content / thresholds here, never in Python (rule #9 / P4). Secrets in env only.
 
 ```jsonc
-"youtube_attention": {
-  "export_path": null,                  // null = search repo root, like sov.export_path
-  "channel_map": { "example.com": ["@examplecounselling"] },
+"youtube_presence": {                    // Phase 1
+  "api_key_env": "YOUTUBE_API_KEY",      // key from env/.env — NEVER inline
+  "channel_map": { "example.com": ["@examplecounselling"] },  // seeded by confirmed Phase-1 hits
+  "max_candidates_per_competitor": 3,
+  "active_recency_days": 180,            // "active" = uploaded within this window
+  "min_subscribers_notable": 100,
+  "daily_quota_budget": 5000             // stop + log when exceeded (P9), never silent
+},
+"youtube_attention": {                   // Phase 2
+  "export_path": null,                   // null = search repo root, like sov.export_path
   "weights": { "subscribers": 0.30, "avg_views": 0.30, "engagement": 0.20, "mention_share": 0.20 },
-  "min_videos_for_index": 3,            // below this → insufficient_data, not a low score
-  "window_days": 90,
-  "exclude_unverified": true
+  "min_videos_for_index": 3,             // below → insufficient_data, not a low score
+  "window_days": 90
 }
 ```
 
 ---
 
-## 7. Access surface
+## 6. Acceptance criteria → tests
 
-- **Report section** (`src/reporting.py`): "YouTube Share-of-Attention" — a leaderboard (client
-  vs competitors) with subscribers / avg views / engagement / mention share / `attention_index`,
-  the client clearly marked (⭐), a `coverage_pct` column, and the caveat that figures are
-  third-party-observed estimates over `window_days`, not click-measured.
-- **Excel sheet:** `YouTube Attention`.
-- Absent-export case renders **no section at all** (not an empty table of zeros).
+Criteria are tests, not assertions. Tests in `Serp-compete/tests/test_youtube_presence.py` (P1) and
+`test_youtube_attention.py` (P2). API/export calls are mocked; the live paths are flagged
+integration-only (§8), never implied-covered by a mock (P10).
 
----
-
-## 8. Acceptance criteria → tests
-
-Every criterion is verified by a named automated test (planning rule: criteria are tests, not
-assertions). Tests live in `Serp-compete/tests/test_youtube_attention.py` unless noted.
+### Phase 1 — Presence Check
 
 | ID | Criterion | Test |
 |---|---|---|
-| **SC-7-YT.1** | Export selection picks the newest `data_available:true` by `source_run_ts`; stubs ignored | `test_sc7yt1_export_selection_prefers_available` |
-| **SC-7-YT.2** | No export → `data_available False`, zero rows, no section, no crash | `test_sc7yt2_absent_export_degrades_honestly` |
-| **SC-7-YT.3** | Unmappable channels are counted + logged, never silently dropped (P2) | `test_sc7yt3_unmapped_channels_surfaced` |
-| **SC-7-YT.4** | **Adversarial (P7):** a brand appearing only as a substring inside an unrelated word must NOT count as a mention | `test_sc7yt4_mention_is_not_substring` |
-| **SC-7-YT.5** | Mention shares sum to ~100% per snapshot; untracked → `other` | `test_sc7yt5_mention_shares_sum_to_100` |
-| **SC-7-YT.6** | A missing component (e.g. `subscriber_count: null`) is EXCLUDED and weights renormalized — never scored 0 | `test_sc7yt6_missing_component_excluded_not_zero` |
-| **SC-7-YT.7** | `coverage_pct` reflects component availability; partial data degrades, never hard-fails | `test_sc7yt7_partial_coverage_reported` |
-| **SC-7-YT.8** | The client is always present in the leaderboard, even with no channel | `test_sc7yt8_client_always_present` |
-| **SC-7-YT.9** | **P19 round-trip on a REAL `ptd` export** (not a synthetic ideal): parsed counts equal the artifact's; zero-from-non-empty logs a loud warning, not a clean pass | `test_sc7yt9_real_export_roundtrip` |
-| **SC-7-YT.10** | **Wired (P21):** `run_comparison_features` calls it inside its own guard; removing the call fails a test | `test_sc7yt10_wired_in_comparison_features` |
-| **SC-7-YT.11** | **Dirty-state (P8):** correct on the SECOND run against a DB that already holds prior-run rows | `test_sc7yt11_second_run_ignores_prior_rows` |
-| **SC-7-YT.12** | **Migration (P8/F1):** new tables/columns reach an EXISTING DB via `ALTER`, not only `CREATE TABLE` | `test_sc7yt12_migrates_on_existing_db` |
-| **SC-7-YT.13** | Every persisted row carries `estimation_basis`; weights/thresholds come from config, no magic numbers (P4) | `test_sc7yt13_estimation_basis_and_config_driven` |
+| **P1.1** | Per competitor, records `has_channel` + `check_status`; **`none_found` is distinct from `error`** (P1/P2) — a quota/5xx failure is never written as "no channel" | `test_p1_1_none_found_distinct_from_error` |
+| **P1.2** | **Adversarial (P7):** a same-name-but-unrelated channel is at most `candidate`, never `confirmed`; `high` confidence requires domain-in-about or handle match | `test_p1_2_samename_not_autoconfirmed` |
+| **P1.3** | API key read from env only; absent key → honest skip (`data_available:false`), no crash, **no secret in config/code** | `test_p1_3_key_from_env_absent_skips` |
+| **P1.4** | Data API client hardened (timeout+retry+backoff); transient (429/5xx/quotaExceeded) vs terminal distinguished (P5/P1) | `test_p1_4_api_client_hardened` |
+| **P1.5** | `daily_quota_budget` stop is **announced** ("checked N, skipped M, units U"), never a silent cap (P9) | `test_p1_5_quota_budget_surfaced` |
+| **P1.6** | The client is always present in the presence report | `test_p1_6_client_always_present` |
+| **P1.7** | **Wired (P21):** `run_comparison_features` calls it **inside its own guard**; removing the call fails a test | `test_p1_7_wired_in_comparison_features` |
+| **P1.8** | **Dirty-state (P8):** a second run against a DB holding prior presence rows is correct (no double-count/stale confusion) | `test_p1_8_second_run_clean` |
+| **P1.9** | **Migration (P8/F1):** the new table reaches an EXISTING DB via the migrations block, not only `CREATE TABLE` | `test_p1_9_migrates_on_existing_db` |
+| **P1.10** | Thresholds/weights from config; no magic numbers; every row carries `estimation_basis` (P4) | `test_p1_10_config_driven` |
 
-### Criteria that CANNOT be made code-testable (flagged per planning rules)
+### Phase 2 — Attention Dive (consumed)
 
-| Concern | Why untestable | Proposed human review |
+| ID | Criterion | Test |
 |---|---|---|
-| **Channel identity** — does this channel really belong to this competitor? | No programmatic ground truth; same-name channels exist | Owner confirms each entry in `channel_map`; `verified:false` entries excluded from the index. Add to `docs/TEST_RUN_CHECKLIST.md` |
-| **Mention context** — is "Living Systems" here the practice or a generic phrase? | Requires semantic judgement | Sample-review N flagged mentions on the first real run; tune brand terms. Checklist item |
-| **ToS/legal posture** | A policy decision, not a code property | Owner decision D1 (§10), recorded in this spec |
-| **Live `ptd`→export behaviour** | Integration-only (real YouTube, real 429s) | Flagged as untested-by-design; exercised by a real run, per the P10 rule against implying coverage with mocks |
+| **P2.1** | Export selection picks newest `data_available:true` by `source_run_ts`; stubs ignored (reuses `find_av_export`) | `test_p2_1_export_selection` |
+| **P2.2** | No export → `data_available:false`, zero rows, no section, no crash | `test_p2_2_absent_export_degrades` |
+| **P2.3** | **Adversarial (P7):** a brand only appearing as a substring of an unrelated word is NOT a mention | `test_p2_3_mention_not_substring` |
+| **P2.4** | Mention shares sum ~100% per snapshot; untracked → `other` | `test_p2_4_shares_sum_100` |
+| **P2.5** | A missing index component (e.g. `null` engagement) is EXCLUDED and weights renormalised — never scored 0 (F2/P12) | `test_p2_5_missing_component_excluded` |
+| **P2.6** | `coverage_pct` reflects availability; partial data degrades, never hard-fails | `test_p2_6_partial_coverage` |
+| **P2.7** | **P19 round-trip on a REAL `ptd` export** (not synthetic): parsed counts == artifact's; **zero-from-non-empty is a loud warning**, not a clean pass | `test_p2_7_real_export_roundtrip` |
+| **P2.8** | **Dirty-state (P8)** + **migration (P8/F1)** for the Phase-2 tables | `test_p2_8_second_run_and_migration` |
+| **P2.9** | **Wired (P21)** inside its own guard; only runs for Phase-1-confirmed channels | `test_p2_9_wired_and_gated` |
 
----
+### Concerns that CANNOT be code-tested (flagged per planning rules)
 
-## 9. Implementation order (dependencies first)
-
-0. **Owner decisions D1–D3 (§10) resolved.** ← blocks everything
-1. **`ptd` side — export writer.** New `export_youtube_attention.py` in `ptd`, emitting §3's schema
-   from the existing `videos`/`channels`/`transcripts` tables, plus subscriber capture if `yt-dlp`
-   exposes it (verify with one live call). Writes a `data_available:false` stub when it has nothing.
-   *Blocks SC-7-YT.9 — the real-artifact round-trip test needs a genuine export.*
-2. **compete — config block + schema/migration** (§4, §6). → SC-7-YT.12
-3. **compete — consumer**: `src/youtube_attention.py` loader reusing the `find_av_export` selection
-   logic. → SC-7-YT.1, .2
-4. **compete — compute**: mapping, mention SoV, index, coverage. → SC-7-YT.3–.8, .13
-5. **compete — persistence** (`save_*` in `database.py`). → SC-7-YT.11
-6. **compete — wiring** into `run_comparison_features`, import **inside** its own try guard (the
-   P13 pattern established 2026-07-23). → SC-7-YT.10
-7. **compete — reporting** section + Excel sheet (§7).
-8. **Docs**: `docs/FEATURE_GUIDE.md`, `docs/TEST_RUN_CHECKLIST.md` (incl. the two human-review
-   items), `docs/SPEC_COVERAGE_REPORT_v3.md`, and the SC-7 status in `compete-spec.md#C5`.
-
-**Cross-repo sequencing note:** step 1 must land before steps 3–4 can be verified against a real
-artifact — the same producer-before-consumer dependency as D5→C1, and the same P19 risk.
-
----
-
-## 10. Owner decisions required before implementation
-
-| # | Decision | Why it matters |
+| Concern | Why | Human review |
 |---|---|---|
-| **D1** | **Ratify the ToS posture:** yt-dlp scraping stays confined to `ptd` (owner's own research tool); serp-compete only reads a JSON export and never scrapes. Alternative: use the official YouTube Data API in `ptd` instead — it has a free daily quota tier that may well cover a handful of competitor channels (**current limit should be checked**, not assumed). | serp-compete is client-facing work |
-| **D2** | **Which competitors have YouTube channels?** SC-7-YT is only meaningful if some do. If none of the tracked counselling competitors maintain channels, the mention-SoV arm still works (are *they* discussed?) but the channel-metrics arm will be mostly empty. | Determines whether the feature earns its keep |
-| **D3** | **Mention-SoV corpus:** which `ptd` profile/queries define "the niche" whose videos are scanned? (`seo-geo` is the wrong topic — this needs a counselling/therapy profile.) | Without the right corpus, mention share is meaningless |
+| **Channel identity for `candidate` (medium-confidence) hits** | No programmatic ground truth; same-name channels exist | Owner ticks/unticks Phase-1 candidates; confirmed ones seed `channel_map`. `docs/TEST_RUN_CHECKLIST.md` item. **Much lighter than the retired D2** — a short list to confirm, not research from scratch |
+| **Mention context** — is "Living Systems" the practice or a generic phrase? | Semantic judgement | Sample-review N mentions on first real run; tune brand terms. Checklist item |
+| **Live Data API behaviour (Phase 1)** | Integration-only (real key, real quota) | Untested-by-design; a real run exercises it. Unit tests use mocked API JSON |
+| **Live `ptd`→export behaviour (Phase 2)** | Integration-only (real YouTube, real 429s) | Untested-by-design; the round-trip test (P2.7) uses a real *saved* artifact |
 
 ---
 
-## 11. Risks
+## 7. Implementation order (Phase 1 ships independently; Phase 2 is gated)
 
-- **P19 producer/consumer drift (highest).** Two repos, one JSON contract. Mitigated by
-  `schema_version`, the real-artifact round-trip test (SC-7-YT.9), and loud
-  zero-from-non-empty warnings.
-- **429 / IP cooldown.** Contained in `ptd` by the consume architecture; serp-compete is immune.
-- **Small-N noise.** A handful of videos makes engagement rates volatile — `min_videos_for_index`
-  yields `insufficient_data` rather than a misleading score (the C2 `emerging`/`insufficient_data`
-  precedent).
-- **Transcript coverage.** Not every video has captions; `videos_with_transcript` vs
-  `videos_scanned` is reported so mention share is read against real coverage (P2/P9).
-- **Feature earns its keep (D2).** If no competitor runs a channel, prefer to stop after step 1
-  rather than build a section that renders empty forever.
+**Prereq (owner):** provision a free YouTube Data API key (a Google Cloud project) into the env /
+`.env`. Needed for a *live* Phase-1 run; **not** needed to write code or run the mocked unit tests.
+
+**Phase 1 — serp-compete, self-contained (no cross-repo dependency):**
+1. Config block + `yt_channel_presence` schema/migration (§3, §5). → P1.9, P1.10
+2. Hardened YouTube Data API client (`api_clients.py` sibling, or `src/youtube_client.py`). → P1.4
+3. Presence compute: lookup, matching+confidence, honest states, quota accounting. → P1.1, P1.2, P1.5
+4. Persistence (`save_*` in `database.py`). → P1.8
+5. Wire into `run_comparison_features` **inside its own guard** (the P13 pattern). → P1.7
+6. Report section + Excel sheet ("YouTube Presence"). → P1.3, P1.6
+   → **Phase 1 done = the D2 answer + a shippable competitive signal.**
+
+**Phase 2 — ptd export + consumer (gated on Phase-1 confirmations):**
+7. `ptd`: `export_youtube_attention.py` — dive **only** Phase-1-confirmed channels; emit §4.1 schema
+   from `videos`/`channels`/`transcripts`; `data_available:false` stub when empty. (ptd-repo task;
+   follows ptd conventions + its own plan step.) *Blocks P2.7 — the round-trip needs a real export.*
+8. compete: consumer (reuse `find_av_export`), mention-SoV, `attention_index`, coverage, persistence,
+   wiring (gated), report. → P2.1–P2.9
+9. Docs: `docs/FEATURE_GUIDE.md`, `docs/TEST_RUN_CHECKLIST.md` (the human-review items),
+   `docs/SPEC_COVERAGE_REPORT_v3.md`, and the SC-7 status in `compete-spec.md#C5` + `TODO.md`.
 
 ---
 
-## 12. Definition of done
+## 8. Owner decisions
 
-All 13 criteria `done` with the proving test named, per the Completion Standard; the four
-untestable concerns carried into `docs/TEST_RUN_CHECKLIST.md`; a `learning-qa` sweep clean;
-`docs/spec_coverage`-style status updated; and — per **P21** — a grep-proven caller on the run
-path, not merely a module that exists.
+| # | Decision | Status |
+|---|---|---|
+| **D1 — ToS posture** | serp-compete uses **only** the sanctioned Data API (Phase 1); scraping (yt-dlp) stays confined to `ptd` (Phase 2, consumed as an export). | **RESOLVED** by the 2026-07-23 "approach A" decision. Requires provisioning a free Data API key (prereq above). |
+| **D2 — do competitors run channels?** | ~~Owner researches which competitors have channels.~~ | **RETIRED** — Phase 1 auto-discovers this. Residual: owner confirms `candidate` (medium-confidence) hits — a short checklist, not research. |
+| **D3 — mention-SoV corpus** | Which `ptd` profile defines "the niche" whose videos are scanned for mentions (`seo-geo` is wrong — needs a counselling/therapy profile). | **OPEN, Phase 2 only.** Does not block Phase 1. |
+
+---
+
+## 9. Risks
+
+- **Name→channel false positives (Phase 1).** Mitigated by the confidence tiers (P1.2): `high` needs
+  domain-in-about/handle; name-only stays `candidate` for owner confirmation. The check *narrows*
+  the identity judgment, it doesn't claim to eliminate it.
+- **Quota (Phase 1).** Bounded by `daily_quota_budget` with a surfaced stop (P9); the `channel_map`
+  short-circuits search (100→1 unit) once channels are confirmed.
+- **P19 producer/consumer drift (Phase 2, highest for that phase).** `schema_version` + real-artifact
+  round-trip (P2.7) + loud zero-from-non-empty.
+- **429 / IP cooldown.** Confined to `ptd` (Phase 2 consume architecture); serp-compete is immune.
+- **Small-N noise (Phase 2).** `min_videos_for_index` → `insufficient_data`, not a misleading score.
+- **Feature earns its keep.** Now *measured* by Phase 1 rather than guessed: if Phase 1 finds no
+  competitor channels, stop — don't build Phase 2. This is the point of the two-tier split.
+
+---
+
+## 10. Definition of done
+
+Per phase, each criterion `done` with its proving test named (Completion Standard); the untestable
+concerns carried into `docs/TEST_RUN_CHECKLIST.md`; a `learning-qa` sweep clean; a **grep-proven
+caller on the run path** (P21), not merely a module that exists; and — Phase 2 — the gate on
+Phase-1 confirmations verified by test (P2.9). Phase 1 is a valid stopping point: it can be `done`
+and shipped without Phase 2.
