@@ -1,8 +1,12 @@
 # SC-7-YT — YouTube Competitive Attention (phase 1 of SC-7)
 
-**Status:** SPEC — awaiting approval to plan/build. **No implementation code until approved**
-(per `~/.claude/CLAUDE.md` planning rules). Supersedes the YouTube portion of `compete-spec.md#C5`
-(Off-Platform Share-of-Attention Tracker); all other platforms there remain DEFERRED.
+**Status:** **PHASE 1 BUILT & SHIPPED** (2026-07-24) — all criteria P1.1–P1.10 `done`, proven by
+`Serp-compete/tests/test_youtube_presence.py` (15 tests; both suites green). Live Data-API run is
+deferred until a free `YOUTUBE_API_KEY` is provisioned (integration-only, untested-by-design per
+P10). **Phase 2 remains DEFERRED** (ptd transcript dive; gated on Phase-1 confirmations). Plan of
+record: [`sc7-yt-phase1-plan.md`](sc7-yt-phase1-plan.md). Supersedes the YouTube portion of
+`compete-spec.md#C5` (Off-Platform Share-of-Attention Tracker); all other platforms there remain
+DEFERRED.
 
 **Owner decision (2026-07-23):** two-tier design — a cheap **Presence Check** inside serp-compete
 via the **official YouTube Data API**, then a heavier **Attention Dive** in `ptd` (yt-dlp), gated on
@@ -244,6 +248,11 @@ Criteria are tests, not assertions. Tests in `Serp-compete/tests/test_youtube_pr
 integration-only (§8), never implied-covered by a mock (P10).
 
 ### Phase 1 — Presence Check
+
+**✅ All `done` (2026-07-24)** in `Serp-compete/tests/test_youtube_presence.py`. Plus hardening
+tests beyond the criteria: `test_p1_2b_domain_substring_not_confirmed` (P7 — a domain that is only
+a *substring* of another domain must not auto-confirm), `test_p1_4b_absent_key_makes_client_unavailable`,
+`test_p1_7b_guard_isolates_failure` (P13), `test_p1_report_section_renders` (render layer, P11).
 
 | ID | Criterion | Test |
 |---|---|---|

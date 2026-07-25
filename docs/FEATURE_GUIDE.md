@@ -334,6 +334,30 @@ spot competitors whose branded demand is growing fast (rising threats) or shrink
 > (only your own can be GSC-anchored, when that export exists). Generic brand names are pruned
 > rather than guessed; if the volume source is down for a run, the section says so, not zeros.
 
+### 4.8 YouTube Presence — who in your competitive set is on YouTube  ⭐ newest
+**What it does:** for each competitor (and you), asks the official **YouTube Data API** whether
+a channel exists and, if so, its subscribers, last-upload date, recent-activity count, and a
+**match confidence**. It *discovers* which rivals run channels instead of you researching it by
+hand (this is the retired "do competitors have channels?" question, now answered in-audit).
+
+**What it lets you understand:** where the competitive attention is moving off-SERP — which
+rivals are building a YouTube audience, how big, and how actively they publish.
+
+**What you can then do:** decide whether YouTube is a channel worth entering, and (if a deeper
+transcript/brand-mention dive is ever built as Phase 2) hand off only the channels worth diving.
+
+**Where you see it:** the *YouTube Presence* section (you ⭐) and the *YouTube Presence* Excel
+sheet — per competitor: has-channel?, handle, subscribers, last upload, recent uploads,
+confidence, status.
+
+> **Read it honestly:** a same-name channel is **never** auto-confirmed. `confirmed` means the
+> domain is in the channel's About **or** the handle matches; a bare name match is a
+> **`candidate`** you confirm yourself (see `TEST_RUN_CHECKLIST.md`) before trusting it —
+> confirmed ones can be pinned in `youtube_presence.channel_map` so future runs cost ~1 quota
+> unit instead of ~100. `none_found` = no channel; `error` = couldn't check this run (quota /
+> network) — retryable, **never** recorded as a definitive "no". **Needs a free `YOUTUBE_API_KEY`
+> in the env**; with no key the whole section is simply absent (not zeros, not an error).
+
 ## 5. Movement-over-time features (longitudinal memory)
 
 Each run records a snapshot, so later runs can compare against earlier ones.
@@ -431,11 +455,12 @@ and `audit_results_run_12.xlsx`).
 | ⚡ Systemic Vacuums | Traffic with no systemic answer | Write these first |
 | SERP Overlap & Differentiation Gap | Where you collide (commodity) vs. are exclusive | Fill exclusive-competitor gaps; differentiate/skip commodity |
 | Barbell Positioning Diagnostic | The 2×2 shape of the field (who's authoritative / niche / stuck in the middle) | Target the middle; win by picking a barbell end |
+| YouTube Presence | Which competitors run a channel, how big/active (you ⭐); Data-API metadata check | Decide if YouTube is worth entering; confirm `candidate` channels |
 | 🎯 Automated Bowen Reframes | Draft outlines to counter each page | Brief your writer |
 
 ### 8.2 Excel workbook — sheet-by-sheet
 `Competitor Summary` · `Traffic Magnets` · `EEAT Scores` · `Cluster Analysis` ·
-`GEO Extractability` · `SERP Overlap` · `Feasibility` · `Positioning` · `AI Share-of-Voice` · `Branded Demand` · `Reputation Risk` · `Automated Reframes` · `AI Usage Stats`. Each sheet is the
+`GEO Extractability` · `SERP Overlap` · `Feasibility` · `Positioning` · `AI Share-of-Voice` · `Branded Demand` · `Reputation Risk` · `YouTube Presence` · `Automated Reframes` · `AI Usage Stats`. Each sheet is the
 tabular form of the matching briefing section — use it to sort/filter (e.g. sort
 *GEO Extractability* by tier, or *Traffic Magnets* by traffic) and to paste into a
 content plan. A sheet only appears if that run produced data for it.

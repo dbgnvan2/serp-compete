@@ -226,6 +226,15 @@ class DatabaseManager:
             except sqlite3.OperationalError:
                 pass # Already exists, or sov_daily not yet created (fresh DB)
 
+            try:
+                # SC-7-YT P1.9 (F1/P8): reach an EXISTING yt_channel_presence with the
+                # activity column via ALTER, not only CREATE TABLE. Fresh DBs get it from
+                # CREATE TABLE below; a DB that predates this column is repaired here so
+                # save_yt_presence + the report don't break. (Mirrors the cited_gap fix.)
+                cursor.execute("ALTER TABLE yt_channel_presence ADD COLUMN uploads_recent INTEGER")
+            except sqlite3.OperationalError:
+                pass # Already exists, or yt_channel_presence not yet created (fresh DB)
+
             # SC-1: GEO / Extractability Profiles Table
             # (Spec: suite_enhancement_spec_v1.md#SC-1)
             cursor.execute('''
@@ -368,6 +377,36 @@ class DatabaseManager:
                 )
             ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_risk_signal_run ON risk_signal(run_id)')
+
+            # SC-7-YT Phase 1: YouTube Presence Check. Domain-keyed (competitors is
+            # `domain TEXT PRIMARY KEY` — deliberately NO competitor_id). One row per
+            # (run_id, domain): the best-matched channel, or the none_found/error state.
+            # channel_id is coerced to '' when absent so the PK stays stable for the
+            # no-channel row; save_yt_presence uses INSERT OR REPLACE (within-run idempotent).
+            # (Spec: sc7-yt-spec.md#3 — Phase 1 data model.)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS yt_channel_presence (
+                    run_id INTEGER NOT NULL,
+                    domain TEXT NOT NULL,
+                    checked_at TEXT,
+                    has_channel BOOLEAN,
+                    channel_id TEXT DEFAULT '',
+                    handle TEXT,
+                    channel_title TEXT,
+                    channel_url TEXT,
+                    subscriber_count INTEGER,
+                    video_count INTEGER,
+                    last_upload_date TEXT,
+                    uploads_recent INTEGER,
+                    match_confidence TEXT,
+                    match_basis TEXT,
+                    check_status TEXT,
+                    estimation_basis TEXT,
+                    PRIMARY KEY (run_id, domain, channel_id),
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_yt_presence_run ON yt_channel_presence(run_id)')
 
             conn.commit()
 
@@ -583,6 +622,44 @@ class DatabaseManager:
             ''', [
                 (run_id, r.get("domain"), int(bool(r.get("is_own_site"))), detected_at,
                  r.get("signal_type"), r.get("severity"), _json.dumps(r.get("evidence", {})))
+                for r in rows
+            ])
+            conn.commit()
+
+    def save_yt_presence(self, run_id: int, rows: List[Dict[str, Any]]):
+        """SC-7-YT Phase 1: persist per-competitor YouTube presence rows.
+
+        Spec:  sc7-yt-spec.md#3 (Phase 1 data model)
+        Tests: tests/test_youtube_presence.py::test_p1_8_second_run_clean,
+               ::test_p1_9_migrates_on_existing_db
+
+        One row per (run_id, domain). channel_id is coerced to '' when absent so the
+        PK (run_id, domain, channel_id) is stable for the none_found/error row. A re-save of
+        the SAME run first DELETEs that run's rows, then inserts — so it is idempotent even
+        when a domain's status FLIPS between saves (e.g. error→confirmed moves channel_id
+        from '' to a real UC… id; a bare INSERT OR REPLACE would then leave the old '' row as
+        a stale duplicate). No double-count, no stale row (P8). A new run gets a new run_id,
+        so runs never collide. has_channel is stored as-is (True/False/None — None means
+        unknown/error, never coerced to False; P1).
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM yt_channel_presence WHERE run_id = ?", (run_id,))
+            cursor.executemany('''
+                INSERT OR REPLACE INTO yt_channel_presence (
+                    run_id, domain, checked_at, has_channel, channel_id, handle,
+                    channel_title, channel_url, subscriber_count, video_count,
+                    last_upload_date, uploads_recent, match_confidence, match_basis,
+                    check_status, estimation_basis)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', [
+                (run_id, r["domain"], r.get("checked_at"),
+                 (None if r.get("has_channel") is None else int(bool(r.get("has_channel")))),
+                 r.get("channel_id") or "", r.get("handle"), r.get("channel_title"),
+                 r.get("channel_url"), r.get("subscriber_count"), r.get("video_count"),
+                 r.get("last_upload_date"), r.get("uploads_recent"),
+                 r.get("match_confidence"), r.get("match_basis"), r.get("check_status"),
+                 r.get("estimation_basis"))
                 for r in rows
             ])
             conn.commit()

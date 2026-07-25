@@ -140,6 +140,15 @@
     "export_path": null,
     "framework_caption": "AI Share-of-Voice is CONSUMED from serp-discover's AI-visibility probes (not re-probed here). Values are rolling snapshots — LLM answers vary between runs and model versions."
   },
+  "youtube_presence": {
+    "_comment": "SC-7-YT Phase 1 — YouTube Presence Check. Per competitor (and the client), the official YouTube Data API answers has-channel + subscribers/last-upload/activity/match-confidence. api_key_env is an ENV POINTER only — the key itself is read from env/.env, NEVER stored here or in code (the client_secret_* gitignore discipline). channel_map is seeded by owner-confirmed Phase-1 hits: {\"example.com\": [\"@examplecounselling\"]}.",
+    "api_key_env": "YOUTUBE_API_KEY",
+    "channel_map": {},
+    "max_candidates_per_competitor": 3,
+    "active_recency_days": 180,
+    "min_subscribers_notable": 100,
+    "daily_quota_budget": 5000
+  },
   "brand": {
     "_comment": "Practice-name suffixes stripped from a domain stem to derive a bare brand token (e.g. 'jerichocounselling' -> 'jericho'). Shared by C1 AI Share-of-Voice and C3 Branded-Demand; matched case-insensitively. Distinct from branded_demand.generic_brand_prune, which drops a derived brand that is itself a generic word.",
     "name_suffixes": ["counselling", "counseling", "therapy", "counselor", "counsellor", "psychology"]

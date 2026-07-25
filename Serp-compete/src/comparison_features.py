@@ -141,4 +141,39 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
     except Exception as risk_err:  # noqa: BLE001
         print(f"⚠️ Reputation-risk radar skipped: {risk_err}")
 
+    # SC-7-YT Phase 1: YouTube Presence Check — official Data API metadata (has-channel +
+    # subscribers/last-upload/activity/confidence). This is NOT the yt-dlp scraper (that
+    # stays confined to ptd, Phase 2). Its OWN guard (P13): a YouTube API / import failure
+    # degrades only this feature, never the others or the audit. Absent key → honest skip
+    # (no rows persisted → the report section is simply absent). (Spec: sc7-yt-spec.md#3.)
+    try:
+        from src.youtube_client import YouTubeDataClient
+        from src.youtube_presence import compute_presence
+        yt_cfg = shared_config.get("youtube_presence", {}) or {}
+        yt_client = YouTubeDataClient(yt_cfg)
+        if not yt_client.available:
+            print("   ℹ️ YouTube presence: no API key in env "
+                  "(youtube_presence.api_key_env) — skipped (data_available:false).")
+        else:
+            client_brand = ((shared_config.get("client", {}).get("brand_names") or [None])[0]
+                            or shared_config.get("client", {}).get("name"))
+            brand_by_domain = {d: derive_brand_name(d, brand_suffixes)
+                               for d in domains + [client_domain]}
+            presence = compute_presence(
+                yt_client, competitor_domains=domains, client_domain=client_domain,
+                brand_by_domain=brand_by_domain, cfg=yt_cfg, snapshot_date=today,
+                client_brand=client_brand)
+            if presence["data_available"]:
+                db.save_yt_presence(run_id, presence["rows"])
+                st = presence["stats"]
+                summary["yt_presence_rows"] = len(presence["rows"])
+                budget_note = (" (⚠️ quota budget hit — remaining skipped)"
+                               if st.get("budget_hit") else "")
+                print(f"   ▶️ YouTube presence: checked {st['checked']}, confirmed "
+                      f"{st['confirmed']}, candidates {st['candidates']}, none "
+                      f"{st['none_found']}, errors {st['errors']}, skipped {st['skipped']}, "
+                      f"notable {st['notable']}, quota units {st['units_used']}{budget_note}.")
+    except Exception as yt_err:  # noqa: BLE001
+        print(f"⚠️ YouTube presence check skipped: {yt_err}")
+
     return summary

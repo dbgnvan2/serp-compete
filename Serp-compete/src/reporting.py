@@ -398,6 +398,44 @@ class ReportGenerator:
                     report.append("\n### 🔎 Competitor risk signals (opportunity intel)")
                     report.append(comp[['domain', 'signal_type', 'severity']].to_markdown(index=False))
 
+            # 3i. YouTube Presence (SC-7-YT Phase 1). is_client is derived by domain match
+            # (the branded-demand precedent), so the table carries no is_client column.
+            df_yt = pd.read_sql_query('''
+                SELECT domain, has_channel, handle, channel_title, subscriber_count,
+                       last_upload_date, uploads_recent, match_confidence, check_status
+                FROM yt_channel_presence WHERE run_id = ?
+                ORDER BY CASE check_status WHEN 'confirmed' THEN 0 WHEN 'candidate' THEN 1
+                         WHEN 'none_found' THEN 2 ELSE 3 END, subscriber_count DESC
+            ''', conn, params=(run_id,))
+
+            if not df_yt.empty:
+                report.append("\n## YouTube Presence")
+                report.append("Which of your competitors run a YouTube channel, and how active — "
+                              "from the official YouTube **Data API** (a sanctioned metadata check, "
+                              "**not** scraping). _`confirmed` = the domain appears in the channel's "
+                              "About or the handle matches; `candidate` = a name-only match **awaiting "
+                              "your confirmation** (see `TEST_RUN_CHECKLIST.md`); `none_found` = no "
+                              "channel; `error` = couldn't check this run (retryable — never a "
+                              "definitive 'no')._")
+                disp = df_yt.copy()
+                disp['channel?'] = disp['has_channel'].apply(
+                    lambda v: '✓' if v == 1 else ('✗' if v == 0 else '?'))
+                disp['domain'] = disp['domain'].apply(
+                    lambda d: f"⭐ {d} (you)" if d == client_domain else d)
+                cols = ['domain', 'channel?', 'handle', 'channel_title', 'subscriber_count',
+                        'last_upload_date', 'uploads_recent', 'match_confidence', 'check_status']
+                report.append(disp[cols].to_markdown(index=False))
+                n_cand = int((df_yt['check_status'] == 'candidate').sum())
+                if n_cand:
+                    report.append(f"\n> ℹ️ **{n_cand} candidate channel(s)** matched by name only — "
+                                  "confirm identity before treating as the competitor's channel, "
+                                  "then seed `youtube_presence.channel_map` so future runs cost 1 "
+                                  "quota unit instead of ~100.")
+                n_err = int((df_yt['check_status'] == 'error').sum())
+                if n_err:
+                    report.append(f"\n> ⚠️ **{n_err} check(s) errored** this run (quota/network) — "
+                                  "retryable, not recorded as 'no channel'.")
+
             # 4. Strategic Openings & Reframes
             if reframes:
                 report.append("\n## 🎯 Automated Bowen Reframes")
@@ -442,6 +480,8 @@ class ReportGenerator:
                     df_brand.to_excel(writer, sheet_name='Branded Demand', index=False)
                 if not df_risk.empty:
                     df_risk.to_excel(writer, sheet_name='Reputation Risk', index=False)
+                if not df_yt.empty:
+                    df_yt.to_excel(writer, sheet_name='YouTube Presence', index=False)
                 if reframes:
                     df_reframes = pd.DataFrame([{"keyword": r['keyword'], "url": r['url'], "reframe": r['reframe'][:500]} for r in reframes])
                     df_reframes.to_excel(writer, sheet_name='Automated Reframes', index=False)

@@ -13,14 +13,19 @@ records **decisions and what's next**, newest first. Not user-facing — that's 
 ### Decision (2026-07-23): two-tier design — a cheap Presence Check in serp-compete, then a heavier Dive in ptd. D2 RETIRED (auto-discovered).
 
 The tool now *discovers* whether competitors have channels instead of asking the owner — so the old
-"on hold pending D2" gate is gone. Build **Phase 1 first** (self-contained in serp-compete).
+"on hold pending D2" gate is gone. Phase 1 is **built first** (self-contained in serp-compete).
 
-- **Phase 1 — YouTube Presence Check (serp-compete, official YouTube Data API).** Per competitor:
-  has a channel? subscribers, last-upload, activity, match confidence. Cheap (quota-bounded, not
-  429-cooldown-bound), ToS-clean, no yt-dlp/binary dep — just an HTTPS call like the existing
-  DataForSEO/Moz clients + an env-only API key. **Self-contained, no cross-repo dependency, and
-  shippable on its own** ("who in the competitive set is on YouTube"). This IS the D2 answer.
-  → spec §3, build order §7 Phase-1 steps 1–6. **Not yet built** (planning; awaiting build approval).
+- **Phase 1 — YouTube Presence Check (serp-compete, official YouTube Data API). ✅ BUILT & SHIPPED
+  (2026-07-24).** Per competitor: has a channel? subscribers, last-upload, activity, match
+  confidence. Cheap (quota-bounded, not 429-cooldown-bound), ToS-clean, no yt-dlp/binary dep — an
+  HTTPS `requests` call like the existing DataForSEO/Moz clients + an env-only API key.
+  Self-contained and shippable on its own ("who in the competitive set is on YouTube") — the D2
+  answer. Criteria P1.1–P1.10 all `done` (`Serp-compete/tests/test_youtube_presence.py`, 15 tests;
+  `src/youtube_client.py` + `src/youtube_presence.py`, `yt_channel_presence` table, wired in
+  `run_comparison_features`, "YouTube Presence" report section + Excel sheet). Plan of record:
+  [`sc7-yt-phase1-plan.md`](sc7-yt-phase1-plan.md).
+  **Residual owner action:** provision a free `YOUTUBE_API_KEY` into env/`.env` for the first *live*
+  run (integration-only; unit tests use mocked API JSON). Without a key the feature skips honestly.
 - **Phase 2 — YouTube Attention Dive (ptd export, consumed; gated on Phase 1).** The heavy
   transcript + brand-mention-SoV work, in `ptd` via yt-dlp, consumed by serp-compete like the C1
   AV export. Runs **only** for channels Phase 1 confirmed. → spec §4, build order §7 Phase-2 steps 7–9.
@@ -32,10 +37,11 @@ The tool now *discovers* whether competitors have channels instead of asking the
     (medium-confidence) channel hits — a short checklist, not research from scratch.
   - **D3 (mention corpus) — OPEN, Phase 2 only.** Needs a counselling/therapy `ptd` profile
     (`seo-geo` is the wrong topic). Does **not** block Phase 1.
-- **Resume path.** Approve building Phase 1 → implement spec §7 Phase-1 steps 1–6 (config+schema →
-  hardened Data API client → presence compute → persist → wire inside its guard → report). Then, if
-  Phase 1 finds competitor channels worth diving, do Phase 2 (ptd export + consumer). If it finds
-  none, stop — Phase 1 is a valid endpoint.
+- **Resume path.** Phase 1 is done. Next: provision the free `YOUTUBE_API_KEY` and do one *live*
+  run; confirm any `candidate` channels (see `docs/TEST_RUN_CHECKLIST.md` §6) and seed
+  `youtube_presence.channel_map`. **Then decide Phase 2 on the evidence:** if the live run finds
+  competitor channels worth diving, build Phase 2 (ptd export + consumer, spec §4 / §7 steps 7–9);
+  if it finds none, stop — Phase 1 is a valid endpoint.
 
 ---
 
