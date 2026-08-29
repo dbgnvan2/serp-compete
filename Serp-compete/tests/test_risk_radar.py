@@ -211,14 +211,36 @@ class TestAnchorSpam(unittest.TestCase):
         self.assertEqual(signal["evidence"]["share_of_sampled_linking_domains"], 1.0)
         self.assertEqual(signal["severity"], "low")
 
-    def test_matched_domain_floor_is_configurable(self):
+    def test_anchor_reach_floor_is_configurable(self):
         anchors = [{"text": "buy backlinks", "external_root_domains": 6},
                    {"text": "brand", "external_root_domains": 4}]
         self.assertEqual(detect_anchor_spam(anchors)["severity"], "high")
         self.assertEqual(
             detect_anchor_spam(
-                anchors, {"anchor_spam_min_matched_domains": 50})["severity"],
+                anchors, {"anchor_spam_min_anchor_reach": 50})["severity"],
             "low")
+
+    def test_many_narrow_anchors_from_one_source_cannot_reach_high(self):
+        """Adversarial, and the case that defeated the first version of this
+        floor: one PBN page typically carries several anchor variants at once.
+        Moz gives reach per anchor with no domain identity, so summing across
+        anchors double-counts a single source — five anchors of reach 1 cleared
+        a floor of 5 and named a competitor "high" off one scraper (P7)."""
+        one_source = [{"text": t, "external_root_domains": 1} for t in
+                      ("buy backlinks", "cheap seo", "dofollow", "pbn",
+                       "guest post")]
+        signal = detect_anchor_spam(one_source)
+        self.assertEqual(signal["evidence"]["share_of_sampled_linking_domains"], 1.0)
+        self.assertEqual(signal["severity"], "low")
+
+    def test_a_measured_zero_is_data_not_an_unreadable_value(self):
+        """`int(0)` succeeds, so a measured zero must keep falling through the
+        ordinary reach gate. Routing it to the unmeasured branch manufactured a
+        competitor-naming signal from a measurement that says "no reach", with
+        an interpretation that contradicted itself (P1/P14)."""
+        self.assertIsNone(
+            detect_anchor_spam([{"text": "buy backlinks",
+                                 "external_root_domains": 0}]))
 
     def test_truncated_sample_cannot_reach_high_severity(self):
         """The producer flags a capped page expressly so it is not read as a
@@ -242,6 +264,28 @@ class TestAnchorSpam(unittest.TestCase):
         self.assertEqual(signal["evidence"]["unmeasured_anchor_count"], 1)
         self.assertIn("could not be measured",
                       signal["evidence"]["interpretation"])
+
+    def test_unmeasured_signal_does_not_assert_a_footprint(self):
+        """The branch that says "scale unknown" must not also assert a
+        paid-link footprint in the next sentence — that text is printed
+        verbatim under a named competitor (P14)."""
+        signal = detect_anchor_spam([{"text": "buy backlinks",
+                                      "external_root_domains": None}])
+        interpretation = signal["evidence"]["interpretation"]
+        self.assertNotIn("Inbound anchors show", interpretation)
+        self.assertIn("prompt to look, not as a finding", interpretation)
+
+    def test_matched_anchor_count_means_one_thing_on_both_paths(self):
+        """One key, one meaning: the unmeasured path must not reuse it for a
+        different quantity (P19/P22)."""
+        unmeasured = detect_anchor_spam(
+            [{"text": "buy backlinks", "external_root_domains": None}])["evidence"]
+        self.assertEqual(unmeasured["matched_anchor_count"], 0)
+        self.assertEqual(unmeasured["unmeasured_anchor_count"], 1)
+        measured = detect_anchor_spam(
+            [{"text": "buy backlinks", "external_root_domains": 9}])["evidence"]
+        self.assertEqual(measured["matched_anchor_count"], 1)
+        self.assertEqual(measured["unmeasured_anchor_count"], 0)
 
     def test_evidence_says_links_received_not_links_bought(self):
         """Anchors are written by other sites: a domain can be the target of a
@@ -293,13 +337,21 @@ class TestAnchorSpam(unittest.TestCase):
         self.assertTrue(terms)
         self.assertIn("pbn", terms)
 
-    def test_code_fallback_matches_the_editorial_list_exactly(self):
+    def test_code_fallbacks_match_the_editorial_config_exactly(self):
         """A fallback that drifts from config makes the same anchors score
         differently by call path, and editing the JSON stops changing
-        behaviour (P4). They already diverged once."""
-        from src.risk_radar import DEFAULT_ANCHOR_SPAM_TERMS
-        self.assertEqual(list(DEFAULT_ANCHOR_SPAM_TERMS),
-                         _shared_config()["risk_signals"]["anchor_spam_terms"])
+        behaviour (P4). The term list already diverged once; the three numeric
+        settings are duplicated the same way and are covered here too."""
+        from src import risk_radar as rr
+        cfg = _shared_config()["risk_signals"]
+        self.assertEqual(list(rr.DEFAULT_ANCHOR_SPAM_TERMS),
+                         cfg["anchor_spam_terms"])
+        self.assertEqual(rr.DEFAULT_ANCHOR_SPAM_MIN_DOMAINS,
+                         cfg["anchor_spam_min_domains"])
+        self.assertEqual(rr.DEFAULT_ANCHOR_SPAM_HIGH_SHARE,
+                         cfg["anchor_spam_high_share"])
+        self.assertEqual(rr.DEFAULT_ANCHOR_SPAM_MIN_ANCHOR_REACH,
+                         cfg["anchor_spam_min_anchor_reach"])
 
 
 class TestRadarWiring(unittest.TestCase):
@@ -431,8 +483,23 @@ class TestHandoffMozIngestion(unittest.TestCase):
             "broken.com": {"anchor_texts": {"status": "error", "items": []}},
         }}
         counts = anchor_coverage(block)
-        self.assertEqual(counts, {"total": 3, "with_anchors": 1,
-                                  "no_record": 1, "errored": 1})
+        self.assertEqual(counts, {"total": 3, "with_anchors": 1, "no_record": 1,
+                                  "errored": 1, "skipped": 0, "unknown": 0})
+
+    def test_coverage_counts_a_skipped_domain_as_skipped_not_no_record(self):
+        """A domain Tool 1 capped or dropped for quota carries no anchor_texts
+        key at all, so its status lives on the domain block. Counting it as
+        "no record" turned "we ran out of budget" into "we looked and found
+        nothing" — transient read as terminal, inside the function written to
+        stop exactly that (P1)."""
+        block = {"domains": {
+            "a.com": {"status": "skipped_run_cap"},
+            "b.com": {"status": "skipped_quota"},
+            "c.com": {"status": "no_record"},
+        }}
+        counts = anchor_coverage(block)
+        self.assertEqual(counts["skipped"], 2)
+        self.assertEqual(counts["no_record"], 1)
 
     def test_anchor_extraction_tolerates_an_empty_block(self):
         self.assertEqual(anchor_texts_by_domain({}), {})
@@ -446,3 +513,97 @@ class TestHandoffMozIngestion(unittest.TestCase):
             own_domain="livingsystems.ca", anchor_texts_by_domain=anchors)
         self.assertEqual([r["signal_type"] for r in rows], ["anchor_text_spam"])
         self.assertEqual(rows[0]["domain"], "bowencenter.org")
+
+class TestReportCaveats(unittest.TestCase):
+    """SC-8.4 — the disclaimer and the coverage note must reach the report.
+
+    The seam lives in risk_radar, not reporting: the caveat is a property of
+    the signal, and reporting.py imports pandas at module scope, so a guard
+    placed there would be unimportable — and therefore skipped — in any
+    environment without it, leaving the most sensitive line in the change with
+    no executable test at all (P25/P27).
+    """
+
+    @staticmethod
+    def _lines(signal_types, coverage=None):
+        from src.risk_radar import anchor_caveat_lines
+        return anchor_caveat_lines(signal_types, coverage)
+
+    def test_anchor_signal_brings_the_received_not_bought_caveat(self):
+        lines = self._lines(["anchor_text_spam"])
+        self.assertEqual(len(lines), 1)
+        self.assertIn("received", lines[0])
+        self.assertIn("not links bought", lines[0])
+        self.assertIn("no part in", lines[0])
+
+    def test_no_anchor_signal_means_no_caveat(self):
+        self.assertEqual(self._lines(["ranking_volatility", "visibility_cliff"]), [])
+
+    def test_unreadable_domains_produce_a_coverage_line(self):
+        """A run where every anchor fetch failed must not render identically
+        to a clean one."""
+        lines = self._lines([], {"total": 3, "with_anchors": 0, "errored": 2,
+                                 "skipped": 1, "no_record": 0, "unknown": 0})
+        self.assertEqual(len(lines), 1)
+        self.assertIn("0 of 3", lines[0])
+        self.assertIn("not evidence of a clean link profile", lines[0])
+
+    def test_skipped_domains_count_as_unreadable(self):
+        lines = self._lines([], {"total": 2, "with_anchors": 1, "errored": 0,
+                                 "skipped": 1, "no_record": 0, "unknown": 0})
+        self.assertTrue(lines)
+
+    def test_fully_readable_coverage_adds_no_noise(self):
+        self.assertEqual(
+            self._lines([], {"total": 3, "with_anchors": 3, "errored": 0,
+                             "skipped": 0, "no_record": 0, "unknown": 0}),
+            [])
+
+    def test_both_lines_appear_together(self):
+        lines = self._lines(["anchor_text_spam"],
+                            {"total": 2, "with_anchors": 1, "errored": 1,
+                             "skipped": 0, "no_record": 0, "unknown": 0})
+        self.assertEqual(len(lines), 2)
+
+class TestMainWiring(unittest.TestCase):
+    """main.py cannot be imported here (it pulls pandas/spacy at module load),
+    so its call sites are checked by parsing rather than executing. Matching
+    source *text* would also match a comment; the AST cannot (P19 corollary)."""
+
+    @staticmethod
+    def _tree():
+        import ast
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+        with open(os.path.join(root, "main.py"), encoding="utf-8") as f:
+            return ast.parse(f.read())
+
+    def _call_kwargs(self, func_name):
+        import ast
+        for node in ast.walk(self._tree()):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == func_name):
+                return {kw.arg for kw in node.keywords}
+        raise AssertionError(f"main.py never calls {func_name}")
+
+    def test_anchor_kwargs_are_passed_by_name_not_unpacked(self):
+        """`**dict(zip(...))` truncates to the shorter side without error, so a
+        change on either side would silently drop a kwarg — a silent drop
+        inside the code added to prevent silent drops (P2)."""
+        kwargs = self._call_kwargs("run_comparison_features")
+        self.assertIn("anchor_texts_by_domain", kwargs)
+        self.assertIn("anchor_coverage", kwargs)
+        self.assertNotIn(None, kwargs, "a **unpacking is still present")
+
+    def _method_call_kwargs(self, method_name):
+        import ast
+        for node in ast.walk(self._tree()):
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == method_name):
+                return {kw.arg for kw in node.keywords}
+        raise AssertionError(f"main.py never calls {method_name}")
+
+    def test_coverage_reaches_the_report_call(self):
+        """The coverage note is worthless if it stops at the console (P25)."""
+        self.assertIn("anchor_coverage",
+                      self._method_call_kwargs("generate_summary"))

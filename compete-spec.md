@@ -194,6 +194,33 @@ risk_signal (run_id, competitor_id, detected_at,
 
 **Acceptance criteria.** A synthetic 60% visibility drop over 30 days → `visibility_cliff` high severity with the drop % in `evidence_json`. Parasite detection requires topical mismatch + commercial intent, not subfolder name alone. Own-site signals separated from competitor signals.
 
+### SC-8.4 — `anchor_text_spam` (shipped 2026-08-28)
+
+**Problem.** A paid-link / PBN footprint is visible in a domain's *inbound anchor text*, and Tool 1 now collects that distribution but Tool 2 was discarding it.
+
+**Source.** serp-discover's competitor handoff, `moz.domains.<domain>.anchor_texts.items` (schema_version 1.1; producer spec `moz_api_upgrade_spec_v1.md#T.4`). Read by `src/handoff_moz.py::load_moz_block` + `anchor_texts_by_domain`, which take a path so file discovery stays in `main.py` and is not reimplemented.
+
+**Core logic.** `risk_radar.py::detect_anchor_spam` matches configured spam terms against each anchor on **whole-word boundaries** (single words and multi-word phrases both), holding the same line `detect_parasite` already holds — "pbn" must not fire inside "pbnetwork".
+
+Severity is gated twice, and both gates exist because the first version was wrong:
+
+- **Reach floor.** The *widest single matched anchor* must reach `anchor_spam_min_anchor_reach` root domains (default 5) before severity can exceed `low`. Deliberately **not** a sum across anchors: Moz reports reach per anchor with no domain identity, so summing double-counts a source carrying several variants — and one PBN page typically does. Summing let five anchors of reach 1, all from a single scraper, clear a floor of 5 and name a competitor `high`.
+- **Truncation.** A sample the producer flagged `truncated` has a denominator known to be too small, so it cannot support `high`.
+
+A genuinely measured `external_root_domains: 0` is data and falls through the ordinary gate. Only an absent or unparseable value takes the "reach unmeasured" path, which returns `low` with `matched_anchor_count: 0`, `unmeasured_anchor_count: n`, and an interpretation that makes **no** claim of a footprint.
+
+**Editorial content.** `shared_config.json` `risk_signals.anchor_spam_terms`, plus `anchor_spam_min_domains`, `anchor_spam_high_share` and `anchor_spam_min_anchor_reach`. The Python fallbacks are duplicates of these four and a test asserts they stay byte-identical — they had already drifted once, which made the same anchors score differently depending on the call path.
+
+**Coverage reporting.** `handoff_moz.anchor_coverage` counts `with_anchors / no_record / errored / skipped / unknown` per domain, and the report prints a caveat whenever any domain was unreadable. A domain Tool 1 capped or dropped for quota carries no `anchor_texts` key at all, so its status is read from the domain block — counting it as `no_record` would turn "we ran out of row budget" into "we looked and found nothing".
+
+**Framing (binding).** Anchors are written by *other* sites. The signal reports links **received**, never links bought — a domain can be targeted by a scheme it had no part in, and `evidence.interpretation` says so. This matters most for the own-site case, where the same detector surfaces negative SEO against the client. Pattern detection, not a confirmed penalty, like everything else in this module.
+
+**Access surface.** The caveat and the coverage note are produced by `risk_radar.anchor_caveat_lines` — a pandas-free seam so it stays executably testable — and rendered by `reporting.py` inside the radar section. The section is emitted when any domain was unreadable even if no signal fired, because silence about an unreadable domain is indistinguishable from a clean verdict.
+
+**Acceptance criteria.** Real anchor data containing PBN phrases → an `anchor_text_spam` signal carrying the matched anchors, the matched/sampled linking-domain counts and the share. A clean anchor profile → no signal. Five narrow anchors from one source → `low`, not `high`. A measured zero → no signal; an unparseable reach → `low` with no footprint claim. A domain whose anchor fetch returned nothing is **omitted** from the input map rather than mapped to an empty list. A skipped domain is counted `skipped`, never `no_record`. Whenever an `anchor_text_spam` row is rendered, the "links received, not bought" caveat is rendered with it. Verified end-to-end on a real handoff: bowencenter.org → 2 matched anchors, 87 of 589 linking domains (15%), **medium**.
+
+**Known gap.** Tool 1 excludes the client's own domain from `moz.domains`, so client anchors never arrive and the own-site path — the case that would surface negative SEO against the client — is unreachable today. The radar's `is_own_site` tagging is correct and tested for when that changes. Tracked in `TODO.md`.
+
 ---
 
 ## Already-built features the spec must NOT re-propose (SC-1, shipped)

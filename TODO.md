@@ -62,3 +62,44 @@ wants cross-platform tracking **and** a provider budget is approved.
   Branded-Demand benchmark currently leaves `NULL` (see `docs/TEST_RUN_CHECKLIST.md` §7).
 - **D4 commodity export (serp-discover)** — would upgrade C4's local "commodity" overlap proxy to a real
   signal (`docs/TEST_RUN_CHECKLIST.md` §7).
+
+## SC-8.4 anchor-text spam — deferred and adjacent items (2026-08-28)
+
+Raised by the pre-push sweeps and deliberately **not** fixed in that batch, with the reason.
+
+**Deferred (sweep findings, below the fix bar):**
+- **Coverage counts are not persisted.** `anchor_coverage` reaches the console and the report,
+  but no `risk_signal`-adjacent column stores it, so a past run's coverage cannot be recovered.
+  Needs a schema change; the report caveat covers the case that matters now.
+- **Stale cached anchors are stamped with today's date.** The Moz block is read from a second,
+  schema-unvalidated read of the handoff, `moz.generated_at` is discarded, and a signal is added
+  for any domain in the block whether or not it is in this run's target set. Producer caches with
+  a 30-day TTL, so weeks-old anchor data can be attributed to a domain no longer ranking. Fix:
+  pass the already-loaded handoff, carry `generated_at` into the evidence, and intersect with the
+  run's competitor set.
+- **Anchor text is interpolated into markdown unescaped** (`reporting.py`, pre-existing for the
+  neighbouring rows). Third-party-authored text; worth `json.dumps`-escaping or code-fencing.
+- **An anchor matching a term but below `min_domains` is dropped with no counter** — the same
+  silent-drop class the `unmeasured` counter was added for. Unreachable at the default of 1, live
+  if anyone raises it.
+- **`anchor_coverage` labels every domain in `moz.domains` a "competitor".** True today because
+  Tool 1 excludes the client, but that is an assumption about the producer, not a fact from the data.
+
+**Known gap — the own-site path is unreachable:**
+- Tool 1 excludes the client's own domain from `moz.domains`, so client anchors never arrive and
+  the own-site branch of the detector — the case that would surface negative SEO *against the
+  client* — cannot fire. The radar's `is_own_site` tagging is correct and tested for when that
+  changes. Fixing it means a producer-side change in serp-discover (add the client to the block,
+  or a `moz.client.anchor_texts` entry) plus another handoff-schema sync.
+
+**Adjacent, pre-existing, not caused by this work:**
+- **`DEFAULT_COMMERCIAL_TERMS` has drifted from `shared_config.json`** exactly as the anchor term
+  list had (`"insurance"` and `"buy"` are in code, absent from config). The new parity test covers
+  only the anchor keys; extend it to the commercial terms and resync.
+- **The two test suites cannot run in one pytest invocation.** `pytest tests Serp-compete/tests`
+  fails collection with duplicate module basenames, on unmodified `main` as well. They must be run
+  separately.
+- **`Serp-compete/tests/` cannot be fully collected in the current venv** — `pandas`, `spacy` and
+  `requests_mock` are missing, giving 7 pre-existing collection errors. Individual files run.
+  `reporting.py` is unimportable without pandas, which is why the anchor caveat logic lives behind
+  a pandas-free seam in `risk_radar.py`.

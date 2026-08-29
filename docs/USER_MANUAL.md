@@ -15,13 +15,25 @@
 
 ## Quick Start
 
+### Prerequisites
+- Python 3.12+
+- Competitor data from **Serp-Discover** (Tool 1) — a `competitor_handoff_*.json` file
+- Environment variables (in `.env`):
+  - `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` — competitor ranking/page data
+  - `MOZ_TOKEN` — domain/page authority metrics
+  - `OPENAI_API_KEY` — required for AI-generated Bowen reframes (uses the OpenAI `gpt-4o` model)
+- **Google Search Console access** — the CLI audit verifies GSC connectivity in its
+  pre-flight check and aborts if it fails (see Step 4). Provide a valid
+  `auth.gsc_client_secrets` path in `shared_config.json` and authorize once via OAuth.
+
 ### Option 1: GUI (Recommended)
 ```bash
 cd /Users/davemini2/ProjectsLocal/serp-compete
 ./run_gui.sh
 ```
-Then open browser to `http://localhost:8501` and:
-1. Click "🔍 New Audit" tab
+The GUI launches a Streamlit app (`Serp-compete/src/orchestrator.py`). Open your
+browser to `http://localhost:8501`, then in the **sidebar**:
+1. Open the "🔍 New Audit" tab
 2. Enter path to Serp-Discover output directory
 3. Select a `competitor_handoff_*.json` file
 4. Click "🔥 RUN AUDIT"
@@ -116,7 +128,7 @@ Scores four dimensions:
 **How it works:**
 - Identifies "hub" pages (pages that many other pages link to)
 - Flags whether competitors have strong internal linking patterns
-- Classifies sites as: **isolated** (no internal network), **linked** (some connections), **clustered** (strong hub pages)
+- Classifies sites as: **isolated** (no internal network), **linked** (some connections), **clustered** (strong hub pages), or **insufficient_data** (fewer than `cluster_thresholds.min_pages_for_signal` pages — default 3 — could be scraped, so no reliable signal). The `insufficient_data` result is common because only up to 3 pages per competitor are scraped.
 
 **Why:** Well-linked internal structures help Google understand page relationships. Competitors with strong clusters make it harder to displace them. Isolated competitors are easier targets.
 
@@ -148,6 +160,12 @@ The system executes in 5 optional steps (configurable via `shared_config.json`):
    - Uses realistic browser headers to avoid blocking
    - Handles rate-limiting (429 errors trigger circuit breaker)
    - Retries on network errors, fails hard on 400+ errors
+   - **High-authority filter:** domains whose average Moz Page Authority exceeds
+     **50** are skipped automatically — they're treated as too entrenched to be
+     realistic reframing targets (`src/main.py`, "Expert Filter").
+   - **7-day audit cache:** a URL audited within the last 7 days is reused from the
+     database instead of being re-scraped (`db.was_audited_recently`), so frequent
+     re-runs are cheap and gentle on competitor servers.
 
 2. **Page Structure Extraction**:
    - Extracts all headers (H1, H2, H3) in order
@@ -160,7 +178,12 @@ The system executes in 5 optional steps (configurable via `shared_config.json`):
 3. **Semantic Scoring**:
    - Analyzes text for Tier 1/2/3 keyword mentions
    - Calculates weighted score (Tier 3 weighted 2x, Tier 2 weighted 0.5x)
-   - Assigns "Systemic Label": Bowen-Heavy, Systems-Moderate, Medical-Dominant, Standard
+   - Assigns a "Systemic Label" of either **Standard** or **Surface-Level**. A page
+     is labelled **Surface-Level** when it uses a lot of medical language
+     (Tier 1 count above the `penalty_thresholds.tier_1_max` value, default 10)
+     but no deep Bowen (Tier 3) terms at all; in that case its Tier 2 score is
+     also penalised by 50%. Every other page is labelled **Standard**.
+     (See `src/scoring_logic.py:calculate_weighted_score`.)
 
 **Output:**
 - Database records for each audited URL
@@ -186,8 +209,15 @@ The system executes in 5 optional steps (configurable via `shared_config.json`):
 
 ---
 
-### **Step 4: GSC Analysis** (Optional)
+### **Step 4: GSC Analysis** (Required by the CLI audit; optional in the step DAG)
 **What:** Analyze your own site's Google Search Console data to find internal opportunities.
+
+> ⚠️ **Important — GSC credentials are mandatory for the command-line audit.**
+> Although `step_dag` marks this step `optional`, the CLI audit (`src/main.py`)
+> runs a `pre_flight_check()` that **hard-fails and aborts the entire run** if
+> Google Search Console connectivity cannot be verified (valid
+> `auth.gsc_client_secrets` path plus a working OAuth token). Set up GSC before
+> running `./run_audit.sh`. See `src/main.py:pre_flight_check`.
 
 **What it finds:**
 - **High Impression / Low CTR**: Pages people see but don't click on
@@ -328,7 +358,7 @@ For each competitor URL audited:
 #### Section C: Internal Linking Cluster Analysis
 For each competitor domain:
 - Pages analyzed (usually 3)
-- Cluster signal: isolated | linked | clustered
+- Cluster signal: isolated | linked | clustered | insufficient_data
 - Average link degree, max link degree
 
 **How to use:** "Isolated" competitors are easier to overtake. "Clustered" competitors have strong internal networks you'll need to match.
@@ -339,10 +369,10 @@ Table showing:
 - Number of top pages
 - Total keywords ranking
 - Average position
-- Systemic depth (Medical | Systems | High)
+- Systemic depth (derived from the **Standard** / **Surface-Level** page labels)
 - Recommended strategy
 
-**How to use:** Focus on "Medical-Dominant" competitors—they're your reframing opportunities.
+**How to use:** Focus on competitors whose pages are mostly **Surface-Level** (heavy medical language, no deep systems framing)—they're your reframing opportunities.
 
 #### Section E: Traffic Magnets
 Top competitor pages ranked by traffic potential, showing:
@@ -369,6 +399,16 @@ AI-generated content outlines for reframing competitor content.
 4. **Differentiation Strategy**: Why Bowen is more effective than tools/tips
 
 **How to use:** Use these as starting points for your content writers. Not production-ready, but provides structure.
+
+#### Market Velocity Alerts
+Each audit also records a market snapshot (rank, authority, and medical/systems
+scores per URL) to a `market_history` table and compares it against previous runs.
+When a competitor's rank or authority shifts meaningfully between runs, the briefing
+surfaces a **market velocity alert**. This is generated by the `VelocityTracker`
+module (`src/velocity_module.py`) and runs on every audit.
+
+**How to use:** Watch for competitors gaining or losing ground over successive runs —
+rising competitors may be worth re-prioritising, and falling ones may have opened a gap.
 
 ### Output Files
 
@@ -574,3 +614,48 @@ By understanding competitor content (what they say, how credible they are, how t
 **Version:** 3.0  
 **Last Updated:** 2026-05-02  
 **For questions, see:** docs/GEMINI.md & docs/SPEC_COVERAGE_REPORT_v3.md
+
+
+## Anchor-text spam in the reputation-risk radar (SC-8.4)
+
+The risk radar now reads the **anchor text** pointing at each competitor — the words other
+sites use when they link to them — from the handoff Tool 1 produces.
+
+**Why it is worth looking at.** Anchor text is hard to fake and easy to read. A domain whose
+inbound anchors are mostly its own brand name looks healthy. A domain with anchors like
+*"high quality dofollow backlinks da 50 pa 40 premium pbn network service ... buy backlinks
+online cheap"* is sitting in a paid-link network. On the live data, bowencenter.org shows
+exactly that: 2 matched anchors carried by 87 of 589 sampled linking domains — 15%.
+
+**What it does not say.** Anchors are written by *other* people. This flags links **received**,
+never links bought. A competitor can be the target of a negative-SEO or scraper campaign it
+had no part in, and the evidence text says so. Like everything in this radar it is a pattern
+detection, not a confirmed Google penalty — treat it as a question to look into, not a verdict.
+
+**Your own site — not yet.** The radar tags an own-site hit as `is_own_site`, and that is
+the case that would matter most: it is how you would find out someone is pointing spam
+links at you. But Tool 1 deliberately excludes your own domain from the competitor
+handoff, so your anchors never reach this check today. The tagging is in place and
+tested for when that changes; until then, treat this as competitor intel only.
+
+**How severity is decided.** Two things have to be true before a competitor is flagged
+above `low`: the widest single spam anchor must reach at least
+`anchor_spam_min_anchor_reach` root domains (default 5), and the sample must not have
+been truncated. This is deliberately strict. One spam page usually carries several
+anchor variants at once, and an earlier version counted those variants separately —
+enough to flag a competitor `high` off a single scraper. Naming a third party in a
+client report is not something to get wrong in that direction.
+
+**When anchors could not be read.** If Moz errored or Tool 1 ran out of row budget for
+some domains, the report says so explicitly and states that the absence of a signal is
+not evidence of a clean link profile for those domains. A quiet report and a clean
+report should never look the same.
+
+**Tuning.** The phrase list is editorial and lives in `shared_config.json` under
+`risk_signals.anchor_spam_terms`, with `anchor_spam_min_domains` (ignore anchors carried by
+fewer than N domains), `anchor_spam_min_anchor_reach` (the reach floor above) and
+`anchor_spam_high_share` (the share of linking domains at which the signal becomes high
+severity). Add or remove phrases there — no code change needed.
+
+**If you see nothing:** the signal needs Tool 1 to have run with `moz.competitor.enabled`, and
+a handoff at schema_version 1.1. A 1.0 handoff carries no anchor data and produces no signal.

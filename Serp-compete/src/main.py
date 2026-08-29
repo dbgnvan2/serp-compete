@@ -501,10 +501,14 @@ def run_audit():
     # so the assembly (read inputs → compute → persist) is unit-testable; each feature is
     # independently guarded there (see tests/test_comparison_features.py).
     from src.comparison_features import run_comparison_features
+    # Unpacked explicitly: `**dict(zip(...))` truncates to the shorter side
+    # without error, so a change in either list would silently drop a kwarg —
+    # a silent drop inside the code added to stop silent drops (P2).
+    _moz_anchors, _moz_coverage = _handoff_anchor_texts()
     run_comparison_features(db, run_id, shared_config, client_domain, competitor_keywords,
                             gsc, dfs_client, PROJECT_ROOT,
-                            **dict(zip(("anchor_texts_by_domain", "anchor_coverage"),
-                                        _handoff_anchor_texts())))
+                            anchor_texts_by_domain=_moz_anchors,
+                            anchor_coverage=_moz_coverage)
 
     # Strategic Logic with PAA context from Handover
     print("Identifying Strategic Openings...")
@@ -542,7 +546,8 @@ def run_audit():
         reframes=reframes,
         token_usage=total_usage,
         market_alerts=market_alerts,
-        gsc_findings=gsc_findings
+        gsc_findings=gsc_findings,
+        anchor_coverage=_moz_coverage
     )
 
 if __name__ == "__main__":

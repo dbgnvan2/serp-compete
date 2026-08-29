@@ -334,7 +334,7 @@
     ],
     "anchor_spam_min_domains": 1,
     "anchor_spam_high_share": 0.25,
-    "anchor_spam_min_matched_domains": 5
+    "anchor_spam_min_anchor_reach": 5
   },
   "clinical_pivots": {
     "avoidant attachment": "Emotional Distance / Pursuer-Distancer",

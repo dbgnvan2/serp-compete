@@ -90,17 +90,28 @@ def anchor_coverage(moz_block: Dict[str, Any]) -> Dict[str, int]:
     risks found" (learnings P1/P2), so the counts are reported alongside the
     signals rather than inferred from what is missing.
     """
-    counts = {"total": 0, "with_anchors": 0, "no_record": 0, "errored": 0}
+    counts = {"total": 0, "with_anchors": 0, "no_record": 0,
+              "errored": 0, "skipped": 0, "unknown": 0}
     for _domain, block in ((moz_block or {}).get("domains") or {}).items():
         if not isinstance(block, dict):
             continue
         counts["total"] += 1
         anchors = block.get("anchor_texts") or {}
-        status = anchors.get("status")
         if anchors.get("items"):
             counts["with_anchors"] += 1
-        elif status == "error":
+            continue
+        # A domain the producer capped or skipped for quota carries no
+        # `anchor_texts` key at all, so its status lives on the domain block.
+        # Falling back to it matters: without this, "Tool 1 ran out of row
+        # budget" was counted as "Moz has no record", which is exactly the
+        # transient-as-terminal collapse this function exists to prevent (P1).
+        status = anchors.get("status") or block.get("status")
+        if status == "error":
             counts["errored"] += 1
-        else:
+        elif status in ("skipped_run_cap", "skipped_quota"):
+            counts["skipped"] += 1
+        elif status == "no_record":
             counts["no_record"] += 1
+        else:
+            counts["unknown"] += 1
     return counts

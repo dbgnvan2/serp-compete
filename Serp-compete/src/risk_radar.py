@@ -94,11 +94,15 @@ DEFAULT_ANCHOR_SPAM_TERMS = [
 ]
 #: An anchor carried by fewer than this many root domains is ignored entirely.
 DEFAULT_ANCHOR_SPAM_MIN_DOMAINS = 1
-#: Below this many matched root domains the signal cannot rise above "low".
-#: A single scraped directory link must not name a competitor at high severity
-#: — with one anchor sampled the share is 1.0, which is arithmetic, not
-#: evidence (P7).
-DEFAULT_ANCHOR_SPAM_MIN_MATCHED_DOMAINS = 5
+#: The WIDEST single matched anchor must reach at least this many root domains
+#: before the signal can rise above "low".
+#:
+#: Deliberately not a sum across anchors. Moz gives a reach count per anchor
+#: and no per-anchor domain identity, so summing double-counts any root domain
+#: that carries more than one matched anchor — and one PBN page typically
+#: carries several variants at once. Summing let five anchors of reach 1, all
+#: from a single scraper, clear a floor of 5 and name a competitor "high" (P7).
+DEFAULT_ANCHOR_SPAM_MIN_ANCHOR_REACH = 5
 DEFAULT_ANCHOR_SPAM_HIGH_SHARE = 0.25
 
 
@@ -111,6 +115,12 @@ def _normalised(text: Any) -> str:
     """
     return " " + " ".join(re.findall(r"[a-z0-9]+", str(text).lower())) + " "
 
+
+_REACH_UNMEASURED = (
+    "Anchor text matched a paid-link/PBN pattern, but its reach could not be "
+    "measured, so there is nothing here about scale — treat this as a prompt "
+    "to look, not as a finding. Anchors are written by other sites."
+)
 
 _RECEIVED_NOT_BOUGHT = (
     "Inbound anchors show a paid-link/PBN footprint. Anchors are written by "
@@ -148,8 +158,8 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
     if not normalised_terms:
         return None
 
-    min_matched = config.get("anchor_spam_min_matched_domains",
-                             DEFAULT_ANCHOR_SPAM_MIN_MATCHED_DOMAINS)
+    min_reach = config.get("anchor_spam_min_anchor_reach",
+                           DEFAULT_ANCHOR_SPAM_MIN_ANCHOR_REACH)
 
     matched, matched_domains, total_domains, unparseable = [], 0, 0, 0
     for entry in anchor_texts or []:
@@ -159,10 +169,14 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
         try:
             domains = int(raw_reach)
         except (TypeError, ValueError):
-            domains = 0
+            # None, not 0. `int(0)` succeeds, so a genuinely measured zero must
+            # keep falling through the min_domains gate as ordinary data —
+            # routing it here would manufacture a signal out of a measurement
+            # that says "no reach" (P1/P14).
+            domains = None
         haystack = _normalised(entry.get("text"))
         hits = [t for t in normalised_terms if f" {t} " in haystack]
-        if hits and domains == 0:
+        if hits and domains is None:
             # The text matched but its reach is missing or unreadable. Dropping
             # it silently would turn a producer field rename into a permanent
             # "no signal" from non-empty input, with a green suite (P19/P2).
@@ -170,6 +184,8 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
             logger.warning(
                 "Anchor matched %s but carries no usable external_root_domains "
                 "(%r) — counted as unmeasured, not as clean", hits, raw_reach)
+            continue
+        if domains is None:
             continue
         total_domains += domains
         if hits and domains >= min_domains:
@@ -186,18 +202,17 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
                 "signal_type": "anchor_text_spam",
                 "severity": "low",
                 "evidence": {
-                    "matched_anchor_count": unparseable,
+                    # 0, not `unparseable`: nothing was measurably matched.
+                    # Reusing this key for a second quantity gave one field two
+                    # meanings across the two return paths (P19/P22).
+                    "matched_anchor_count": 0,
                     "unmeasured_anchor_count": unparseable,
                     "linking_domains_matched": 0,
                     "linking_domains_sampled": total_domains,
                     "share_of_sampled_linking_domains": 0.0,
                     "sample_anchors": [],
                     "sample_truncated": bool(sample_truncated),
-                    "interpretation": (
-                        "Anchor text matched a paid-link/PBN pattern but its "
-                        "reach could not be measured, so the scale is unknown. "
-                        + _RECEIVED_NOT_BOUGHT
-                    ),
+                    "interpretation": _REACH_UNMEASURED,
                 },
             }
         return None
@@ -208,10 +223,12 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
     share = (matched_domains / total_domains) if total_domains else 0.0
     # Severity ladder. `share` alone is not evidence: with a single anchor
     # sampled it is 1.0 by arithmetic, which would name a competitor at high
-    # severity off one scraped link (P7). And a truncated sample has a
-    # systematically small denominator — the producer flags that expressly so a
-    # capped list is not read as complete — so it cannot support "high" (P9).
-    if matched_domains < min_matched:
+    # severity off one scraped link (P7). The floor is the WIDEST single
+    # matched anchor, not the sum across anchors — see the constant's note. And
+    # a truncated sample has a systematically small denominator, which the
+    # producer flags expressly so a capped list is not read as complete (P9).
+    widest = max(m["external_root_domains"] for m in matched)
+    if widest < min_reach:
         severity = "low"
     elif share >= high_share and not sample_truncated:
         severity = "high"
@@ -233,6 +250,47 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
             "interpretation": _RECEIVED_NOT_BOUGHT,
         },
     }
+
+
+ANCHOR_SPAM_CAVEAT = (
+    "_`anchor_text_spam` reflects links **received**, not links bought: anchors are "
+    "written by other sites, so a domain can be targeted by a scheme it had no part in._"
+)
+
+
+def anchor_caveat_lines(signal_types, coverage=None):
+    """Return the anchor-text caveat lines a risk section must carry.
+
+    Purpose: keep the disclaimer and the coverage note decidable — and
+             testable — without pandas or tabulate, which the rendering path
+             needs and some environments lack.
+    Spec:    compete-spec.md#C6 (SC-8.4)
+    Tests:   tests/test_risk_radar.py::TestReportCaveats
+
+    Two separate obligations:
+
+    - Whenever an `anchor_text_spam` row is present, the "received, not bought"
+      caveat must travel with it. Naming a third party under "patterns Google
+      penalizes" without it reads as an accusation.
+    - Whenever anchor data could not be read for some domains, say so. Silence
+      about an unreadable domain is indistinguishable from a clean verdict, and
+      the console note does not reach the artifact anyone reads (P25).
+    """
+    lines = []
+    if "anchor_text_spam" in set(signal_types or ()):
+        lines.append(ANCHOR_SPAM_CAVEAT)
+    coverage = coverage or {}
+    unreadable = (coverage.get("errored", 0) + coverage.get("skipped", 0)
+                  + coverage.get("unknown", 0))
+    if unreadable:
+        lines.append(
+            f"_Anchor-text coverage: {coverage.get('with_anchors', 0)} of "
+            f"{coverage.get('total', 0)} competitor domain(s) had readable anchor data "
+            f"({coverage.get('errored', 0)} errored, {coverage.get('skipped', 0)} skipped, "
+            f"{coverage.get('no_record', 0)} no record). Absence of an anchor signal below "
+            f"is not evidence of a clean link profile for the domains that could not be "
+            f"read._")
+    return lines
 
 
 def compute_risk_signals(volatility_alerts: List[Dict[str, Any]],

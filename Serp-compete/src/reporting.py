@@ -2,11 +2,14 @@ import pandas as pd
 from src.database import DatabaseManager
 import datetime
 
+from src.risk_radar import anchor_caveat_lines
+
+
 class ReportGenerator:
     def __init__(self, db_path: str = "competitor_history.db"):
         self.db = DatabaseManager(db_path)
 
-    def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None):
+    def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None, anchor_coverage: dict = None):
         """
         Generate a Markdown report summarizing the audit findings for a specific run.
         """
@@ -382,20 +385,21 @@ class ReportGenerator:
                     CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, domain
             ''', conn, params=(run_id,))
 
-            if not df_risk.empty:
+            risk_coverage = anchor_coverage or {}
+            unreadable = (risk_coverage.get("errored", 0)
+                          + risk_coverage.get("skipped", 0)
+                          + risk_coverage.get("unknown", 0))
+            if not df_risk.empty or unreadable:
                 report.append("\n## Reputation-Risk Radar")
                 report.append("Patterns Google is known to penalize — visibility cliffs, off-topic "
                               "commercial subfolders (site-reputation abuse), ranking volatility, "
                               "and paid-link/PBN footprints in inbound anchor text. "
                               "_**Pattern detections, not confirmed Google penalties.**_")
-                if (df_risk['signal_type'] == 'anchor_text_spam').any():
-                    # The caveat has to travel with the table. Naming a third
-                    # party under "patterns Google penalizes" without it reads
-                    # as an accusation, and anchors are written by other sites
-                    # — the domain may be the target, not the buyer (SC-8.4).
-                    report.append("_`anchor_text_spam` reflects links **received**, not links "
-                                  "bought: anchors are written by other sites, so a domain can "
-                                  "be targeted by a scheme it had no part in._")
+                report.extend(anchor_caveat_lines(
+                    df_risk['signal_type'].tolist() if not df_risk.empty else [],
+                    risk_coverage))
+                if df_risk.empty:
+                    report.append("_No risk signals detected in this run._")
                 own = df_risk[df_risk['is_own_site'] == 1]
                 if not own.empty:
                     report.append("\n### ⚠️ Own-site warnings")
