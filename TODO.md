@@ -68,6 +68,9 @@ wants cross-platform tracking **and** a provider budget is approved.
 Raised by the pre-push sweeps and deliberately **not** fixed in that batch, with the reason.
 
 **Deferred (sweep findings, below the fix bar):**
+- **`anchor_spam_min_domains` above `anchor_spam_min_anchor_reach` makes the `low` branch
+  unreachable** — every surviving anchor would satisfy the reach floor. Not the case at the
+  shipped defaults (1 and 5), and no relative constraint is enforced.
 - **Coverage counts are not persisted.** `anchor_coverage` reaches the console and the report,
   but no `risk_signal`-adjacent column stores it, so a past run's coverage cannot be recovered.
   Needs a schema change; the report caveat covers the case that matters now.

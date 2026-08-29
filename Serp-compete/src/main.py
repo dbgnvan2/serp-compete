@@ -119,7 +119,10 @@ def _handoff_anchor_texts() -> Tuple[Dict[str, Any], Dict[str, int]]:
         return anchor_texts_by_domain(block), anchor_coverage(block)
     except Exception as exc:  # noqa: BLE001
         print(f"⚠️ Moz anchor texts unavailable: {exc}")
-        return {}, {}
+        # A distinguishable sentinel, not an empty dict: total failure of the
+        # anchor path must not render identically to a run where nothing was
+        # attempted, which is the one case where silence is correct (P2/P25).
+        return {}, {"total": 0, "fetch_status": "unavailable", "reason": str(exc)}
 
 
 def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:

@@ -228,9 +228,14 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
     # a truncated sample has a systematically small denominator, which the
     # producer flags expressly so a capped list is not read as complete (P9).
     widest = max(m["external_root_domains"] for m in matched)
+    # Anchors whose reach could not be read are excluded from the denominator,
+    # so a sample full of them yields a share computed over a fraction of the
+    # data. That is the same defect `sample_truncated` already guards against,
+    # with a different cause — a fix to one reveals the class (P5/P9).
+    materially_unmeasured = unparseable > len(matched)
     if widest < min_reach:
         severity = "low"
-    elif share >= high_share and not sample_truncated:
+    elif share >= high_share and not sample_truncated and not materially_unmeasured:
         severity = "high"
     else:
         severity = "medium"
@@ -246,6 +251,7 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
             "linking_domains_sampled": total_domains,
             "share_of_sampled_linking_domains": round(share, 3),
             "sample_truncated": bool(sample_truncated),
+            "reach_unmeasured_for": unparseable,
             "sample_anchors": matched[:5],
             "interpretation": _RECEIVED_NOT_BOUGHT,
         },
@@ -256,6 +262,23 @@ ANCHOR_SPAM_CAVEAT = (
     "_`anchor_text_spam` reflects links **received**, not links bought: anchors are "
     "written by other sites, so a domain can be targeted by a scheme it had no part in._"
 )
+
+
+def anchor_data_unreadable(coverage) -> int:
+    """How many domains' anchor data could not be read.
+
+    One definition, imported by both the report's section gate and its caveat
+    text. Duplicating the sum let a new bucket land in one place and not the
+    other, producing a section with no caveat or a caveat with no section (P19).
+
+    "Read fine, no anchors" is deliberately excluded: it is an answer, not a
+    failure to get one.
+    """
+    coverage = coverage or {}
+    if coverage.get("fetch_status") == "unavailable":
+        return max(1, coverage.get("total", 0))
+    return (coverage.get("errored", 0) + coverage.get("skipped", 0)
+            + coverage.get("unknown", 0))
 
 
 def anchor_caveat_lines(signal_types, coverage=None):
@@ -280,16 +303,26 @@ def anchor_caveat_lines(signal_types, coverage=None):
     if "anchor_text_spam" in set(signal_types or ()):
         lines.append(ANCHOR_SPAM_CAVEAT)
     coverage = coverage or {}
-    unreadable = (coverage.get("errored", 0) + coverage.get("skipped", 0)
-                  + coverage.get("unknown", 0))
-    if unreadable:
+    if coverage.get("fetch_status") == "unavailable":
+        # F4: a total failure of the anchor path must not render identically to
+        # a clean run. Without this the console note is the only trace (P25).
+        lines.append(
+            "_Anchor-text data could not be retrieved for this run"
+            + (f" ({coverage['reason']})" if coverage.get("reason") else "")
+            + ", so no anchor-text signals could be computed. This is not "
+              "evidence of a clean link profile for any competitor._")
+        return lines
+    if anchor_data_unreadable(coverage):
+        causes = ", ".join(
+            f"{coverage.get(bucket, 0)} {label}"
+            for bucket, label in (("errored", "errored"), ("skipped", "skipped"),
+                                  ("unknown", "unrecognised status"))
+            if coverage.get(bucket, 0))
         lines.append(
             f"_Anchor-text coverage: {coverage.get('with_anchors', 0)} of "
             f"{coverage.get('total', 0)} competitor domain(s) had readable anchor data "
-            f"({coverage.get('errored', 0)} errored, {coverage.get('skipped', 0)} skipped, "
-            f"{coverage.get('no_record', 0)} no record). Absence of an anchor signal below "
-            f"is not evidence of a clean link profile for the domains that could not be "
-            f"read._")
+            f"({causes}). Absence of an anchor signal below is not evidence of a clean "
+            f"link profile for the domains that could not be read._")
     return lines
 
 

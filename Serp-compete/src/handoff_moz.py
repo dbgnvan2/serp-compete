@@ -90,8 +90,8 @@ def anchor_coverage(moz_block: Dict[str, Any]) -> Dict[str, int]:
     risks found" (learnings P1/P2), so the counts are reported alongside the
     signals rather than inferred from what is missing.
     """
-    counts = {"total": 0, "with_anchors": 0, "no_record": 0,
-              "errored": 0, "skipped": 0, "unknown": 0}
+    counts = {"total": 0, "with_anchors": 0, "read_no_anchors": 0,
+              "no_record": 0, "errored": 0, "skipped": 0, "unknown": 0}
     for _domain, block in ((moz_block or {}).get("domains") or {}).items():
         if not isinstance(block, dict):
             continue
@@ -112,6 +112,14 @@ def anchor_coverage(moz_block: Dict[str, Any]) -> Dict[str, int]:
             counts["skipped"] += 1
         elif status == "no_record":
             counts["no_record"] += 1
+        elif status == "ok":
+            # Read successfully, genuinely no anchors. This is the producer's
+            # ordinary shape for a domain with ranking data but no anchor text,
+            # and it is NOT unreadable — bucketing it "unknown" put a caveat
+            # warning of untrustworthy data on a clean run, naming no cause
+            # ("0 errored, 0 skipped, 0 no record"). The same measured-vs-
+            # unmeasured collapse the detector was just fixed for (P1/P14).
+            counts["read_no_anchors"] += 1
         else:
             counts["unknown"] += 1
     return counts

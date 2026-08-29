@@ -147,10 +147,11 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         if anchor_coverage:
             # "No anchor risks" must never be able to mean "every anchor fetch
             # failed" — say how many domains were actually readable (P1/P2).
+            breakdown = ", ".join(f"{v} {k}" for k, v in anchor_coverage.items()
+                                  if k not in ("total", "with_anchors") and v)
             print(f"      Anchor coverage: {anchor_coverage.get('with_anchors', 0)} of "
                   f"{anchor_coverage.get('total', 0)} competitor domain(s) had anchor "
-                  f"data ({anchor_coverage.get('errored', 0)} errored, "
-                  f"{anchor_coverage.get('no_record', 0)} no record).")
+                  f"data{f' ({breakdown})' if breakdown else ''}.")
     except Exception as risk_err:  # noqa: BLE001
         print(f"⚠️ Reputation-risk radar skipped: {risk_err}")
 

@@ -2,7 +2,7 @@ import pandas as pd
 from src.database import DatabaseManager
 import datetime
 
-from src.risk_radar import anchor_caveat_lines
+from src.risk_radar import anchor_caveat_lines, anchor_data_unreadable
 
 
 class ReportGenerator:
@@ -386,9 +386,7 @@ class ReportGenerator:
             ''', conn, params=(run_id,))
 
             risk_coverage = anchor_coverage or {}
-            unreadable = (risk_coverage.get("errored", 0)
-                          + risk_coverage.get("skipped", 0)
-                          + risk_coverage.get("unknown", 0))
+            unreadable = anchor_data_unreadable(risk_coverage)
             if not df_risk.empty or unreadable:
                 report.append("\n## Reputation-Risk Radar")
                 report.append("Patterns Google is known to penalize — visibility cliffs, off-topic "

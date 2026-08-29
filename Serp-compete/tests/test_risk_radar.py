@@ -15,6 +15,7 @@ import pytest
 
 from src.database import DatabaseManager
 from src.handoff_moz import anchor_coverage, anchor_texts_by_domain, load_moz_block
+from src.risk_radar import anchor_caveat_lines, anchor_data_unreadable
 from src.risk_radar import (
     detect_visibility_cliff, detect_parasite, compute_risk_signals,
     detect_anchor_spam,
@@ -484,7 +485,8 @@ class TestHandoffMozIngestion(unittest.TestCase):
         }}
         counts = anchor_coverage(block)
         self.assertEqual(counts, {"total": 3, "with_anchors": 1, "no_record": 1,
-                                  "errored": 1, "skipped": 0, "unknown": 0})
+                                  "errored": 1, "skipped": 0, "unknown": 0,
+                                  "read_no_anchors": 0})
 
     def test_coverage_counts_a_skipped_domain_as_skipped_not_no_record(self):
         """A domain Tool 1 capped or dropped for quota carries no anchor_texts
@@ -603,7 +605,130 @@ class TestMainWiring(unittest.TestCase):
                 return {kw.arg for kw in node.keywords}
         raise AssertionError(f"main.py never calls {method_name}")
 
+    def test_fetch_failure_returns_the_unavailable_sentinel(self):
+        """The except branch must return a coverage dict that is
+        distinguishable from "nothing was attempted", or a total failure of
+        the anchor path renders as a clean run (P2/P25)."""
+        import ast
+        for node in ast.walk(self._tree()):
+            if not (isinstance(node, ast.FunctionDef)
+                    and node.name == "_handoff_anchor_texts"):
+                continue
+            handlers = [h for h in ast.walk(node) if isinstance(h, ast.ExceptHandler)]
+            self.assertTrue(handlers, "_handoff_anchor_texts has no except branch")
+            returned = "".join(ast.unparse(n) for h in handlers
+                               for n in ast.walk(h) if isinstance(n, ast.Return))
+            self.assertIn("fetch_status", returned)
+            self.assertIn("unavailable", returned)
+            return
+        self.fail("main.py has no _handoff_anchor_texts")
+
     def test_coverage_reaches_the_report_call(self):
         """The coverage note is worthless if it stops at the console (P25)."""
         self.assertIn("anchor_coverage",
                       self._method_call_kwargs("generate_summary"))
+
+class TestCoverageHonesty(unittest.TestCase):
+    """Third-sweep fixes: a caveat must have a cause, and a total failure must
+    not look like a clean run."""
+
+    def test_read_with_no_anchors_is_not_unreadable(self):
+        """The producer's ordinary shape for "ranking data, no anchor text" is
+        status ok with empty items. Counting it unreadable put a warning about
+        untrustworthy data on a clean run, listing no cause at all (P1/P14)."""
+        block = {"domains": {
+            "a.com": {"status": "ok", "anchor_texts": {
+                "status": "ok",
+                "items": [{"text": "brand", "external_root_domains": 3}]}},
+            "b.com": {"status": "ok", "anchor_texts": {
+                "status": "ok", "items": [], "returned": 0}},
+        }}
+        counts = anchor_coverage(block)
+        self.assertEqual(counts["read_no_anchors"], 1)
+        self.assertEqual(counts["unknown"], 0)
+        self.assertEqual(anchor_data_unreadable(counts), 0)
+        self.assertEqual(anchor_caveat_lines([], counts), [])
+
+    def test_an_unrecognised_status_is_still_unreadable(self):
+        counts = anchor_coverage({"domains": {"a.com": {"status": "who_knows"}}})
+        self.assertEqual(counts["unknown"], 1)
+        self.assertEqual(anchor_data_unreadable(counts), 1)
+
+    def test_caveat_names_only_causes_that_occurred(self):
+        counts = {"total": 3, "with_anchors": 1, "errored": 2, "skipped": 0,
+                  "no_record": 0, "unknown": 0, "read_no_anchors": 0}
+        line = anchor_caveat_lines([], counts)[0]
+        self.assertIn("2 errored", line)
+        self.assertNotIn("0 skipped", line)
+
+    def test_total_fetch_failure_is_reported_not_silent(self):
+        """A failed anchor path must not render identically to a run where
+        nothing was attempted — the one case where silence is correct (P2)."""
+        unavailable = {"total": 0, "fetch_status": "unavailable",
+                       "reason": "handoff unreadable"}
+        self.assertGreaterEqual(anchor_data_unreadable(unavailable), 1)
+        line = anchor_caveat_lines([], unavailable)[0]
+        self.assertIn("could not be retrieved", line)
+        self.assertIn("handoff unreadable", line)
+        self.assertIn("not evidence of a clean link profile", line)
+
+    def test_nothing_attempted_stays_silent(self):
+        """A schema-1.0 handoff carries no moz block; silence is correct."""
+        self.assertEqual(anchor_caveat_lines([], {}), [])
+        self.assertEqual(anchor_data_unreadable({}), 0)
+
+    def test_unmeasured_anchors_cap_severity(self):
+        """Unmeasured anchors leave the denominator, so a share computed over a
+        fraction of the sample cannot support "high" — the same guard
+        sample_truncated already applies, different cause (P5/P9)."""
+        anchors = [{"text": "buy backlinks", "external_root_domains": 9}]
+        self.assertEqual(detect_anchor_spam(anchors)["severity"], "high")
+        swamped = anchors + [{"text": "buy backlinks",
+                              "external_root_domains": None} for _ in range(5)]
+        signal = detect_anchor_spam(swamped)
+        self.assertEqual(signal["severity"], "medium")
+        self.assertEqual(signal["evidence"]["reach_unmeasured_for"], 5)
+
+
+class TestReportWiring(unittest.TestCase):
+    """The caveat render must be reachable from reporting.py, and provably so.
+
+    Testing the seam's return value says nothing about whether anyone calls it:
+    deleting the render left the suite at exactly its baseline. reporting.py
+    cannot be imported here (pandas), but it can be parsed — which is what the
+    same commit already does for main.py (P21/P27).
+    """
+
+    @staticmethod
+    def _source():
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+        with open(os.path.join(root, "reporting.py"), encoding="utf-8") as f:
+            return f.read()
+
+    def test_reporting_calls_the_caveat_builder(self):
+        import ast
+        called = {
+            node.func.id for node in ast.walk(ast.parse(self._source()))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        self.assertIn("anchor_caveat_lines", called)
+
+    def test_reporting_uses_the_shared_unreadable_definition(self):
+        import ast
+        called = {
+            node.func.id for node in ast.walk(ast.parse(self._source()))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        self.assertIn("anchor_data_unreadable", called)
+
+    def test_report_section_opens_when_data_was_unreadable(self):
+        """Otherwise a run where every fetch failed produces no section at all
+        and the caveat has nowhere to appear."""
+        import ast
+        for node in ast.walk(ast.parse(self._source())):
+            if (isinstance(node, ast.If) and isinstance(node.test, ast.BoolOp)
+                    and isinstance(node.test.op, ast.Or)
+                    and any(isinstance(v, ast.Name) and v.id == "unreadable"
+                            for v in node.test.values)):
+                return
+        self.fail("the risk section is not gated on `... or unreadable`")
