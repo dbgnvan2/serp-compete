@@ -9,7 +9,7 @@ class ReportGenerator:
     def __init__(self, db_path: str = "competitor_history.db"):
         self.db = DatabaseManager(db_path)
 
-    def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None, anchor_coverage: dict = None):
+    def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None):
         """
         Generate a Markdown report summarizing the audit findings for a specific run.
         """
@@ -385,7 +385,11 @@ class ReportGenerator:
                     CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, domain
             ''', conn, params=(run_id,))
 
-            risk_coverage = anchor_coverage or {}
+            # Read from the DB, like every other section reads its own data,
+            # rather than being handed it by the caller. That is what makes an
+            # OLD run's report able to say what could not be read; a threaded
+            # parameter only ever describes the run happening right now.
+            risk_coverage = self.db.get_anchor_coverage(run_id) or {}
             unreadable = anchor_data_unreadable(risk_coverage)
             if not df_risk.empty or unreadable:
                 report.append("\n## Reputation-Risk Radar")

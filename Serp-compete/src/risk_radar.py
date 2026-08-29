@@ -132,7 +132,8 @@ _RECEIVED_NOT_BOUGHT = (
 
 def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
                        config: Optional[Dict[str, Any]] = None,
-                       sample_truncated: bool = False) -> Optional[Dict[str, Any]]:
+                       sample_truncated: bool = False,
+                       collected_at: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Flag inbound anchor text carrying a paid-link / PBN footprint (SC-8.4).
 
     Purpose: surface link-scheme patterns in the anchor distribution Tool 1
@@ -212,6 +213,7 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
                     "share_of_sampled_linking_domains": 0.0,
                     "sample_anchors": [],
                     "sample_truncated": bool(sample_truncated),
+                    "collected_at": collected_at,
                     "interpretation": _REACH_UNMEASURED,
                 },
             }
@@ -252,6 +254,10 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
             "share_of_sampled_linking_domains": round(share, 3),
             "sample_truncated": bool(sample_truncated),
             "reach_unmeasured_for": unparseable,
+            # Tool 1 caches anchors for up to 30 days, so this can be well
+            # before the run's detected_at. Stating it stops a stale signal
+            # reading as a fresh observation (P6).
+            "collected_at": collected_at,
             "sample_anchors": matched[:5],
             "interpretation": _RECEIVED_NOT_BOUGHT,
         },
@@ -330,7 +336,8 @@ def compute_risk_signals(volatility_alerts: List[Dict[str, Any]],
                          series_by_domain: Dict[str, List[float]],
                          parasite_candidates: List[Dict[str, Any]],
                          own_domain: str, config: Optional[Dict[str, Any]] = None,
-                         anchor_texts_by_domain: Optional[Dict[str, List[Dict[str, Any]]]] = None
+                         anchor_texts_by_domain: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+                         anchor_collected_at: Optional[str] = None
                          ) -> List[Dict[str, Any]]:
     """Unify the detectors into one risk feed, tagging each signal is_own_site so the
     report can separate own-site warnings from competitor intel (SC-8.3)."""
@@ -356,7 +363,8 @@ def compute_risk_signals(volatility_alerts: List[Dict[str, Any]],
             items, truncated = anchors.get("items") or [], bool(anchors.get("truncated"))
         else:
             items, truncated = anchors, False
-        add(domain, detect_anchor_spam(items, config, sample_truncated=truncated))
+        add(domain, detect_anchor_spam(items, config, sample_truncated=truncated,
+                                       collected_at=anchor_collected_at))
     for alert in volatility_alerts or []:
         shift = alert.get("shift") or 0
         add(alert.get("domain"), {

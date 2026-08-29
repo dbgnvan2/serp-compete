@@ -378,6 +378,28 @@ class DatabaseManager:
             ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_risk_signal_run ON risk_signal(run_id)')
 
+            # SC-8.4: how the anchor-text fetch actually went for this run, so a
+            # past run's coverage can be recovered. Without it, "no anchor
+            # signals" in an old report is indistinguishable from "every fetch
+            # failed that day" — the counts existed only in that run's console
+            # output and its rendered markdown.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS anchor_coverage (
+                    run_id INTEGER PRIMARY KEY,
+                    detected_at TEXT,
+                    collected_at TEXT,
+                    fetch_status TEXT,
+                    total INTEGER,
+                    with_anchors INTEGER,
+                    read_no_anchors INTEGER,
+                    no_record INTEGER,
+                    errored INTEGER,
+                    skipped INTEGER,
+                    unknown INTEGER,
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+
             # SC-7-YT Phase 1: YouTube Presence Check. Domain-keyed (competitors is
             # `domain TEXT PRIMARY KEY` — deliberately NO competitor_id). One row per
             # (run_id, domain): the best-matched channel, or the none_found/error state.
@@ -625,6 +647,51 @@ class DatabaseManager:
                 for r in rows
             ])
             conn.commit()
+
+    _ANCHOR_COVERAGE_COUNTS = ("total", "with_anchors", "read_no_anchors",
+                               "no_record", "errored", "skipped", "unknown")
+
+    def save_anchor_coverage(self, run_id: int, coverage: Dict[str, Any],
+                             detected_at: str = None):
+        """SC-8.4: persist how the anchor-text fetch went for this run.
+
+        INSERT OR REPLACE on the run_id PK, so re-saving a run is idempotent.
+        Called even when coverage is empty — a run that attempted nothing and a
+        run whose every fetch failed must stay distinguishable afterwards, and
+        writing no row at all would collapse them.
+        """
+        coverage = coverage or {}
+        with self._get_connection() as conn:
+            conn.cursor().execute(
+                'INSERT OR REPLACE INTO anchor_coverage (run_id, detected_at, '
+                'collected_at, fetch_status, total, with_anchors, '
+                'read_no_anchors, no_record, errored, skipped, unknown) '
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                (run_id, detected_at, coverage.get("collected_at"),
+                 coverage.get("fetch_status"),
+                 *[int(coverage.get(k, 0) or 0) for k in self._ANCHOR_COVERAGE_COUNTS]))
+            conn.commit()
+
+    def get_anchor_coverage(self, run_id: int) -> Dict[str, Any]:
+        """SC-8.4: read back a run's anchor-fetch coverage, or {} if unrecorded.
+
+        {} means the run predates this table — not that the run was clean. The
+        caller must not render a "everything was readable" claim from it.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                row = cursor.execute(
+                    'SELECT collected_at, fetch_status, total, with_anchors, '
+                    'read_no_anchors, no_record, errored, skipped, unknown '
+                    'FROM anchor_coverage WHERE run_id = ?', (run_id,)).fetchone()
+            except sqlite3.OperationalError:
+                return {}  # table absent on a DB that predates it
+        if not row:
+            return {}
+        out = {"collected_at": row[0], "fetch_status": row[1]}
+        out.update(dict(zip(self._ANCHOR_COVERAGE_COUNTS, row[2:])))
+        return out
 
     def save_yt_presence(self, run_id: int, rows: List[Dict[str, Any]]):
         """SC-7-YT Phase 1: persist per-competitor YouTube presence rows.

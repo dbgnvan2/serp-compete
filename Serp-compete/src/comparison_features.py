@@ -133,12 +133,25 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         from src.risk_radar import compute_risk_signals
         series_by_domain = {d: db.get_visibility_series(d) for d in domains}
         series_by_domain[client_domain] = db.get_visibility_series(client_domain)
+        # Only domains this run actually looked at — Tool 1's 30-day cache can
+        # carry anchors for a competitor that has since dropped out (P6).
+        from src.handoff_moz import restrict_to_run
+        anchors_for_run = restrict_to_run(
+            anchor_texts_by_domain, domains, client_domain)
+        dropped = len(anchor_texts_by_domain or {}) - len(anchors_for_run)
+        if dropped:
+            print(f"      {dropped} domain(s) in the handoff's Moz block are not in "
+                  f"this run's target set — anchor signals skipped for them.")
         risk_rows = compute_risk_signals(
             volatility_alerts=db.get_volatility_alerts(run_id), series_by_domain=series_by_domain,
             parasite_candidates=db.get_parasite_candidates(run_id),
             own_domain=client_domain, config=shared_config.get("risk_signals", {}),
-            anchor_texts_by_domain=anchor_texts_by_domain)
+            anchor_texts_by_domain=anchors_for_run,
+            anchor_collected_at=(anchor_coverage or {}).get("collected_at"))
         db.save_risk_signals(run_id, risk_rows, detected_at=today)
+        # Persisted even when empty: a run that attempted nothing and a run
+        # whose every fetch failed must stay distinguishable after the fact.
+        db.save_anchor_coverage(run_id, anchor_coverage or {}, detected_at=today)
         summary["risk_rows"] = len(risk_rows)
         own_risks = sum(1 for r in risk_rows if r["is_own_site"])
         anchor_risks = sum(1 for r in risk_rows if r["signal_type"] == "anchor_text_spam")

@@ -102,6 +102,12 @@ def convert_legacy_to_targets(legacy_data: Dict[str, Any]) -> Tuple[List[Dict[st
 
     return targets, paa_data
 
+#: The `moz` block from the handoff validated in get_latest_market_data. Set
+#: there so the anchor path reuses the *validated* document instead of reading
+#: the file a second time without checking it (P6/P11).
+_VALIDATED_MOZ_BLOCK: Dict[str, Any] = {}
+
+
 def _handoff_anchor_texts() -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Anchor texts and fetch coverage from the latest handoff's Moz block.
 
@@ -114,15 +120,27 @@ def _handoff_anchor_texts() -> Tuple[Dict[str, Any], Dict[str, int]]:
     """
     try:
         from src.handoff_moz import (anchor_coverage, anchor_texts_by_domain,
-                                     load_moz_block)
-        block = load_moz_block(find_latest_handoff_file())
-        return anchor_texts_by_domain(block), anchor_coverage(block)
+                                     moz_collected_at)
+        # The block validated in get_latest_market_data, not a second raw read
+        # of the same file: only the first was checked against the schema, so
+        # re-reading meant the moz block bypassed validation entirely.
+        block = _VALIDATED_MOZ_BLOCK
+        coverage = anchor_coverage(block)
+        coverage["collected_at"] = moz_collected_at(block)
+        return anchor_texts_by_domain(block), coverage
     except Exception as exc:  # noqa: BLE001
         print(f"⚠️ Moz anchor texts unavailable: {exc}")
         # A distinguishable sentinel, not an empty dict: total failure of the
         # anchor path must not render identically to a run where nothing was
         # attempted, which is the one case where silence is correct (P2/P25).
         return {}, {"total": 0, "fetch_status": "unavailable", "reason": str(exc)}
+
+
+def _remember_moz_block(handoff_data: Dict[str, Any]) -> None:
+    """Stash the handoff's `moz` block for the anchor path to reuse."""
+    global _VALIDATED_MOZ_BLOCK
+    from src.handoff_moz import moz_block_from
+    _VALIDATED_MOZ_BLOCK = moz_block_from(handoff_data)
 
 
 def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
@@ -151,6 +169,7 @@ def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]
                 try:
                     jsonschema.validate(instance=handoff_data, schema=schema)
                     print(f"✅ Handoff validated against schema v{handoff_data.get('schema_version')}")
+                    _remember_moz_block(handoff_data)
                     return convert_handoff_to_targets(handoff_data)
                 except jsonschema.ValidationError as e:
                     print(f"❌ Handoff validation failed: {e.message}")
@@ -158,6 +177,7 @@ def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]
                     sys.exit(1)  # Hard fail per spec
             else:
                 print("⚠️ Schema file not found; skipping validation. Using handoff data as-is.")
+                _remember_moz_block(handoff_data)
                 return convert_handoff_to_targets(handoff_data)
         except Exception as e:
             print(f"❌ Error loading handoff: {e}")
@@ -549,8 +569,7 @@ def run_audit():
         reframes=reframes,
         token_usage=total_usage,
         market_alerts=market_alerts,
-        gsc_findings=gsc_findings,
-        anchor_coverage=_moz_coverage
+        gsc_findings=gsc_findings
     )
 
 if __name__ == "__main__":

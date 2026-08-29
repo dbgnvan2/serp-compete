@@ -45,10 +45,34 @@ def load_moz_block(handoff_path: Optional[str]) -> Dict[str, Any]:
     except (OSError, ValueError) as exc:
         logger.warning("Could not read the Moz block from %s: %s", handoff_path, exc)
         return {}
+    return moz_block_from(handoff)
+
+
+def moz_block_from(handoff: Any) -> Dict[str, Any]:
+    """Return the `moz` block of an already-loaded handoff dict.
+
+    The one definition of "which part of a handoff is the Moz block", shared by
+    :func:`load_moz_block` and by `main.py`, which reuses the handoff it has
+    already validated rather than reading the file a second time unchecked.
+    """
     if not isinstance(handoff, dict):
         return {}
     moz = handoff.get("moz")
     return moz if isinstance(moz, dict) else {}
+
+
+def moz_collected_at(moz_block: Dict[str, Any]) -> Optional[str]:
+    """When Tool 1 collected these Moz signals (`moz.generated_at`).
+
+    Purpose: stop a run stamping weeks-old cached anchors with today's date.
+    Tests:   tests/test_risk_radar.py::TestStaleAttribution
+
+    Tool 1 caches per domain for 30 days, so the anchors in a handoff can be
+    substantially older than the run that reads them. Discarding this and using
+    `detected_at` alone asserts a freshness the data does not have (P6).
+    """
+    value = (moz_block or {}).get("generated_at")
+    return value if isinstance(value, str) and value else None
 
 
 def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -88,6 +112,27 @@ def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any
         if items:
             out[domain] = {"items": items, "truncated": bool(anchors.get("truncated"))}
     return out
+
+
+def restrict_to_run(anchors: Dict[str, Any], domains, client_domain: str = "") -> Dict[str, Any]:
+    """Keep only the anchor entries belonging to this run's targets.
+
+    Purpose: stop a signal being attributed to a domain the run never saw.
+    Spec:    compete-spec.md#C6 (SC-8.4)
+    Tests:   tests/test_risk_radar.py::TestRunScoping
+
+    Tool 1 caches per domain for up to 30 days, so a handoff can carry anchors
+    for a competitor that has since dropped out of the SERP entirely. Filing a
+    finding against it would put a named third party in the report on the
+    strength of data from a run that no longer reflects the market (P6).
+
+    The client is always kept when present: it is excluded from the competitor
+    list by design but is exactly the domain the own-site check is for.
+    """
+    keep = {str(d).lower() for d in (domains or []) if d}
+    if client_domain:
+        keep.add(client_domain.lower())
+    return {d: v for d, v in (anchors or {}).items() if str(d).lower() in keep}
 
 
 def anchor_coverage(moz_block: Dict[str, Any]) -> Dict[str, int]:

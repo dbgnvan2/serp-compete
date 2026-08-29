@@ -621,10 +621,27 @@ class TestMainWiring(unittest.TestCase):
             return
         self.fail("main.py has no _handoff_anchor_texts")
 
-    def test_coverage_reaches_the_report_call(self):
-        """The coverage note is worthless if it stops at the console (P25)."""
-        self.assertIn("anchor_coverage",
-                      self._method_call_kwargs("generate_summary"))
+    def test_coverage_is_persisted_not_threaded_to_the_report(self):
+        """The report reads coverage from the DB, so an OLD run's report can
+        still say what could not be read. A threaded parameter only ever
+        describes the run happening right now."""
+        import ast
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+        with open(os.path.join(root, "reporting.py"), encoding="utf-8") as f:
+            reporting_src = f.read()
+        self.assertIn("get_anchor_coverage", reporting_src)
+        self.assertNotIn("anchor_coverage",
+                         self._method_call_kwargs("generate_summary"))
+
+    def test_coverage_is_saved_alongside_the_signals(self):
+        import ast
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+        with open(os.path.join(root, "comparison_features.py"), encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        saved = {n.func.attr for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+        self.assertIn("save_anchor_coverage", saved)
+        self.assertIn("save_risk_signals", saved)
 
 class TestCoverageHonesty(unittest.TestCase):
     """Third-sweep fixes: a caveat must have a cause, and a total failure must
@@ -815,3 +832,192 @@ class TestOwnSiteAnchorPath(unittest.TestCase):
             "brand_authority": {"status": "ok", "data_available": True, "score": 1}}}
         self.assertEqual(anchor_texts_by_domain(block), {})
         self.assertEqual(anchor_coverage(block)["total"], 0)
+
+class TestStaleAttribution(unittest.TestCase):
+    """SC-8.4: anchors can be up to 30 days old, and can outlive a competitor."""
+
+    BLOCK = {
+        "generated_at": "2026-08-01T09:00:00+00:00",
+        "locale": "en-CA", "scope": "domain",
+        "domains": {"bowencenter.org": {"status": "ok", "anchor_texts": {
+            "status": "ok", "items": REAL_ANCHORS, "truncated": False}}},
+    }
+
+    def test_collected_at_is_read_from_the_block(self):
+        from src.handoff_moz import moz_collected_at
+        self.assertEqual(moz_collected_at(self.BLOCK), "2026-08-01T09:00:00+00:00")
+        self.assertIsNone(moz_collected_at({}))
+        self.assertIsNone(moz_collected_at({"generated_at": ""}))
+
+    def test_collected_at_reaches_the_evidence(self):
+        """Tool 1 caches for 30 days, so a signal stamped only with the run's
+        detected_at asserts a freshness the data does not have (P6)."""
+        signal = detect_anchor_spam(REAL_ANCHORS, collected_at="2026-08-01T09:00:00+00:00")
+        self.assertEqual(signal["evidence"]["collected_at"], "2026-08-01T09:00:00+00:00")
+
+    def test_collected_at_reaches_the_evidence_via_the_radar(self):
+        rows = compute_risk_signals(
+            volatility_alerts=[], series_by_domain={}, parasite_candidates=[],
+            own_domain="livingsystems.ca",
+            anchor_texts_by_domain=anchor_texts_by_domain(self.BLOCK),
+            anchor_collected_at="2026-08-01T09:00:00+00:00")
+        self.assertEqual(rows[0]["evidence"]["collected_at"],
+                         "2026-08-01T09:00:00+00:00")
+
+    def test_unmeasured_branch_also_carries_collected_at(self):
+        signal = detect_anchor_spam(
+            [{"text": "buy backlinks", "external_root_domains": None}],
+            collected_at="2026-08-01T09:00:00+00:00")
+        self.assertEqual(signal["evidence"]["collected_at"],
+                         "2026-08-01T09:00:00+00:00")
+
+    def test_absent_generated_at_is_none_not_a_guess(self):
+        signal = detect_anchor_spam(REAL_ANCHORS)
+        self.assertIsNone(signal["evidence"]["collected_at"])
+
+    def test_moz_block_from_handles_every_shape(self):
+        from src.handoff_moz import moz_block_from
+        handoff = {"schema_version": "1.1", "moz": self.BLOCK}
+        self.assertEqual(moz_block_from(handoff), self.BLOCK)
+        self.assertEqual(moz_block_from({"schema_version": "1.0"}), {})
+        self.assertEqual(moz_block_from(None), {})
+        self.assertEqual(moz_block_from({"moz": "not a dict"}), {})
+
+    def test_the_file_loader_uses_the_same_extractor(self):
+        """One definition of "which part of a handoff is the Moz block", so the
+        validated-reuse path and the file path cannot drift.
+
+        Asserts they AGREE on the same document — the previous version of this
+        test only exercised moz_block_from, so mutating load_moz_block left it
+        green while its name promised otherwise (P27)."""
+        from src.handoff_moz import load_moz_block, moz_block_from
+        handoff = {"schema_version": "1.1", "moz": self.BLOCK}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "competitor_handoff_x.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(handoff, f)
+            self.assertEqual(load_moz_block(path), moz_block_from(handoff))
+            self.assertEqual(load_moz_block(path), self.BLOCK)
+
+
+class TestMainReusesTheValidatedBlock(unittest.TestCase):
+    """main.py must not re-read the handoff unvalidated (parsed, not imported)."""
+
+    @staticmethod
+    def _tree():
+        import ast
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+        with open(os.path.join(root, "main.py"), encoding="utf-8") as f:
+            return ast.parse(f.read())
+
+    def test_anchor_path_does_not_reload_the_handoff_file(self):
+        """The first read is schema-validated; a second raw read of the same
+        file let the moz block bypass validation entirely (P6/P11)."""
+        import ast
+        for node in ast.walk(self._tree()):
+            if (isinstance(node, ast.FunctionDef)
+                    and node.name == "_handoff_anchor_texts"):
+                body = ast.unparse(node)
+                self.assertIn("_VALIDATED_MOZ_BLOCK", body)
+                self.assertNotIn("find_latest_handoff_file", body)
+                self.assertNotIn("load_moz_block", body)
+                return
+        self.fail("main.py has no _handoff_anchor_texts")
+
+    def test_the_validated_block_is_remembered_on_every_handoff_path(self):
+        """Including the schema-file-missing branch, which still ingests."""
+        import ast
+        calls = [n for n in ast.walk(self._tree())
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                 and n.func.id == "_remember_moz_block"]
+        self.assertGreaterEqual(len(calls), 2)
+
+class TestRunScoping(unittest.TestCase):
+    """SC-8.4: a signal must not be attributed to a domain this run never saw."""
+
+    ANCHORS = {"bowencenter.org": {"items": REAL_ANCHORS, "truncated": False},
+               "gone.example": {"items": REAL_ANCHORS, "truncated": False},
+               "livingsystems.ca": {"items": REAL_ANCHORS, "truncated": False}}
+
+    def test_domains_outside_the_run_are_dropped(self):
+        from src.handoff_moz import restrict_to_run
+        kept = restrict_to_run(self.ANCHORS, ["bowencenter.org"], "livingsystems.ca")
+        self.assertEqual(set(kept), {"bowencenter.org", "livingsystems.ca"})
+
+    def test_the_client_is_kept_even_though_it_is_not_a_competitor(self):
+        """It is excluded from the competitor list by design and is exactly the
+        domain the own-site check exists for."""
+        from src.handoff_moz import restrict_to_run
+        kept = restrict_to_run(self.ANCHORS, [], "livingsystems.ca")
+        self.assertEqual(set(kept), {"livingsystems.ca"})
+
+    def test_matching_is_case_insensitive(self):
+        from src.handoff_moz import restrict_to_run
+        kept = restrict_to_run({"BowenCenter.org": {"items": []}},
+                               ["bowencenter.org"], "")
+        self.assertEqual(set(kept), {"BowenCenter.org"})
+
+    def test_no_client_and_no_domains_keeps_nothing(self):
+        from src.handoff_moz import restrict_to_run
+        self.assertEqual(restrict_to_run(self.ANCHORS, [], ""), {})
+
+    def test_empty_input_is_safe(self):
+        from src.handoff_moz import restrict_to_run
+        self.assertEqual(restrict_to_run(None, ["a.com"], "b.com"), {})
+
+
+class TestCoveragePersistence(unittest.TestCase):
+    """SC-8.4: a past run's anchor coverage must be recoverable.
+
+    Every DatabaseManager here is given an explicit temporary path — never the
+    default, which resolves to the real application database (P28).
+    """
+
+    COVERAGE = {"total": 3, "with_anchors": 1, "read_no_anchors": 0,
+                "no_record": 1, "errored": 1, "skipped": 0, "unknown": 0,
+                "collected_at": "2026-08-01T09:00:00+00:00"}
+
+    def _db(self, name="ac.db"):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        return DatabaseManager(os.path.join(self._tmp.name, name))
+
+    def test_coverage_round_trips(self):
+        db = self._db()
+        db.save_anchor_coverage(1, self.COVERAGE, detected_at="2026-08-28")
+        got = db.get_anchor_coverage(1)
+        self.assertEqual(got["total"], 3)
+        self.assertEqual(got["errored"], 1)
+        self.assertEqual(got["collected_at"], "2026-08-01T09:00:00+00:00")
+
+    def test_unrecorded_run_returns_empty_not_a_clean_bill(self):
+        """{} means "this run predates the table", not "everything was
+        readable" — the caller must not render a clean claim from it."""
+        self.assertEqual(self._db().get_anchor_coverage(999), {})
+
+    def test_resaving_a_run_is_idempotent(self):
+        db = self._db()
+        db.save_anchor_coverage(1, self.COVERAGE, detected_at="2026-08-28")
+        db.save_anchor_coverage(1, {**self.COVERAGE, "errored": 2},
+                                detected_at="2026-08-28")
+        self.assertEqual(db.get_anchor_coverage(1)["errored"], 2)
+
+    def test_a_total_failure_is_recorded_distinguishably(self):
+        """A run that attempted nothing and a run whose every fetch failed must
+        stay apart after the fact, which is the whole point of storing it."""
+        db = self._db()
+        db.save_anchor_coverage(1, {"total": 0, "fetch_status": "unavailable",
+                                    "reason": "handoff unreadable"},
+                                detected_at="2026-08-28")
+        db.save_anchor_coverage(2, {}, detected_at="2026-08-28")
+        self.assertEqual(db.get_anchor_coverage(1)["fetch_status"], "unavailable")
+        self.assertIsNone(db.get_anchor_coverage(2)["fetch_status"])
+
+    def test_stored_coverage_drives_the_caveat(self):
+        """The point of persisting it: an old run's report can still say what
+        could not be read."""
+        db = self._db()
+        db.save_anchor_coverage(1, self.COVERAGE, detected_at="2026-08-28")
+        lines = anchor_caveat_lines([], db.get_anchor_coverage(1))
+        self.assertTrue(lines)
+        self.assertIn("1 errored", lines[0])
