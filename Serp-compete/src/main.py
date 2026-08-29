@@ -102,18 +102,24 @@ def convert_legacy_to_targets(legacy_data: Dict[str, Any]) -> Tuple[List[Dict[st
 
     return targets, paa_data
 
-def _handoff_anchor_texts() -> Dict[str, Any]:
-    """Anchor texts per competitor domain from the latest handoff's Moz block.
+def _handoff_anchor_texts() -> Tuple[Dict[str, Any], Dict[str, int]]:
+    """Anchor texts and fetch coverage from the latest handoff's Moz block.
+
+    Returns `(anchors_by_domain, coverage)`. Coverage travels with the anchors
+    so a run where every Moz call failed cannot be reported as "no anchor
+    risks found" (Spec: compete-spec.md#C6, SC-8.4).
 
     Thin wrapper so the import stays local and guarded — an optional signal
-    must never stop the audit starting (Spec: compete-spec.md#C6).
+    must never stop the audit starting.
     """
     try:
-        from src.handoff_moz import anchor_texts_by_domain, load_moz_block
-        return anchor_texts_by_domain(load_moz_block(find_latest_handoff_file()))
+        from src.handoff_moz import (anchor_coverage, anchor_texts_by_domain,
+                                     load_moz_block)
+        block = load_moz_block(find_latest_handoff_file())
+        return anchor_texts_by_domain(block), anchor_coverage(block)
     except Exception as exc:  # noqa: BLE001
         print(f"⚠️ Moz anchor texts unavailable: {exc}")
-        return {}
+        return {}, {}
 
 
 def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
@@ -497,7 +503,8 @@ def run_audit():
     from src.comparison_features import run_comparison_features
     run_comparison_features(db, run_id, shared_config, client_domain, competitor_keywords,
                             gsc, dfs_client, PROJECT_ROOT,
-                            anchor_texts_by_domain=_handoff_anchor_texts())
+                            **dict(zip(("anchor_texts_by_domain", "anchor_coverage"),
+                                        _handoff_anchor_texts())))
 
     # Strategic Logic with PAA context from Handover
     print("Identifying Strategic Openings...")

@@ -23,7 +23,8 @@ from typing import Any, Dict, Optional
 def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
                             client_domain: str, competitor_keywords: Dict[str, Any],
                             gsc: Any, dfs_client: Any, project_root: str,
-                            anchor_texts_by_domain: Optional[Dict[str, Any]] = None
+                            anchor_texts_by_domain: Optional[Dict[str, Any]] = None,
+                            anchor_coverage: Optional[Dict[str, int]] = None
                             ) -> Dict[str, Any]:
     """Run C4/C2/C1/C3/C6 and persist their outputs. Never raises — each feature (including
     its own module import) is guarded, so any one failure degrades to an empty section rather
@@ -143,6 +144,13 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         anchor_risks = sum(1 for r in risk_rows if r["signal_type"] == "anchor_text_spam")
         print(f"   🚨 Reputation risk: {len(risk_rows)} signals ({own_risks} own-site, "
               f"{anchor_risks} anchor-text).")
+        if anchor_coverage:
+            # "No anchor risks" must never be able to mean "every anchor fetch
+            # failed" — say how many domains were actually readable (P1/P2).
+            print(f"      Anchor coverage: {anchor_coverage.get('with_anchors', 0)} of "
+                  f"{anchor_coverage.get('total', 0)} competitor domain(s) had anchor "
+                  f"data ({anchor_coverage.get('errored', 0)} errored, "
+                  f"{anchor_coverage.get('no_record', 0)} no record).")
     except Exception as risk_err:  # noqa: BLE001
         print(f"⚠️ Reputation-risk radar skipped: {risk_err}")
 

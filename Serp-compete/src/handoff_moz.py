@@ -51,18 +51,56 @@ def load_moz_block(handoff_path: Optional[str]) -> Dict[str, Any]:
     return moz if isinstance(moz, dict) else {}
 
 
-def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
-    """Extract `{domain: [anchor, ...]}` from a handoff `moz` block.
+def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Extract `{domain: {items, truncated}}` from a handoff `moz` block.
 
-    Domains whose anchor fetch failed or found nothing are omitted rather than
-    mapped to an empty list, so "no anchors were collected for this domain"
-    cannot be read downstream as "this domain has no spam anchors".
+    Domains with no anchors are omitted rather than mapped to an empty block,
+    so "no anchors were collected for this domain" cannot be read downstream as
+    "this domain has no spam anchors".
+
+    `truncated` is carried through because the producer sets it expressly so a
+    capped page is not mistaken for a complete link profile — a detector that
+    computes a share against a truncated sample is dividing by a denominator it
+    knows is too small.
+
+    Whether a domain is missing because Moz *errored* or because it genuinely
+    has nothing is not knowable from this map by design; use
+    :func:`anchor_coverage` to report that, and never infer it from absence.
     """
-    out: Dict[str, List[Dict[str, Any]]] = {}
+    out: Dict[str, Dict[str, Any]] = {}
     for domain, block in ((moz_block or {}).get("domains") or {}).items():
         if not isinstance(block, dict):
             continue
-        items = ((block.get("anchor_texts") or {}).get("items")) or []
+        anchors = block.get("anchor_texts") or {}
+        items = anchors.get("items") or []
         if items:
-            out[domain] = items
+            out[domain] = {"items": items, "truncated": bool(anchors.get("truncated"))}
     return out
+
+
+def anchor_coverage(moz_block: Dict[str, Any]) -> Dict[str, int]:
+    """Count how the anchor fetch actually went, per status.
+
+    Purpose: keep a Moz outage from reading as a clean bill of health.
+    Tests:   tests/test_risk_radar.py::TestHandoffMozIngestion
+
+    The producer distinguishes ok / no_record / error precisely so the consumer
+    can tell "we looked and found nothing" from "we could not look". Collapsing
+    both into an absent domain would let a run of 429s render as "no anchor
+    risks found" (learnings P1/P2), so the counts are reported alongside the
+    signals rather than inferred from what is missing.
+    """
+    counts = {"total": 0, "with_anchors": 0, "no_record": 0, "errored": 0}
+    for _domain, block in ((moz_block or {}).get("domains") or {}).items():
+        if not isinstance(block, dict):
+            continue
+        counts["total"] += 1
+        anchors = block.get("anchor_texts") or {}
+        status = anchors.get("status")
+        if anchors.get("items"):
+            counts["with_anchors"] += 1
+        elif status == "error":
+            counts["errored"] += 1
+        else:
+            counts["no_record"] += 1
+    return counts

@@ -385,8 +385,17 @@ class ReportGenerator:
             if not df_risk.empty:
                 report.append("\n## Reputation-Risk Radar")
                 report.append("Patterns Google is known to penalize — visibility cliffs, off-topic "
-                              "commercial subfolders (site-reputation abuse), ranking volatility. "
+                              "commercial subfolders (site-reputation abuse), ranking volatility, "
+                              "and paid-link/PBN footprints in inbound anchor text. "
                               "_**Pattern detections, not confirmed Google penalties.**_")
+                if (df_risk['signal_type'] == 'anchor_text_spam').any():
+                    # The caveat has to travel with the table. Naming a third
+                    # party under "patterns Google penalizes" without it reads
+                    # as an accusation, and anchors are written by other sites
+                    # — the domain may be the target, not the buyer (SC-8.4).
+                    report.append("_`anchor_text_spam` reflects links **received**, not links "
+                                  "bought: anchors are written by other sites, so a domain can "
+                                  "be targeted by a scheme it had no part in._")
                 own = df_risk[df_risk['is_own_site'] == 1]
                 if not own.empty:
                     report.append("\n### ⚠️ Own-site warnings")
@@ -397,6 +406,9 @@ class ReportGenerator:
                 if not comp.empty:
                     report.append("\n### 🔎 Competitor risk signals (opportunity intel)")
                     report.append(comp[['domain', 'signal_type', 'severity']].to_markdown(index=False))
+                    for _, r in comp[comp['signal_type'] == 'anchor_text_spam'].iterrows():
+                        report.append(f"- **{r['domain']}** anchor-text evidence: "
+                                      f"{r['evidence_json']}")
 
             # 3i. YouTube Presence (SC-7-YT Phase 1). is_client is derived by domain match
             # (the branded-demand precedent), so the table carries no is_client column.

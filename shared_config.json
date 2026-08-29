@@ -333,7 +333,8 @@
       "paid links"
     ],
     "anchor_spam_min_domains": 1,
-    "anchor_spam_high_share": 0.25
+    "anchor_spam_high_share": 0.25,
+    "anchor_spam_min_matched_domains": 5
   },
   "clinical_pivots": {
     "avoidant attachment": "Emotional Distance / Pursuer-Distancer",
