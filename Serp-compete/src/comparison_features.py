@@ -24,7 +24,8 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
                             client_domain: str, competitor_keywords: Dict[str, Any],
                             gsc: Any, dfs_client: Any, project_root: str,
                             anchor_texts_by_domain: Optional[Dict[str, Any]] = None,
-                            anchor_coverage: Optional[Dict[str, int]] = None
+                            anchor_coverage: Optional[Dict[str, int]] = None,
+                            run_domains: Optional[list] = None
                             ) -> Dict[str, Any]:
     """Run C4/C2/C1/C3/C6 and persist their outputs. Never raises — each feature (including
     its own module import) is guarded, so any one failure degrades to an empty section rather
@@ -129,15 +130,26 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         print(f"⚠️ Branded-demand benchmark skipped: {bd_err}")
 
     # C6 / SC-8: Reputation-Risk Radar (pattern detections, not confirmed penalties).
+    # Coverage is persisted in its own guard, BEFORE the radar: it is the record
+    # of what could not be read, and losing it because the radar failed leaves
+    # the report unable to say so — silence then reads as a clean bill (P13/P2).
+    try:
+        db.save_anchor_coverage(run_id, anchor_coverage or {}, detected_at=today)
+    except Exception as cov_err:  # noqa: BLE001
+        print(f"⚠️ Anchor coverage not recorded: {cov_err}")
     try:
         from src.risk_radar import compute_risk_signals
         series_by_domain = {d: db.get_visibility_series(d) for d in domains}
         series_by_domain[client_domain] = db.get_visibility_series(client_domain)
-        # Only domains this run actually looked at — Tool 1's 30-day cache can
-        # carry anchors for a competitor that has since dropped out (P6).
+        # Scope to the domains this run INGESTED, not to `domains`
+        # (competitor_keywords), which is what survived the later PA and
+        # relevant-pages filters. That filter includes a DataForSEO call, so a
+        # 429 would silently drop a competitor's anchor signal and print a
+        # scope claim that is false (P1/P2).
         from src.handoff_moz import restrict_to_run
+        scope = run_domains if run_domains is not None else domains
         anchors_for_run = restrict_to_run(
-            anchor_texts_by_domain, domains, client_domain)
+            anchor_texts_by_domain, scope, client_domain)
         dropped = len(anchor_texts_by_domain or {}) - len(anchors_for_run)
         if dropped:
             print(f"      {dropped} domain(s) in the handoff's Moz block are not in "
@@ -149,9 +161,6 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
             anchor_texts_by_domain=anchors_for_run,
             anchor_collected_at=(anchor_coverage or {}).get("collected_at"))
         db.save_risk_signals(run_id, risk_rows, detected_at=today)
-        # Persisted even when empty: a run that attempted nothing and a run
-        # whose every fetch failed must stay distinguishable after the fact.
-        db.save_anchor_coverage(run_id, anchor_coverage or {}, detected_at=today)
         summary["risk_rows"] = len(risk_rows)
         own_risks = sum(1 for r in risk_rows if r["is_own_site"])
         anchor_risks = sum(1 for r in risk_rows if r["signal_type"] == "anchor_text_spam")

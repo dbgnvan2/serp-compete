@@ -8,8 +8,10 @@ Tool 1 attaches to the competitor handoff), plus the DB reader/writer.
 """
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1021,3 +1023,172 @@ class TestCoveragePersistence(unittest.TestCase):
         lines = anchor_caveat_lines([], db.get_anchor_coverage(1))
         self.assertTrue(lines)
         self.assertIn("1 errored", lines[0])
+
+class TestSweepFixes(unittest.TestCase):
+    """Findings from the pre-push sweep of the coverage/staleness batch."""
+
+    BLOCK = {
+        "generated_at": "2026-08-28T12:00:00+00:00",
+        "domains": {
+            "cached.example": {"status": "ok", "fetched_at": "2026-08-01T09:00:00+00:00",
+                               "anchor_texts": {"status": "ok", "items": REAL_ANCHORS}},
+            "fresh.example": {"status": "ok", "fetched_at": "2026-08-28T12:00:00+00:00",
+                              "anchor_texts": {"status": "ok", "items": REAL_ANCHORS}},
+            "capped.example": {"status": "skipped_run_cap"},
+        },
+    }
+
+    # F3 — per-domain freshness, not the assembly timestamp
+    def test_per_domain_fetched_at_beats_the_assembly_timestamp(self):
+        """`generated_at` is stamped when Tool 1 assembles the handoff. A domain
+        served from its 30-day cache is far older, and using the assembly time
+        reports 27-day-old anchors as a same-day observation (P6)."""
+        extracted = anchor_texts_by_domain(self.BLOCK)
+        self.assertEqual(extracted["cached.example"]["collected_at"],
+                         "2026-08-01T09:00:00+00:00")
+        self.assertEqual(extracted["fresh.example"]["collected_at"],
+                         "2026-08-28T12:00:00+00:00")
+
+    def test_assembly_timestamp_is_only_the_fallback(self):
+        """A handoff from a Tool 1 that predates per-domain dates still gets
+        something, clearly labelled as the upper bound it is."""
+        block = {"generated_at": "2026-08-28T12:00:00+00:00", "domains": {
+            "old.example": {"status": "ok",
+                            "anchor_texts": {"status": "ok", "items": REAL_ANCHORS}}}}
+        self.assertEqual(anchor_texts_by_domain(block)["old.example"]["collected_at"],
+                         "2026-08-28T12:00:00+00:00")
+
+    def test_per_domain_date_reaches_the_signal(self):
+        rows = compute_risk_signals(
+            volatility_alerts=[], series_by_domain={}, parasite_candidates=[],
+            own_domain="x.com",
+            anchor_texts_by_domain=anchor_texts_by_domain(self.BLOCK),
+            anchor_collected_at="2026-08-28T12:00:00+00:00")
+        by_domain = {r["domain"]: r["evidence"]["collected_at"] for r in rows}
+        self.assertEqual(by_domain["cached.example"], "2026-08-01T09:00:00+00:00")
+
+    # F2 — coverage must describe the set the signals describe
+    def test_coverage_counts_only_the_domains_this_run_examined(self):
+        """Tool 1 builds moz.domains from every organic competitor and caps the
+        fetch, so counting the whole block made the report warn about domains
+        this run never looked at (P3/P6)."""
+        scoped = anchor_coverage(self.BLOCK, ["cached.example"], "")
+        self.assertEqual(scoped["total"], 1)
+        self.assertEqual(scoped["skipped"], 0)
+        whole = anchor_coverage(self.BLOCK)
+        self.assertEqual(whole["total"], 3)
+        self.assertEqual(whole["skipped"], 1)
+
+    def test_unscoped_coverage_still_counts_everything(self):
+        """Passing no scope keeps the old behaviour, so a caller that has no
+        target set is not silently given a zeroed count."""
+        self.assertEqual(anchor_coverage(self.BLOCK)["total"], 3)
+
+    # F8 — an unrecorded run must not read as a clean one
+    def test_unrecorded_coverage_says_so(self):
+        lines = anchor_caveat_lines([], {"unrecorded": True})
+        self.assertEqual(len(lines), 1)
+        self.assertIn("not recorded", lines[0])
+        self.assertIn("not evidence", lines[0])
+        self.assertEqual(anchor_data_unreadable({"unrecorded": True}), 1)
+
+    def test_a_genuinely_clean_run_still_says_nothing(self):
+        self.assertEqual(
+            anchor_caveat_lines([], {"total": 2, "with_anchors": 2, "errored": 0,
+                                     "skipped": 0, "unknown": 0}), [])
+
+
+class TestSweepFixesPersistence(unittest.TestCase):
+    """DB-side sweep fixes. Explicit temp paths only (P28)."""
+
+    def _db(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        return DatabaseManager(os.path.join(self._tmp.name, "s.db"))
+
+    # F6 — the total-failure caveat must keep its cause across the round trip
+    def test_reason_survives_persistence(self):
+        db = self._db()
+        db.save_anchor_coverage(1, {"total": 0, "fetch_status": "unavailable",
+                                    "reason": "handoff unreadable"},
+                                detected_at="2026-08-28")
+        got = db.get_anchor_coverage(1)
+        self.assertEqual(got["reason"], "handoff unreadable")
+        line = anchor_caveat_lines([], got)[0]
+        self.assertIn("handoff unreadable", line)
+
+    def test_collected_at_survives_persistence(self):
+        db = self._db()
+        db.save_anchor_coverage(1, {"total": 1, "collected_at": "2026-08-01T09:00:00+00:00"},
+                                detected_at="2026-08-28")
+        self.assertEqual(db.get_anchor_coverage(1)["collected_at"],
+                         "2026-08-01T09:00:00+00:00")
+
+    # F7 — a real DB error must not masquerade as "predates the table"
+    def _raising_cursor(self, message):
+        """A connection whose cursor.execute raises inside the guarded block.
+
+        Patching _get_connection itself raises BEFORE the try, so the except
+        branch is never entered and the test passes whatever the handler does.
+        """
+        cursor = MagicMock()
+        cursor.execute.side_effect = sqlite3.OperationalError(message)
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        conn.__enter__ = lambda _self: conn
+        conn.__exit__ = lambda *_: False
+        return conn
+
+    def test_a_real_database_error_is_not_swallowed(self):
+        """The missing-table branch is unreachable — _create_tables() runs on
+        every construction — so left broad this caught "database is locked" and
+        reported it as an unrecorded run, silently (P1/P2)."""
+        db = self._db()
+        with patch.object(db, "_get_connection",
+                          return_value=self._raising_cursor("database is locked")):
+            with self.assertRaises(sqlite3.OperationalError):
+                db.get_anchor_coverage(1)
+
+    def test_a_genuinely_missing_table_still_degrades(self):
+        """The one case the catch is for: a DB predating the table."""
+        db = self._db()
+        with patch.object(db, "_get_connection",
+                          return_value=self._raising_cursor(
+                              "no such table: anchor_coverage")):
+            self.assertEqual(db.get_anchor_coverage(1), {})
+
+class TestRunScopeIsTheIngestedSet(unittest.TestCase):
+    """run_domains, not competitor_keywords, must scope the anchor signals.
+
+    competitor_keywords is what survived the later relevant-pages and PA
+    filters, and the relevant-pages check is a DataForSEO call. A 429 there
+    would silently drop a competitor's anchor signal and print a scope claim
+    that is false (P1/P2).
+    """
+
+    def test_run_domains_scopes_the_anchors_not_competitor_keywords(self):
+        import src.comparison_features as cf
+        captured = {}
+
+        def fake_restrict(anchors, scope, client):
+            captured["scope"] = list(scope or [])
+            return {}
+
+        import src.handoff_moz as hm
+        with patch.object(hm, "restrict_to_run", fake_restrict), \
+                tempfile.TemporaryDirectory() as tmp:
+            db = DatabaseManager(os.path.join(tmp, "rs.db"))
+            run_id = db.create_run("livingsystems.ca")
+            cf.run_comparison_features(
+                db, run_id, {"client": {"domain": "livingsystems.ca"}},
+                "livingsystems.ca",
+                {"survived.example": set()},          # competitor_keywords
+                MagicMock(), MagicMock(), tmp,
+                anchor_texts_by_domain={"dropped.example": {"items": []}},
+                anchor_coverage={},
+                run_domains=["survived.example", "dropped.example"])
+
+        self.assertIn("scope", captured, "restrict_to_run was never reached")
+        self.assertIn("dropped.example", captured["scope"],
+                      "a domain the run ingested was excluded because a later "
+                      "filter dropped it")

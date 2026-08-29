@@ -389,7 +389,11 @@ class ReportGenerator:
             # rather than being handed it by the caller. That is what makes an
             # OLD run's report able to say what could not be read; a threaded
             # parameter only ever describes the run happening right now.
-            risk_coverage = self.db.get_anchor_coverage(run_id) or {}
+            risk_coverage = self.db.get_anchor_coverage(run_id)
+            if not risk_coverage:
+                # {} means the run predates the table — flagged explicitly so
+                # an old report cannot read as a clean bill of health (P6).
+                risk_coverage = {"unrecorded": True}
             unreadable = anchor_data_unreadable(risk_coverage)
             if not df_risk.empty or unreadable:
                 report.append("\n## Reputation-Risk Radar")

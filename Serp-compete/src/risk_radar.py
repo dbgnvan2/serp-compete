@@ -281,6 +281,8 @@ def anchor_data_unreadable(coverage) -> int:
     failure to get one.
     """
     coverage = coverage or {}
+    if coverage.get("unrecorded"):
+        return 1
     if coverage.get("fetch_status") == "unavailable":
         return max(1, coverage.get("total", 0))
     return (coverage.get("errored", 0) + coverage.get("skipped", 0)
@@ -309,8 +311,16 @@ def anchor_caveat_lines(signal_types, coverage=None):
     if "anchor_text_spam" in set(signal_types or ()):
         lines.append(ANCHOR_SPAM_CAVEAT)
     coverage = coverage or {}
+    if coverage.get("unrecorded"):
+        # An absent coverage row means the run predates the table, NOT that
+        # everything was readable. Rendering nothing would make an old report
+        # indistinguishable from a genuinely clean one (P6).
+        lines.append(
+            "_Anchor-text coverage was not recorded for this run. The absence of a "
+            "coverage note here is not evidence that every domain was readable._")
+        return lines
     if coverage.get("fetch_status") == "unavailable":
-        # F4: a total failure of the anchor path must not render identically to
+        # A total failure of the anchor path must not render identically to
         # a clean run. Without this the console note is the only trace (P25).
         lines.append(
             "_Anchor-text data could not be retrieved for this run"
@@ -361,10 +371,13 @@ def compute_risk_signals(volatility_alerts: List[Dict[str, Any]],
         # producer's page block carrying its own truncation flag.
         if isinstance(anchors, dict):
             items, truncated = anchors.get("items") or [], bool(anchors.get("truncated"))
+            # Per-domain wins: a cached domain can be weeks older than the
+            # handoff, so the block-level timestamp is only a fallback (P6).
+            collected = anchors.get("collected_at") or anchor_collected_at
         else:
-            items, truncated = anchors, False
+            items, truncated, collected = anchors, False, anchor_collected_at
         add(domain, detect_anchor_spam(items, config, sample_truncated=truncated,
-                                       collected_at=anchor_collected_at))
+                                       collected_at=collected))
     for alert in volatility_alerts or []:
         shift = alert.get("shift") or 0
         add(alert.get("domain"), {

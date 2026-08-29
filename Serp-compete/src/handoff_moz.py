@@ -62,17 +62,28 @@ def moz_block_from(handoff: Any) -> Dict[str, Any]:
 
 
 def moz_collected_at(moz_block: Dict[str, Any]) -> Optional[str]:
-    """When Tool 1 collected these Moz signals (`moz.generated_at`).
+    """When the handoff was **assembled** (`moz.generated_at`).
 
-    Purpose: stop a run stamping weeks-old cached anchors with today's date.
-    Tests:   tests/test_risk_radar.py::TestStaleAttribution
-
-    Tool 1 caches per domain for 30 days, so the anchors in a handoff can be
-    substantially older than the run that reads them. Discarding this and using
-    `detected_at` alone asserts a freshness the data does not have (P6).
+    This is an upper bound on freshness, not a collection time: Tool 1 stamps
+    it when it builds the block, and a domain served from its 30-day cache can
+    be far older. Prefer the per-domain `fetched_at` that
+    :func:`anchor_texts_by_domain` carries; this is the fallback for a handoff
+    produced before Tool 1 sent per-domain dates.
     """
     value = (moz_block or {}).get("generated_at")
     return value if isinstance(value, str) and value else None
+
+
+def _domain_collected_at(block: Dict[str, Any], fallback: Optional[str]) -> Optional[str]:
+    """When THIS domain's signals were collected.
+
+    Tool 1 carries `fetched_at` per domain precisely because a cached block can
+    predate the handoff by weeks. Using the assembly timestamp for a cached
+    domain reports 27-day-old anchors as a same-day observation, which is the
+    stale attribution this is meant to prevent (P6).
+    """
+    value = block.get("fetched_at")
+    return value if isinstance(value, str) and value else fallback
 
 
 def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -92,6 +103,7 @@ def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any
     :func:`anchor_coverage` to report that, and never infer it from absence.
     """
     out: Dict[str, Dict[str, Any]] = {}
+    assembled_at = moz_collected_at(moz_block)
     entries = list(((moz_block or {}).get("domains") or {}).items())
 
     # The client's own anchors travel in `moz.client`, not `domains` — Tool 1
@@ -110,7 +122,11 @@ def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any
         anchors = block.get("anchor_texts") or {}
         items = anchors.get("items") or []
         if items:
-            out[domain] = {"items": items, "truncated": bool(anchors.get("truncated"))}
+            out[domain] = {
+                "items": items,
+                "truncated": bool(anchors.get("truncated")),
+                "collected_at": _domain_collected_at(block, assembled_at),
+            }
     return out
 
 
@@ -135,7 +151,8 @@ def restrict_to_run(anchors: Dict[str, Any], domains, client_domain: str = "") -
     return {d: v for d, v in (anchors or {}).items() if str(d).lower() in keep}
 
 
-def anchor_coverage(moz_block: Dict[str, Any]) -> Dict[str, int]:
+def anchor_coverage(moz_block: Dict[str, Any], domains=None,
+                    client_domain: str = "") -> Dict[str, int]:
     """Count how the anchor fetch actually went, per status.
 
     Purpose: keep a Moz outage from reading as a clean bill of health.
@@ -149,7 +166,18 @@ def anchor_coverage(moz_block: Dict[str, Any]) -> Dict[str, int]:
     """
     counts = {"total": 0, "with_anchors": 0, "read_no_anchors": 0,
               "no_record": 0, "errored": 0, "skipped": 0, "unknown": 0}
-    blocks = list(((moz_block or {}).get("domains") or {}).values())
+    all_domains = ((moz_block or {}).get("domains") or {})
+    if domains is not None or client_domain:
+        # Count only what this run examined. Tool 1 builds moz.domains from
+        # every organic competitor and caps the fetch at max_competitors, so
+        # counting the whole block made the report warn about ~30 domains this
+        # run never looked at — a claim of blindness it does not have, which is
+        # the same class of dishonesty as claiming a clean bill (P3/P6).
+        keep = {str(d).lower() for d in (domains or []) if d}
+        if client_domain:
+            keep.add(client_domain.lower())
+        all_domains = {d: v for d, v in all_domains.items() if str(d).lower() in keep}
+    blocks = list(all_domains.values())
     client = (moz_block or {}).get("client")
     if isinstance(client, dict) and client.get("anchor_texts"):
         # Counted alongside the competitors: a failed fetch of the client's own

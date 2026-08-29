@@ -1,5 +1,6 @@
 import sqlite3
 import datetime
+import logging
 import json
 import os
 from typing import List, Tuple, Dict, Any
@@ -389,6 +390,7 @@ class DatabaseManager:
                     detected_at TEXT,
                     collected_at TEXT,
                     fetch_status TEXT,
+                    reason TEXT,
                     total INTEGER,
                     with_anchors INTEGER,
                     read_no_anchors INTEGER,
@@ -664,11 +666,11 @@ class DatabaseManager:
         with self._get_connection() as conn:
             conn.cursor().execute(
                 'INSERT OR REPLACE INTO anchor_coverage (run_id, detected_at, '
-                'collected_at, fetch_status, total, with_anchors, '
+                'collected_at, fetch_status, reason, total, with_anchors, '
                 'read_no_anchors, no_record, errored, skipped, unknown) '
-                'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                 (run_id, detected_at, coverage.get("collected_at"),
-                 coverage.get("fetch_status"),
+                 coverage.get("fetch_status"), coverage.get("reason"),
                  *[int(coverage.get(k, 0) or 0) for k in self._ANCHOR_COVERAGE_COUNTS]))
             conn.commit()
 
@@ -682,15 +684,24 @@ class DatabaseManager:
             cursor = conn.cursor()
             try:
                 row = cursor.execute(
-                    'SELECT collected_at, fetch_status, total, with_anchors, '
-                    'read_no_anchors, no_record, errored, skipped, unknown '
+                    'SELECT collected_at, fetch_status, reason, total, '
+                    'with_anchors, read_no_anchors, no_record, errored, '
+                    'skipped, unknown '
                     'FROM anchor_coverage WHERE run_id = ?', (run_id,)).fetchone()
-            except sqlite3.OperationalError:
-                return {}  # table absent on a DB that predates it
+            except sqlite3.OperationalError as exc:
+                # Narrow: _create_tables() runs on every construction, so the
+                # missing-table case this was written for is unreachable. Left
+                # broad, it swallowed "database is locked" and "disk image is
+                # malformed" as "this run predates the table" — silently, with
+                # no caveat rendered and nothing saying why (P1/P2).
+                if "no such table" not in str(exc).lower():
+                    raise
+                logging.warning("anchor_coverage table absent: %s", exc)
+                return {}
         if not row:
             return {}
-        out = {"collected_at": row[0], "fetch_status": row[1]}
-        out.update(dict(zip(self._ANCHOR_COVERAGE_COUNTS, row[2:])))
+        out = {"collected_at": row[0], "fetch_status": row[1], "reason": row[2]}
+        out.update(dict(zip(self._ANCHOR_COVERAGE_COUNTS, row[3:])))
         return out
 
     def save_yt_presence(self, run_id: int, rows: List[Dict[str, Any]]):
