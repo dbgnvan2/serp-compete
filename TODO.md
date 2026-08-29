@@ -63,6 +63,30 @@ wants cross-platform tracking **and** a provider budget is approved.
 - **D4 commodity export (serp-discover)** — would upgrade C4's local "commodity" overlap proxy to a real
   signal (`docs/TEST_RUN_CHECKLIST.md` §7).
 
+## Cold-sweep findings, 2026-08-28 — the lower-severity remainder
+
+The cold pass (no session context) found three things four warm passes had walked past. Two
+highs and the pythonpath issue are fixed; these are the rest, recorded not fixed.
+
+- **`comparison_features.py` console breakdown iterates every coverage key**, so `collected_at`
+  and `fetch_status` render as pseudo-counts: *"3 of 5 domain(s) had anchor data (2 errored,
+  2026-08-01T09:00:00+00:00 collected_at)"*. Console only. Restrict it to
+  `DatabaseManager._ANCHOR_COVERAGE_COUNTS`.
+- **`handoff_moz.anchor_coverage` dedup requires `client_domain_key`, the append does not**, so a
+  client block carrying `anchor_texts` but no `domain` inflates `total` by one while
+  `anchor_texts_by_domain` skips it. Shape-defensive only — the producer always sets `domain`.
+- **`coverage["reason"]` is `str(exc)` and is now persisted and rendered** into client-facing
+  markdown, so an `OSError` message would carry a local filesystem path. The rendering predates
+  this work; the persistence is new.
+- **`test_coverage_is_persisted_not_threaded_to_the_report` asserts by grepping `reporting.py`
+  source** and would have stayed green through the database-mismatch bug. Same class as the omit
+  test that missed the `www.` leak — worth converting to behaviour.
+
+**Measurement worth keeping:** the two highs (omitted domains audited via a `www.` prefix; the
+report reading a different database from the one the audit writes) were invisible to
+`learning-qa` twice, `/code-review`, and a fix-commit re-sweep — every one of which had this
+session's narrative. That is the case for the cold pass, in one batch.
+
 ## SC-8.4 — recorded during the coverage/staleness batch (2026-08-28)
 
 Raised by the sweeps and deliberately **not** fixed, with the reason.

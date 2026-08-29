@@ -6,7 +6,13 @@ from src.risk_radar import anchor_caveat_lines, anchor_data_unreadable
 
 
 class ReportGenerator:
-    def __init__(self, db_path: str = "competitor_history.db"):
+    def __init__(self, db_path: str = None):
+        # None, not a literal: DatabaseManager falls through to load_db_path(),
+        # which reads shared_config technical.database_path. The literal
+        # default short-circuited that and opened a CWD-relative
+        # competitor_history.db — a DIFFERENT file from the one the audit
+        # writes — so every section read a stale database, and the anchor
+        # coverage this class now reads from the DB was never found (P6/P16).
         self.db = DatabaseManager(db_path)
 
     def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None):

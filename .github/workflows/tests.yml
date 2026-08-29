@@ -42,3 +42,12 @@ jobs:
         # the suite is mocked. A test that fails here for want of a local secret
         # is fixed by stubbing the dependency, never by adding the secret.
         run: python -m pytest -q
+
+      - name: Run each suite in isolation
+        # The combined run once passed only because three files in tests/
+        # sys.path.insert the inner package as an import side effect, so the
+        # green depended on collection order. Running each alone is what makes
+        # that dependence break the build instead of hiding in it.
+        run: |
+          python -m pytest tests -q
+          python -m pytest Serp-compete/tests -q

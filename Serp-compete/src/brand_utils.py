@@ -39,3 +39,15 @@ def derive_brand_name(domain: str, suffixes: Optional[Iterable[str]] = None) -> 
         if s and name.endswith(s):
             name = name[: -len(s)]
     return name
+
+
+def normalise_domain(domain) -> str:
+    """Lower-cased, www-stripped domain, for comparing domains from two sources.
+
+    Tool 1 emits target domains as `urlparse(url).netloc.lower()`, so many
+    carry a `www.` prefix; `omitted_domains.txt` holds bare domains. Comparing
+    them raw let four entries on the omit list through — including
+    psychologytoday.com — so a directory the client explicitly excluded could
+    be audited and named in the report (P3/P6).
+    """
+    return str(domain or "").strip().lower().removeprefix("www.")

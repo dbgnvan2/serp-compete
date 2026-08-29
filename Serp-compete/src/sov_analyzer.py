@@ -182,4 +182,5 @@ def compute_sov(export: Optional[Dict[str, Any]], competitor_domains: List[str],
 
 def _norm_domain(domain: Any) -> str:
     """Lower-cased, www-stripped domain — matches serp-discover's citation domain form."""
-    return str(domain or "").strip().lower().removeprefix("www.")
+    from src.brand_utils import normalise_domain
+    return normalise_domain(domain)

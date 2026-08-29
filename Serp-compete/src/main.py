@@ -17,6 +17,7 @@ from src.enrichment import (
 from src.analysis import AnalysisEngine
 from src.database import DatabaseManager
 from typing import Dict, Set, List, Tuple, Any
+from src.brand_utils import normalise_domain
 from src.reporting import ReportGenerator
 from src.reframe_engine import ReframeEngine
 from src.velocity_module import VelocityTracker
@@ -296,7 +297,10 @@ def load_omitted_domains(config):
     path = os.path.join(PROJECT_ROOT, path_rel)
     if os.path.exists(path):
         with open(path, 'r') as f:
-            return set(line.strip().lower() for line in f if line.strip())
+            # Normalised on load so the comparison cannot depend on which form
+            # each side happens to use.
+            from src.brand_utils import normalise_domain
+            return {normalise_domain(line) for line in f if line.strip()}
     return set()
 
 def run_audit():
@@ -329,7 +333,8 @@ def run_audit():
     # scoping on competitor_keywords got wrong. But domain_groups alone
     # re-admits the omit list, so an omitted directory could collect an
     # anchor-spam finding in a client report (P3/P6).
-    audited_domains = [d for d in domain_groups if d not in omitted_domains]
+    audited_domains = [d for d in domain_groups
+                       if normalise_domain(d) not in omitted_domains]
 
     db = DatabaseManager()
     velocity = VelocityTracker(SHARED_CONFIG_PATH)
@@ -380,7 +385,7 @@ def run_audit():
     # 4. Ingestion & Expert Filtering
     for domain, group_targets in domain_groups.items():
         # Aggregator/Omitted Exclusion: Cross-reference the external omitted_domains list
-        if domain in omitted_domains:
+        if normalise_domain(domain) in omitted_domains:
             print(f"Skipping omitted domain: {domain}")
             continue
             

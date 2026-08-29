@@ -1360,26 +1360,84 @@ class TestUntestedFixesNowCovered(unittest.TestCase):
 class TestOmittedDomainsStayOut(unittest.TestCase):
     """A domain on the omit list must never collect a finding."""
 
-    def test_the_run_scope_excludes_policy_exclusions(self):
-        """run_domains was built from domain_groups, which predates main.py's
-        omit filter, so an omitted directory could be named in a client report
-        under "patterns Google is known to penalize" (P3/P6)."""
+    def test_an_omitted_domain_is_excluded_whatever_form_it_takes(self):
+        """Behavioural, because the source-grep version could not see the bug.
+
+        It asserted the `audited_domains` expression mentions `omitted_domains`
+        — which it did, while four entries leaked through: Tool 1 emits
+        `urlparse(url).netloc.lower()`, so many domains carry a `www.` prefix,
+        and omitted_domains.txt holds bare domains. `www.psychologytoday.com`
+        was audited despite psychologytoday.com being on the list (P19
+        corollary: assert behaviour, not the presence of an identifier)."""
+        from src.brand_utils import normalise_domain
+        omitted = {normalise_domain(d) for d in
+                   ["psychologytoday.com", "betterhelp.com"]}
+        ingested = ["www.psychologytoday.com", "PsychologyToday.com",
+                    "betterhelp.com", "realcompetitor.example"]
+        audited = [d for d in ingested if normalise_domain(d) not in omitted]
+        self.assertEqual(audited, ["realcompetitor.example"])
+
+    def test_the_omit_filter_and_the_scope_use_the_same_normalisation(self):
+        """Both sites in main.py must agree, or a domain is skipped for the
+        audit but still collects an anchor signal."""
         import ast
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
         with open(os.path.join(root, "main.py"), encoding="utf-8") as f:
             tree = ast.parse(f.read())
-        assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
-                   and any(isinstance(t, ast.Name) and t.id == "audited_domains"
-                           for t in n.targets)]
-        self.assertEqual(len(assigns), 1, "audited_domains is not defined once")
-        source = ast.unparse(assigns[0].value)
-        self.assertIn("omitted_domains", source,
-                      "the audit scope does not exclude the omit list")
-        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
-        passed = {ast.unparse(kw.value) for c in calls for kw in c.keywords
-                  if kw.arg == "run_domains"}
-        self.assertEqual(passed, {"audited_domains"},
-                         "run_domains is not the omit-filtered set")
+        compares = [ast.unparse(n) for n in ast.walk(tree)
+                    if isinstance(n, ast.Compare)
+                    and "omitted_domains" in ast.unparse(n)]
+        self.assertTrue(compares, "nothing compares against omitted_domains")
+        for c in compares:
+            self.assertIn("normalise_domain", c,
+                          f"unnormalised omit comparison: {c}")
+
+    def test_the_normaliser_is_defined_once(self):
+        """sov_analyzer had its own copy; two definitions drift."""
+        from src.brand_utils import normalise_domain
+        from src.sov_analyzer import _norm_domain
+        for raw in ("WWW.Example.com ", "example.com", "", None):
+            self.assertEqual(_norm_domain(raw), normalise_domain(raw))
+
+
+class TestReportReadsTheAuditDatabase(unittest.TestCase):
+    """The reporter must open the database the audit wrote to.
+
+    ReportGenerator defaulted to the literal "competitor_history.db", a
+    CWD-relative path, while the audit's DatabaseManager falls through to
+    load_db_path() and opens shared_config's technical.database_path. They were
+    different files, so every report section read a stale database — and the
+    anchor coverage this batch moved into the DB was never found (P6/P16).
+    """
+
+    def test_default_constructed_reporter_uses_the_configured_database(self):
+        from src.database import DatabaseManager, load_db_path
+        from src.reporting import ReportGenerator
+        self.assertEqual(os.path.abspath(ReportGenerator().db.db_path),
+                         os.path.abspath(DatabaseManager().db_path))
+        self.assertEqual(os.path.abspath(ReportGenerator().db.db_path),
+                         os.path.abspath(load_db_path()))
+
+    def test_an_explicit_path_is_still_honoured(self):
+        from src.reporting import ReportGenerator
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "explicit.db")
+            self.assertEqual(ReportGenerator(path).db.db_path, path)
+
+    def test_coverage_written_by_the_audit_is_read_by_the_report(self):
+        """The round trip the batch depends on, through the two classes as
+        main.py constructs them."""
+        from src.database import DatabaseManager
+        from src.reporting import ReportGenerator
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "shared.db")
+            audit_db = DatabaseManager(path)
+            run_id = audit_db.create_run("livingsystems.ca")
+            audit_db.save_anchor_coverage(
+                run_id, {"total": 5, "with_anchors": 3, "errored": 2},
+                detected_at="2026-08-28")
+            self.assertEqual(
+                ReportGenerator(path).db.get_anchor_coverage(run_id)["errored"], 2)
 
     def test_restrict_to_run_drops_an_omitted_domain(self):
         from src.handoff_moz import restrict_to_run
