@@ -102,12 +102,6 @@ def convert_legacy_to_targets(legacy_data: Dict[str, Any]) -> Tuple[List[Dict[st
 
     return targets, paa_data
 
-#: The `moz` block from the handoff validated in get_latest_market_data. Set
-#: there so the anchor path reuses the *validated* document instead of reading
-#: the file a second time without checking it (P6/P11).
-_VALIDATED_MOZ_BLOCK: Dict[str, Any] = {}
-
-
 def _handoff_anchor_texts(run_domains=None, client_domain: str = "") -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Anchor texts and fetch coverage from the latest handoff's Moz block.
 
@@ -120,11 +114,12 @@ def _handoff_anchor_texts(run_domains=None, client_domain: str = "") -> Tuple[Di
     """
     try:
         from src.handoff_moz import (anchor_coverage, anchor_texts_by_domain,
-                                     moz_collected_at)
+                                     moz_collected_at)  # noqa: F401
         # The block validated in get_latest_market_data, not a second raw read
         # of the same file: only the first was checked against the schema, so
         # re-reading meant the moz block bypassed validation entirely.
-        block = _VALIDATED_MOZ_BLOCK
+        from src.handoff_moz import validated_moz_block
+        block = validated_moz_block()
         coverage = anchor_coverage(block, run_domains, client_domain)
         coverage["collected_at"] = moz_collected_at(block)
         return anchor_texts_by_domain(block), coverage
@@ -137,17 +132,16 @@ def _handoff_anchor_texts(run_domains=None, client_domain: str = "") -> Tuple[Di
 
 
 def _remember_moz_block(handoff_data: Dict[str, Any]) -> None:
-    """Stash the handoff's `moz` block for the anchor path to reuse."""
-    global _VALIDATED_MOZ_BLOCK
-    # Guarded: this runs inside the ingestion try whose handler exits the
-    # process. An optional signal must never be able to abort the audit and
-    # blame the handoff file for it (P13).
+    """Retain the handoff's `moz` block for the anchor path to reuse.
+
+    The state and its guard live in src.handoff_moz, which is importable
+    without the application's full dependency set and can therefore be tested.
+    """
     try:
-        from src.handoff_moz import moz_block_from
-        _VALIDATED_MOZ_BLOCK = moz_block_from(handoff_data)
+        from src.handoff_moz import remember_moz_block
+        remember_moz_block(handoff_data)
     except Exception as exc:  # noqa: BLE001
         print(f"⚠️ Moz block not retained: {exc}")
-        _VALIDATED_MOZ_BLOCK = {}
 
 
 def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
@@ -328,6 +322,14 @@ def run_audit():
         if d not in domain_groups:
             domain_groups[d] = []
         domain_groups[d].append(t)
+
+    # The domains this run is willing to audit: every ingested domain MINUS the
+    # policy exclusions. Deliberately not minus the get_relevant_pages skip —
+    # that is a DataForSEO call, and a 429 there is transient, which is what
+    # scoping on competitor_keywords got wrong. But domain_groups alone
+    # re-admits the omit list, so an omitted directory could collect an
+    # anchor-spam finding in a client report (P3/P6).
+    audited_domains = [d for d in domain_groups if d not in omitted_domains]
 
     db = DatabaseManager()
     velocity = VelocityTracker(SHARED_CONFIG_PATH)
@@ -539,12 +541,12 @@ def run_audit():
     # without error, so a change in either list would silently drop a kwarg —
     # a silent drop inside the code added to stop silent drops (P2).
     _moz_anchors, _moz_coverage = _handoff_anchor_texts(
-        list(domain_groups.keys()), client_domain)
+        audited_domains, client_domain)
     run_comparison_features(db, run_id, shared_config, client_domain, competitor_keywords,
                             gsc, dfs_client, PROJECT_ROOT,
                             anchor_texts_by_domain=_moz_anchors,
                             anchor_coverage=_moz_coverage,
-                            run_domains=list(domain_groups.keys()))
+                            run_domains=audited_domains)
 
     # Strategic Logic with PAA context from Handover
     print("Identifying Strategic Openings...")

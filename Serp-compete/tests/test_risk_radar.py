@@ -920,19 +920,27 @@ class TestMainReusesTheValidatedBlock(unittest.TestCase):
             if (isinstance(node, ast.FunctionDef)
                     and node.name == "_handoff_anchor_texts"):
                 body = ast.unparse(node)
-                self.assertIn("_VALIDATED_MOZ_BLOCK", body)
+                self.assertIn("validated_moz_block", body)
                 self.assertNotIn("find_latest_handoff_file", body)
                 self.assertNotIn("load_moz_block", body)
                 return
         self.fail("main.py has no _handoff_anchor_texts")
 
     def test_the_validated_block_is_remembered_on_every_handoff_path(self):
-        """Including the schema-file-missing branch, which still ingests."""
+        """Both ingesting branches must retain the block, and the clear must
+        run too — three call sites exactly.
+
+        A `>= 2` floor let one of the two real branches lose its call while
+        staying green, and it also counted the clear, which does the opposite
+        thing (P29). Asserted per-argument instead."""
         import ast
         calls = [n for n in ast.walk(self._tree())
                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                  and n.func.id == "_remember_moz_block"]
-        self.assertGreaterEqual(len(calls), 2)
+        args = [ast.unparse(c.args[0]) if c.args else "" for c in calls]
+        self.assertEqual(sorted(args), ["handoff_data", "handoff_data", "{}"],
+                         "expected both ingest branches to retain the block, "
+                         "plus one clear")
 
 class TestRunScoping(unittest.TestCase):
     """SC-8.4: a signal must not be attributed to a domain this run never saw."""
@@ -1149,6 +1157,44 @@ class TestSweepFixesPersistence(unittest.TestCase):
             with self.assertRaises(sqlite3.OperationalError):
                 db.get_anchor_coverage(1)
 
+    def test_a_db_predating_the_reason_column_is_migrated(self):
+        """P8 dirty state — the case the ALTER exists for.
+
+        A fresh DB gets `reason` from CREATE TABLE, so a clean-state test
+        passes whether or not the migration is there. Only a DB written by the
+        earlier schema exercises it, and without the ALTER both the save and
+        the report raise `no such column: reason`."""
+        import sqlite3 as _sq
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "old.db")
+            with _sq.connect(path) as conn:
+                conn.execute("""
+                    CREATE TABLE anchor_coverage (
+                        run_id INTEGER PRIMARY KEY, detected_at TEXT,
+                        collected_at TEXT, fetch_status TEXT, total INTEGER,
+                        with_anchors INTEGER, read_no_anchors INTEGER,
+                        no_record INTEGER, errored INTEGER, skipped INTEGER,
+                        unknown INTEGER)
+                """)
+                conn.execute(
+                    "INSERT INTO anchor_coverage (run_id, total) VALUES (7, 3)")
+                conn.commit()
+            db = DatabaseManager(path)          # migration runs on construction
+            db.save_anchor_coverage(7, {"total": 3, "fetch_status": "unavailable",
+                                        "reason": "handoff unreadable"},
+                                    detected_at="2026-08-28")
+            got = db.get_anchor_coverage(7)
+        self.assertEqual(got["reason"], "handoff unreadable")
+
+    def test_a_missing_column_degrades_rather_than_aborting_the_report(self):
+        """reporting.py is the only caller and has no exception handling, so a
+        DB lagging a schema change must degrade, not crash the report."""
+        db = self._db()
+        with patch.object(db, "_get_connection",
+                          return_value=self._raising_cursor(
+                              "no such column: reason")):
+            self.assertEqual(db.get_anchor_coverage(1), {})
+
     def test_a_genuinely_missing_table_still_degrades(self):
         """The one case the catch is for: a DB predating the table."""
         db = self._db()
@@ -1238,17 +1284,105 @@ class TestCodeReviewFixes(unittest.TestCase):
         extracted = anchor_texts_by_domain(block)
         self.assertEqual(extracted["me.com"]["items"][0]["text"], "y")
 
-    def test_run_scope_is_the_union_not_a_fallback(self):
-        """A parameter whose default is the broken behaviour only works while
-        every caller remembers to pass it. The scope is now the union of both
-        sets, so omitting run_domains cannot silently narrow it."""
+    def test_run_scope_is_the_union_of_both_sets(self):
+        """Behavioural, not a grep: the previous version asserted the exact
+        source text, so a behaviour-identical reordering turned it red while a
+        real change could slip past (P19 corollary)."""
         import src.comparison_features as cf
-        import inspect
-        src = inspect.getsource(cf.run_comparison_features)
-        self.assertIn("set(domains or []) | set(run_domains or [])", src)
+        import src.handoff_moz as hm
+        captured = {}
+
+        def fake_restrict(anchors, scope, client):
+            captured["scope"] = set(scope or [])
+            return {}
+
+        with patch.object(hm, "restrict_to_run", fake_restrict), \
+                tempfile.TemporaryDirectory() as tmp:
+            db = DatabaseManager(os.path.join(tmp, "u.db"))
+            run_id = db.create_run("livingsystems.ca")
+            cf.run_comparison_features(
+                db, run_id, {"client": {"domain": "livingsystems.ca"}},
+                "livingsystems.ca", {"from-keywords.example": set()},
+                MagicMock(), MagicMock(), tmp,
+                anchor_texts_by_domain={}, anchor_coverage={},
+                run_domains=["from-run.example"])
+        self.assertEqual(captured["scope"],
+                         {"from-keywords.example", "from-run.example"})
+
+class TestUntestedFixesNowCovered(unittest.TestCase):
+    """Three fixes shipped with no test of their own; these are those tests."""
+
+    def test_coverage_is_saved_even_when_the_radar_fails(self):
+        """The fix that moved save_anchor_coverage out of the radar guard had
+        no coverage: the existing AST test passed identically before and after
+        the move. This asserts the behaviour the move was for (P13)."""
+        import src.comparison_features as cf
+        with tempfile.TemporaryDirectory() as tmp:
+            db = DatabaseManager(os.path.join(tmp, "rf.db"))
+            run_id = db.create_run("livingsystems.ca")
+            with patch.object(db, "save_risk_signals",
+                              side_effect=RuntimeError("radar exploded")):
+                cf.run_comparison_features(
+                    db, run_id, {"client": {"domain": "livingsystems.ca"}},
+                    "livingsystems.ca", {}, MagicMock(), MagicMock(), tmp,
+                    anchor_texts_by_domain={}, anchor_coverage={"total": 3,
+                                                                "errored": 2},
+                    run_domains=[])
+            saved = db.get_anchor_coverage(run_id)
+        self.assertEqual(saved["errored"], 2,
+                         "the record of what could not be read was lost when "
+                         "the radar failed")
+
+    def test_a_second_ingestion_does_not_inherit_the_first_handoff(self):
+        """The per-ingestion clear had no test. Without it a second run in one
+        process attributes the previous handoff's anchors to it (P8)."""
+        from src.handoff_moz import remember_moz_block, validated_moz_block
+        block = {"generated_at": "2026-08-28T00:00:00+00:00", "domains": {
+            "a.com": {"status": "ok", "anchor_texts": {
+                "status": "ok", "items": REAL_ANCHORS}}}}
+        remember_moz_block({"moz": block})
+        self.assertTrue(validated_moz_block())
+        # A legacy/manual ingestion sets nothing; the clear must still run.
+        remember_moz_block({})
+        self.assertEqual(validated_moz_block(), {})
+
+    def test_a_failure_retaining_the_block_does_not_propagate(self):
+        """This runs inside the ingestion try whose handler exits the process,
+        so it must swallow its own failures (P13)."""
+        import src.handoff_moz as hm
+        hm.remember_moz_block({"moz": {"domains": {"a.com": {}}}})
+        with patch.object(hm, "moz_block_from",
+                          side_effect=RuntimeError("extract exploded")):
+            hm.remember_moz_block({"moz": {"domains": {"b.com": {}}}})
+        self.assertEqual(hm.validated_moz_block(), {})
+
+
+class TestOmittedDomainsStayOut(unittest.TestCase):
+    """A domain on the omit list must never collect a finding."""
+
+    def test_the_run_scope_excludes_policy_exclusions(self):
+        """run_domains was built from domain_groups, which predates main.py's
+        omit filter, so an omitted directory could be named in a client report
+        under "patterns Google is known to penalize" (P3/P6)."""
+        import ast
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+        with open(os.path.join(root, "main.py"), encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
+                   and any(isinstance(t, ast.Name) and t.id == "audited_domains"
+                           for t in n.targets)]
+        self.assertEqual(len(assigns), 1, "audited_domains is not defined once")
+        source = ast.unparse(assigns[0].value)
+        self.assertIn("omitted_domains", source,
+                      "the audit scope does not exclude the omit list")
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+        passed = {ast.unparse(kw.value) for c in calls for kw in c.keywords
+                  if kw.arg == "run_domains"}
+        self.assertEqual(passed, {"audited_domains"},
+                         "run_domains is not the omit-filtered set")
+
+    def test_restrict_to_run_drops_an_omitted_domain(self):
         from src.handoff_moz import restrict_to_run
-        anchors = {"filtered-out.example": {"items": []},
-                   "survived.example": {"items": []}}
-        scope = set(["survived.example"]) | set(
-            ["survived.example", "filtered-out.example"])
-        self.assertEqual(set(restrict_to_run(anchors, scope, "")), set(anchors))
+        anchors = {"kept.example": {"items": []}, "omitted.example": {"items": []}}
+        self.assertEqual(set(restrict_to_run(anchors, ["kept.example"], "")),
+                         {"kept.example"})

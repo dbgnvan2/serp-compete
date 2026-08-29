@@ -61,6 +61,38 @@ def moz_block_from(handoff: Any) -> Dict[str, Any]:
     return moz if isinstance(moz, dict) else {}
 
 
+#: The `moz` block of the handoff the caller has already validated. Held here
+#: rather than in `main.py` because `main` imports the whole application at
+#: module load (pandas, spacy, the report generator), so state living there
+#: cannot be exercised by a test — the same reason the rest of this module
+#: exists (P21/P27).
+_VALIDATED_MOZ_BLOCK: Dict[str, Any] = {}
+
+
+def remember_moz_block(handoff: Any) -> None:
+    """Retain the `moz` block of an already-validated handoff.
+
+    Call with `{}` at the start of each ingestion: the legacy and manual paths
+    never set a block, so a second run in one process would otherwise inherit
+    the previous handoff's anchors (P8).
+
+    Never raises. The caller runs this inside an ingestion guard whose handler
+    exits the process, and an optional signal must not be able to abort the
+    audit and blame the handoff file for it (P13).
+    """
+    global _VALIDATED_MOZ_BLOCK
+    try:
+        _VALIDATED_MOZ_BLOCK = moz_block_from(handoff)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Moz block not retained: %s", exc)
+        _VALIDATED_MOZ_BLOCK = {}
+
+
+def validated_moz_block() -> Dict[str, Any]:
+    """The block retained by :func:`remember_moz_block`, or `{}`."""
+    return _VALIDATED_MOZ_BLOCK
+
+
 def moz_collected_at(moz_block: Dict[str, Any]) -> Optional[str]:
     """When the handoff was **assembled** (`moz.generated_at`).
 
@@ -185,16 +217,20 @@ def anchor_coverage(moz_block: Dict[str, Any], domains=None,
         if client_domain:
             keep.add(client_domain.lower())
         all_domains = {d: v for d, v in all_domains.items() if str(d).lower() in keep}
-    blocks = list(all_domains.values())
     client = (moz_block or {}).get("client")
-    if (isinstance(client, dict) and client.get("anchor_texts")
-            and str(client.get("domain", "")).lower() not in
-            {str(d).lower() for d in all_domains}):
-        # Counted alongside the competitors: a failed fetch of the client's own
-        # anchors must be as visible as any other, and it is the one that would
-        # hide a negative-SEO campaign aimed at the client. Skipped when the
-        # domain is already in `domains` — appending unconditionally counted a
-        # single domain twice and inflated the denominator the caveat reports.
+    client_domain_key = str((client or {}).get("domain", "")).lower()
+    if isinstance(client, dict) and client.get("anchor_texts") and client_domain_key:
+        # The client block WINS for its own domain, matching
+        # anchor_texts_by_domain. Counting the `domains` block while extraction
+        # analysed the client block made the caveat say the client's anchors
+        # could not be read on the very run where they were read — and an
+        # own-site signal may have been raised from them (P6).
+        all_domains = {d: v for d, v in all_domains.items()
+                       if str(d).lower() != client_domain_key}
+    blocks = list(all_domains.values())
+    if isinstance(client, dict) and client.get("anchor_texts"):
+        # A failed fetch of the client's own anchors must be as visible as any
+        # other — it is the one that would hide a campaign aimed at the client.
         blocks.append(client)
     for block in blocks:
         if not isinstance(block, dict):

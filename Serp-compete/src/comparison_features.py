@@ -147,10 +147,13 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         # 429 would silently drop a competitor's anchor signal and print a
         # scope claim that is false (P1/P2).
         from src.handoff_moz import restrict_to_run
-        # Union, not a fallback to `domains`. Defaulting to competitor_keywords
-        # silently restored the very bug run_domains was added to fix for any
-        # caller that omits it — a parameter whose default is the broken
-        # behaviour only works while everyone remembers to pass it.
+        # The union of both. Note honestly what this does NOT do: with
+        # run_domains omitted it reduces to `domains` (competitor_keywords),
+        # which is the narrow set this scoping was added to stop using. It is
+        # not a safety net — main.py must pass run_domains, and a test asserts
+        # that it does. The union exists because competitor_keywords is a
+        # subset of the audited set, so including both costs nothing and
+        # survives either being reordered.
         scope = set(domains or []) | set(run_domains or [])
         anchors_for_run = restrict_to_run(
             anchor_texts_by_domain, scope, client_domain)

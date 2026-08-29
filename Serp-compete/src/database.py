@@ -236,6 +236,16 @@ class DatabaseManager:
             except sqlite3.OperationalError:
                 pass # Already exists, or yt_channel_presence not yet created (fresh DB)
 
+            try:
+                # SC-8.4: reach an EXISTING anchor_coverage with the reason
+                # column via ALTER, not only CREATE TABLE. A DB written between
+                # the two commits otherwise breaks both save and the report.
+                # (Mirrors the cited_gap and uploads_recent repairs above —
+                # third occurrence of this class in this file.)
+                cursor.execute("ALTER TABLE anchor_coverage ADD COLUMN reason TEXT")
+            except sqlite3.OperationalError:
+                pass  # Already exists, or anchor_coverage not yet created
+
             # SC-1: GEO / Extractability Profiles Table
             # (Spec: suite_enhancement_spec_v1.md#SC-1)
             cursor.execute('''
@@ -694,9 +704,14 @@ class DatabaseManager:
                 # broad, it swallowed "database is locked" and "disk image is
                 # malformed" as "this run predates the table" — silently, with
                 # no caveat rendered and nothing saying why (P1/P2).
-                if "no such table" not in str(exc).lower():
+                message = str(exc).lower()
+                # "no such column" too: a DB lagging a schema change must
+                # degrade, not abort the report. Narrowing this to the table
+                # case turned the next added column into a crash in the only
+                # caller, which has no exception handling of its own.
+                if "no such table" not in message and "no such column" not in message:
                     raise
-                logging.warning("anchor_coverage table absent: %s", exc)
+                logging.warning("anchor_coverage schema behind: %s", exc)
                 return {}
         if not row:
             return {}
