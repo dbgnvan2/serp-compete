@@ -632,11 +632,13 @@ never links bought. A competitor can be the target of a negative-SEO or scraper 
 had no part in, and the evidence text says so. Like everything in this radar it is a pattern
 detection, not a confirmed Google penalty — treat it as a question to look into, not a verdict.
 
-**Your own site — not yet.** The radar tags an own-site hit as `is_own_site`, and that is
-the case that would matter most: it is how you would find out someone is pointing spam
-links at you. But Tool 1 deliberately excludes your own domain from the competitor
-handoff, so your anchors never reach this check today. The tagging is in place and
-tested for when that changes; until then, treat this as competitor intel only.
+**It watches your own site too.** Your own domain is checked alongside the
+competitors, and a hit on it is tagged separately as an own-site warning rather than
+buried in competitor intel. This is the case that matters most: it is how you would find
+out that **someone else is pointing spam links at you**, which is something you would
+otherwise have no way to see. Your domain is deliberately excluded from the competitor
+list, so Tool 1 sends your anchors in their own part of the handoff; it costs one extra
+anchor page per run, controlled by `moz.competitor.client_anchor_texts` in Tool 1.
 
 **How severity is decided.** Two things have to be true before a competitor is flagged
 above `low`: the widest single spam anchor must reach at least

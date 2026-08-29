@@ -320,7 +320,7 @@ def anchor_caveat_lines(signal_types, coverage=None):
             if coverage.get(bucket, 0))
         lines.append(
             f"_Anchor-text coverage: {coverage.get('with_anchors', 0)} of "
-            f"{coverage.get('total', 0)} competitor domain(s) had readable anchor data "
+            f"{coverage.get('total', 0)} domain(s) had readable anchor data "
             f"({causes}). Absence of an anchor signal below is not evidence of a clean "
             f"link profile for the domains that could not be read._")
     return lines

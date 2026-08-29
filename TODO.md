@@ -88,12 +88,10 @@ Raised by the pre-push sweeps and deliberately **not** fixed in that batch, with
 - **`anchor_coverage` labels every domain in `moz.domains` a "competitor".** True today because
   Tool 1 excludes the client, but that is an assumption about the producer, not a fact from the data.
 
-**Known gap — the own-site path is unreachable:**
-- Tool 1 excludes the client's own domain from `moz.domains`, so client anchors never arrive and
-  the own-site branch of the detector — the case that would surface negative SEO *against the
-  client* — cannot fire. The radar's `is_own_site` tagging is correct and tested for when that
-  changes. Fixing it means a producer-side change in serp-discover (add the client to the block,
-  or a `moz.client.anchor_texts` entry) plus another handoff-schema sync.
+**Own-site path — CLOSED 2026-08-28.** Tool 1 now sends the client's own anchor text in the
+handoff's `moz.client.anchor_texts` entry (gated by `moz.competitor.client_anchor_texts`), and
+`anchor_texts_by_domain` reads it, so the own-site branch fires on real data and negative SEO
+aimed at the client is detectable. Covered by `TestOwnSiteAnchorPath`.
 
 **Adjacent, pre-existing, not caused by this work:**
 - **`DEFAULT_COMMERCIAL_TERMS` has drifted from `shared_config.json`** exactly as the anchor term

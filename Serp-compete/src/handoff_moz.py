@@ -68,7 +68,19 @@ def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any
     :func:`anchor_coverage` to report that, and never infer it from absence.
     """
     out: Dict[str, Dict[str, Any]] = {}
-    for domain, block in ((moz_block or {}).get("domains") or {}).items():
+    entries = list(((moz_block or {}).get("domains") or {}).items())
+
+    # The client's own anchors travel in `moz.client`, not `domains` — Tool 1
+    # excludes the client from the competitor list by design. Including it here
+    # is what lets the radar tag an own-site hit: without it, the branch that
+    # would reveal a negative-SEO campaign aimed at the client had no data at
+    # all, and was tested and documented against a shape the producer could
+    # never emit (learnings P21).
+    client = (moz_block or {}).get("client")
+    if isinstance(client, dict) and client.get("domain"):
+        entries.append((client["domain"], client))
+
+    for domain, block in entries:
         if not isinstance(block, dict):
             continue
         anchors = block.get("anchor_texts") or {}
@@ -92,7 +104,14 @@ def anchor_coverage(moz_block: Dict[str, Any]) -> Dict[str, int]:
     """
     counts = {"total": 0, "with_anchors": 0, "read_no_anchors": 0,
               "no_record": 0, "errored": 0, "skipped": 0, "unknown": 0}
-    for _domain, block in ((moz_block or {}).get("domains") or {}).items():
+    blocks = list(((moz_block or {}).get("domains") or {}).values())
+    client = (moz_block or {}).get("client")
+    if isinstance(client, dict) and client.get("anchor_texts"):
+        # Counted alongside the competitors: a failed fetch of the client's own
+        # anchors must be as visible as any other, and it is the one that would
+        # hide a negative-SEO campaign aimed at the client.
+        blocks.append(client)
+    for block in blocks:
         if not isinstance(block, dict):
             continue
         counts["total"] += 1

@@ -150,7 +150,7 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
             breakdown = ", ".join(f"{v} {k}" for k, v in anchor_coverage.items()
                                   if k not in ("total", "with_anchors") and v)
             print(f"      Anchor coverage: {anchor_coverage.get('with_anchors', 0)} of "
-                  f"{anchor_coverage.get('total', 0)} competitor domain(s) had anchor "
+                  f"{anchor_coverage.get('total', 0)} domain(s) had anchor "
                   f"data{f' ({breakdown})' if breakdown else ''}.")
     except Exception as risk_err:  # noqa: BLE001
         print(f"⚠️ Reputation-risk radar skipped: {risk_err}")

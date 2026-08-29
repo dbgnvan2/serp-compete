@@ -370,10 +370,8 @@ class TestRadarWiring(unittest.TestCase):
     def test_own_site_anchor_spam_is_tagged(self):
         """SC-8.3 — own-site warnings stay separable from competitor intel.
 
-        NOTE: this exercises the radar, not a live path. Tool 1 excludes the
-        client's own domain from the handoff's moz.domains, so client anchors
-        never arrive today. Recorded in TODO.md; the tagging is asserted here
-        so the radar is correct if that ever changes.
+        The radar's tagging, in isolation. The live path — the client's anchors
+        arriving via `moz.client` — is covered by TestOwnSiteAnchorPath.
         """
         rows = compute_risk_signals(
             volatility_alerts=[], series_by_domain={}, parasite_candidates=[],
@@ -732,3 +730,88 @@ class TestReportWiring(unittest.TestCase):
                             for v in node.test.values)):
                 return
         self.fail("the risk section is not gated on `... or unreadable`")
+
+class TestOwnSiteAnchorPath(unittest.TestCase):
+    """The client's own anchors must reach the detector and be tagged.
+
+    Tool 1 excludes the client from `moz.domains`, so its anchors travel in
+    `moz.client`. Before Tool 1 sent them and this read them, the own-site
+    branch — the one that would reveal negative SEO aimed at the client — was
+    tested and documented against data the producer could never emit (P21).
+    """
+
+    CLIENT_ANCHORS = [
+        {"text": "buy backlinks cheap seo", "external_root_domains": 40},
+        {"text": "living systems counselling", "external_root_domains": 12},
+    ]
+
+    BLOCK = {
+        "generated_at": "2026-08-28T12:00:00+00:00",
+        "locale": "en-CA", "scope": "domain",
+        "client": {
+            "domain": "livingsystems.ca",
+            "brand_authority": {"status": "ok", "data_available": True, "score": 1},
+            "anchor_texts": {"status": "ok", "items": CLIENT_ANCHORS,
+                             "returned": 2, "truncated": False},
+        },
+        "domains": {
+            "bowencenter.org": {
+                "data_available": True, "status": "ok",
+                "anchor_texts": {"status": "ok", "items": REAL_ANCHORS,
+                                 "returned": len(REAL_ANCHORS), "truncated": False},
+            },
+        },
+    }
+
+    def test_client_anchors_are_extracted(self):
+        extracted = anchor_texts_by_domain(self.BLOCK)
+        self.assertIn("livingsystems.ca", extracted)
+        self.assertEqual(len(extracted["livingsystems.ca"]["items"]), 2)
+
+    def test_competitor_anchors_still_extracted_alongside(self):
+        extracted = anchor_texts_by_domain(self.BLOCK)
+        self.assertEqual(set(extracted), {"livingsystems.ca", "bowencenter.org"})
+
+    def test_own_site_signal_is_tagged_from_a_real_producer_shape(self):
+        """End to end on the shape Tool 1 actually emits — the assertion the
+        old own-site test could not make."""
+        rows = compute_risk_signals(
+            volatility_alerts=[], series_by_domain={}, parasite_candidates=[],
+            own_domain="livingsystems.ca",
+            anchor_texts_by_domain=anchor_texts_by_domain(self.BLOCK))
+        own = [r for r in rows if r["is_own_site"]]
+        self.assertEqual(len(own), 1)
+        self.assertEqual(own[0]["domain"], "livingsystems.ca")
+        self.assertEqual(own[0]["signal_type"], "anchor_text_spam")
+
+    def test_a_clean_client_profile_raises_no_own_site_signal(self):
+        block = dict(self.BLOCK)
+        block["client"] = dict(self.BLOCK["client"])
+        block["client"]["anchor_texts"] = {
+            "status": "ok", "truncated": False, "returned": 1,
+            "items": [{"text": "living systems counselling",
+                       "external_root_domains": 30}]}
+        rows = compute_risk_signals(
+            volatility_alerts=[], series_by_domain={}, parasite_candidates=[],
+            own_domain="livingsystems.ca",
+            anchor_texts_by_domain=anchor_texts_by_domain(block))
+        self.assertEqual([r["is_own_site"] for r in rows], [False])
+
+    def test_client_is_counted_in_coverage(self):
+        """A failed fetch of the client's own anchors must be as visible as any
+        other — it is the one that would hide a campaign aimed at the client."""
+        self.assertEqual(anchor_coverage(self.BLOCK)["total"], 2)
+        self.assertEqual(anchor_coverage(self.BLOCK)["with_anchors"], 2)
+
+    def test_a_handoff_without_a_client_entry_still_works(self):
+        block = {"domains": self.BLOCK["domains"]}
+        self.assertEqual(list(anchor_texts_by_domain(block)), ["bowencenter.org"])
+        self.assertEqual(anchor_coverage(block)["total"], 1)
+
+    def test_a_client_entry_without_anchors_is_not_counted(self):
+        """Brand Authority alone must not inflate the anchor coverage total."""
+        block = {"domains": {}, "client": {
+            "domain": "livingsystems.ca",
+            "brand_authority": {"status": "ok", "data_available": True, "score": 1}}}
+        self.assertEqual(anchor_texts_by_domain(block), {})
+        self.assertEqual(anchor_coverage(block)["total"], 0)
