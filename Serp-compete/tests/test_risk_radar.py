@@ -1192,3 +1192,63 @@ class TestRunScopeIsTheIngestedSet(unittest.TestCase):
         self.assertIn("dropped.example", captured["scope"],
                       "a domain the run ingested was excluded because a later "
                       "filter dropped it")
+
+class TestCodeReviewFixes(unittest.TestCase):
+    """Findings from the orthogonal /code-review pass over the same range."""
+
+    BLOCK = {"domains": {
+        "a.com": {"status": "ok", "anchor_texts": {
+            "status": "ok", "items": [{"text": "x", "external_root_domains": 1}]}},
+        "b.com": {"status": "error", "anchor_texts": {"status": "error", "items": []}},
+    }}
+
+    def test_a_client_domain_alone_does_not_zero_the_counts(self):
+        """Scoping triggered on client_domain alone filtered every competitor
+        out and returned all zeros, so a run where a fetch errored rendered as
+        clean — the caveat saw 0 unreadable (P2)."""
+        counts = anchor_coverage(self.BLOCK, None, "livingsystems.ca")
+        self.assertEqual(counts["total"], 2)
+        self.assertEqual(counts["errored"], 1)
+        self.assertEqual(anchor_data_unreadable(counts), 1)
+        self.assertTrue(anchor_caveat_lines([], counts))
+
+    def test_an_explicit_domain_list_still_scopes(self):
+        counts = anchor_coverage(self.BLOCK, ["a.com"], "livingsystems.ca")
+        self.assertEqual(counts["total"], 1)
+
+    def test_a_domain_in_both_client_and_domains_is_counted_once(self):
+        """One site, not two. Counting it twice inflated the denominator the
+        coverage caveat reports."""
+        block = {"domains": {"me.com": {"status": "error", "anchor_texts": {
+                     "status": "error", "items": []}}},
+                 "client": {"domain": "me.com", "anchor_texts": {
+                     "status": "ok", "items": [{"text": "y",
+                                                "external_root_domains": 2}]}}}
+        self.assertEqual(anchor_coverage(block, ["me.com"], "me.com")["total"], 1)
+
+    def test_the_client_entry_wins_for_its_own_domain(self):
+        """Same domain means one site, and the client entry is the
+        authoritative source for the client's own anchors — it must not be
+        dropped in favour of an empty competitor block."""
+        block = {"domains": {"me.com": {"status": "error", "anchor_texts": {
+                     "status": "error", "items": []}}},
+                 "client": {"domain": "me.com", "anchor_texts": {
+                     "status": "ok", "items": [{"text": "y",
+                                                "external_root_domains": 2}]}}}
+        extracted = anchor_texts_by_domain(block)
+        self.assertEqual(extracted["me.com"]["items"][0]["text"], "y")
+
+    def test_run_scope_is_the_union_not_a_fallback(self):
+        """A parameter whose default is the broken behaviour only works while
+        every caller remembers to pass it. The scope is now the union of both
+        sets, so omitting run_domains cannot silently narrow it."""
+        import src.comparison_features as cf
+        import inspect
+        src = inspect.getsource(cf.run_comparison_features)
+        self.assertIn("set(domains or []) | set(run_domains or [])", src)
+        from src.handoff_moz import restrict_to_run
+        anchors = {"filtered-out.example": {"items": []},
+                   "survived.example": {"items": []}}
+        scope = set(["survived.example"]) | set(
+            ["survived.example", "filtered-out.example"])
+        self.assertEqual(set(restrict_to_run(anchors, scope, "")), set(anchors))

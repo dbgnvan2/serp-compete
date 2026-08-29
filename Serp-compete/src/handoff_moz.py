@@ -114,6 +114,11 @@ def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any
     # never emit (learnings P21).
     client = (moz_block or {}).get("client")
     if isinstance(client, dict) and client.get("domain"):
+        # Appended last deliberately. If the same domain somehow appears in
+        # both, it is one site, not two, and the client entry is the
+        # authoritative source for the client's own anchors — so it should
+        # win. What must NOT happen is that domain being counted twice, and
+        # `anchor_coverage` handles that separately.
         entries.append((client["domain"], client))
 
     for domain, block in entries:
@@ -167,7 +172,10 @@ def anchor_coverage(moz_block: Dict[str, Any], domains=None,
     counts = {"total": 0, "with_anchors": 0, "read_no_anchors": 0,
               "no_record": 0, "errored": 0, "skipped": 0, "unknown": 0}
     all_domains = ((moz_block or {}).get("domains") or {})
-    if domains is not None or client_domain:
+    # Scope ONLY on an explicit domain list. Triggering on client_domain alone
+    # filtered every competitor out and returned all zeros, so a run where a
+    # fetch errored rendered as clean — the caveat sees 0 unreadable (P2).
+    if domains is not None:
         # Count only what this run examined. Tool 1 builds moz.domains from
         # every organic competitor and caps the fetch at max_competitors, so
         # counting the whole block made the report warn about ~30 domains this
@@ -179,10 +187,14 @@ def anchor_coverage(moz_block: Dict[str, Any], domains=None,
         all_domains = {d: v for d, v in all_domains.items() if str(d).lower() in keep}
     blocks = list(all_domains.values())
     client = (moz_block or {}).get("client")
-    if isinstance(client, dict) and client.get("anchor_texts"):
+    if (isinstance(client, dict) and client.get("anchor_texts")
+            and str(client.get("domain", "")).lower() not in
+            {str(d).lower() for d in all_domains}):
         # Counted alongside the competitors: a failed fetch of the client's own
         # anchors must be as visible as any other, and it is the one that would
-        # hide a negative-SEO campaign aimed at the client.
+        # hide a negative-SEO campaign aimed at the client. Skipped when the
+        # domain is already in `domains` — appending unconditionally counted a
+        # single domain twice and inflated the denominator the caveat reports.
         blocks.append(client)
     for block in blocks:
         if not isinstance(block, dict):
