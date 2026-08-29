@@ -9,7 +9,9 @@
   "auth": {
     "gsc_client_secrets": "/Users/davemini2/ProjectsLocal/serp-compete/client_secret_275180378889-d0pki2mc14fq90eh4mo3hfsv1ubinnsc.apps.googleusercontent.com.json",
     "gsc_property_url": "https://www.livingsystems.ca/",
-    "scopes": ["https://www.googleapis.com/auth/webmasters.readonly"]
+    "scopes": [
+      "https://www.googleapis.com/auth/webmasters.readonly"
+    ]
   },
   "gsc_settings": {
     "date_range_days": 90,
@@ -34,31 +36,121 @@
     }
   },
   "stop_words": [
-    "the", "and", "to", "of", "a", "in", "is", "for", "on", "with", "as", "at", "by", "an", "be", "or", "are", "from", "that",
-    "this", "it", "we", "our", "us", "can", "will", "your", "you", "my", "me", "not", "have", "has", "but", "so", "if", "their", "they",
-    "vancouver", "bc", "british", "columbia", "canada", "north", "west", "counselling", "counseling", "therapy", "therapist",
-    "counsellor", "counselor", "service", "services", "clinic", "centre", "center", "help", "support",
+    "the",
+    "and",
+    "to",
+    "of",
+    "a",
+    "in",
+    "is",
+    "for",
+    "on",
+    "with",
+    "as",
+    "at",
+    "by",
+    "an",
+    "be",
+    "or",
+    "are",
+    "from",
+    "that",
+    "this",
+    "it",
+    "we",
+    "our",
+    "us",
+    "can",
+    "will",
+    "your",
+    "you",
+    "my",
+    "me",
+    "not",
+    "have",
+    "has",
+    "but",
+    "so",
+    "if",
+    "their",
+    "they",
+    "vancouver",
+    "bc",
+    "british",
+    "columbia",
+    "canada",
+    "north",
+    "west",
+    "counselling",
+    "counseling",
+    "therapy",
+    "therapist",
+    "counsellor",
+    "counselor",
+    "service",
+    "services",
+    "clinic",
+    "centre",
+    "center",
+    "help",
+    "support",
     "highlytrained"
   ],
   "clinical": {
     "tier_1_medical": [
-      "symptom", "symptoms", "treatment", "disorder", "disorders", "diagnosis", "clinical", 
-      "patient", "patients", "therapy", "medical", "disease", "medication", 
-      "prognosis", "pathology", "syndrome", "condition", "healthcare",
-      "illness", "trauma"
+      "symptom",
+      "symptoms",
+      "treatment",
+      "disorder",
+      "disorders",
+      "diagnosis",
+      "clinical",
+      "patient",
+      "patients",
+      "therapy",
+      "medical",
+      "disease",
+      "medication",
+      "prognosis",
+      "pathology",
+      "syndrome",
+      "condition",
+      "healthcare",
+      "illness",
+      "trauma"
     ],
     "tier_2_systems": [
-      "differentiation", "triangles", "chronic anxiety", "emotional system",
-      "family of origin", "nuclear family", "multigenerational", "process",
-      "relationship", "self-regulation", "emotional process", "functioning",
-      "connectedness", "systemic", "interdependence",
-      "internal family systems", "estrangement", "triangulation",
-      "attachment", "avoidant"
+      "differentiation",
+      "triangles",
+      "chronic anxiety",
+      "emotional system",
+      "family of origin",
+      "nuclear family",
+      "multigenerational",
+      "process",
+      "relationship",
+      "self-regulation",
+      "emotional process",
+      "functioning",
+      "connectedness",
+      "systemic",
+      "interdependence",
+      "internal family systems",
+      "estrangement",
+      "triangulation",
+      "attachment",
+      "avoidant"
     ],
     "tier_3_bowen": [
-      "defining self", "over-under functioning", "functional facts", 
-      "emotional distance", "emotional fusion", "differentiation of self",
-      "triangling", "emotional cutoff", "sibling position",
+      "defining self",
+      "over-under functioning",
+      "functional facts",
+      "emotional distance",
+      "emotional fusion",
+      "differentiation of self",
+      "triangling",
+      "emotional cutoff",
+      "sibling position",
       "pursuer-distancer reciprocity"
     ]
   },
@@ -68,26 +160,26 @@
   "eeat_weights": {
     "experience": {
       "has_author_byline": 0.15,
-      "has_publish_date": 0.10,
-      "has_update_date": 0.10,
-      "has_likely_original_images": 0.20,
-      "first_person_count_normalised": 0.20,
+      "has_publish_date": 0.1,
+      "has_update_date": 0.1,
+      "has_likely_original_images": 0.2,
+      "first_person_count_normalised": 0.2,
       "case_study_signal": 0.25
     },
     "expertise": {
-      "has_credentials_in_byline": 0.40,
-      "schema_author_type_person": 0.20,
-      "tier_3_or_tier_2_present": 0.40
+      "has_credentials_in_byline": 0.4,
+      "schema_author_type_person": 0.2,
+      "tier_3_or_tier_2_present": 0.4
     },
     "authoritativeness": {
-      "domain_authority_normalised": 0.50,
-      "external_link_count_normalised": 0.20,
-      "schema_organization_present": 0.30
+      "domain_authority_normalised": 0.5,
+      "external_link_count_normalised": 0.2,
+      "schema_organization_present": 0.3
     },
     "trustworthiness": {
-      "is_https": 0.40,
-      "has_contact_link": 0.30,
-      "has_privacy_link": 0.30
+      "is_https": 0.4,
+      "has_contact_link": 0.3,
+      "has_privacy_link": 0.3
     }
   },
   "stock_image_hosts": [
@@ -100,8 +192,20 @@
     "stock.adobe.com"
   ],
   "credential_list": [
-    "MD", "PhD", "MA", "MSW", "RCC", "LCSW", "RP", "RSW",
-    "LMFT", "LPC", "LPCC", "MEd", "MSc", "MDiv"
+    "MD",
+    "PhD",
+    "MA",
+    "MSW",
+    "RCC",
+    "LCSW",
+    "RP",
+    "RSW",
+    "LMFT",
+    "LPC",
+    "LPCC",
+    "MEd",
+    "MSc",
+    "MDiv"
   ],
   "case_study_triggers": [
     "we tested",
@@ -113,8 +217,20 @@
   ],
   "geo_signals": {
     "interrogatives": [
-      "how", "what", "why", "when", "where", "who", "which",
-      "can", "does", "do", "is", "are", "should", "will"
+      "how",
+      "what",
+      "why",
+      "when",
+      "where",
+      "who",
+      "which",
+      "can",
+      "does",
+      "do",
+      "is",
+      "are",
+      "should",
+      "will"
     ],
     "strong_tier_min_signals": 3,
     "moderate_tier_min_signals": 1
@@ -131,17 +247,20 @@
   "positioning": {
     "authority_threshold": 50,
     "focus_threshold": 50,
-    "authority_weights": { "moz_da": 0.7, "top10": 0.3 },
+    "authority_weights": {
+      "moz_da": 0.7,
+      "top10": 0.3
+    },
     "top10_saturation": 10,
     "min_signal_rankings": 2,
-    "framework_caption": "The barbell is a strategic framing — winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses — not a measured law. Authority = Moz DA + top-10 ranking count (the same formula for you and competitors); focus is tier-identity concentration (medical vs. systems language), not topic-count breadth. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist."
+    "framework_caption": "The barbell is a strategic framing \u2014 winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses \u2014 not a measured law. Authority = Moz DA + top-10 ranking count (the same formula for you and competitors); focus is tier-identity concentration (medical vs. systems language), not topic-count breadth. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist."
   },
   "sov": {
     "export_path": null,
-    "framework_caption": "AI Share-of-Voice is CONSUMED from serp-discover's AI-visibility probes (not re-probed here). Values are rolling snapshots — LLM answers vary between runs and model versions."
+    "framework_caption": "AI Share-of-Voice is CONSUMED from serp-discover's AI-visibility probes (not re-probed here). Values are rolling snapshots \u2014 LLM answers vary between runs and model versions."
   },
   "youtube_presence": {
-    "_comment": "SC-7-YT Phase 1 — YouTube Presence Check. Per competitor (and the client), the official YouTube Data API answers has-channel + subscribers/last-upload/activity/match-confidence. api_key_env is an ENV POINTER only — the key itself is read from env/.env, NEVER stored here or in code (the client_secret_* gitignore discipline). channel_map is seeded by owner-confirmed Phase-1 hits: {\"example.com\": [\"@examplecounselling\"]}.",
+    "_comment": "SC-7-YT Phase 1 \u2014 YouTube Presence Check. Per competitor (and the client), the official YouTube Data API answers has-channel + subscribers/last-upload/activity/match-confidence. api_key_env is an ENV POINTER only \u2014 the key itself is read from env/.env, NEVER stored here or in code (the client_secret_* gitignore discipline). channel_map is seeded by owner-confirmed Phase-1 hits: {\"example.com\": [\"@examplecounselling\"]}.",
     "api_key_env": "YOUTUBE_API_KEY",
     "channel_map": {},
     "max_candidates_per_competitor": 3,
@@ -151,18 +270,70 @@
   },
   "brand": {
     "_comment": "Practice-name suffixes stripped from a domain stem to derive a bare brand token (e.g. 'jerichocounselling' -> 'jericho'). Shared by C1 AI Share-of-Voice and C3 Branded-Demand; matched case-insensitively. Distinct from branded_demand.generic_brand_prune, which drops a derived brand that is itself a generic word.",
-    "name_suffixes": ["counselling", "counseling", "therapy", "counselor", "counsellor", "psychology"]
+    "name_suffixes": [
+      "counselling",
+      "counseling",
+      "therapy",
+      "counselor",
+      "counsellor",
+      "psychology"
+    ]
   },
   "branded_demand": {
-    "branded_modifiers": ["reviews", "pricing", "login", "cost", "vs"],
-    "generic_brand_prune": ["therapy", "counselling", "counseling", "psychology", "health", "wellness"],
+    "branded_modifiers": [
+      "reviews",
+      "pricing",
+      "login",
+      "cost",
+      "vs"
+    ],
+    "generic_brand_prune": [
+      "therapy",
+      "counselling",
+      "counseling",
+      "psychology",
+      "health",
+      "wellness"
+    ],
     "growth_window_months": 3
   },
   "risk_signals": {
     "cliff_drop_pct": 0.3,
     "cliff_lookback": 6,
     "volatility_high_shift": 6,
-    "commercial_terms": ["casino", "loan", "loans", "cheap", "deal", "deals", "coupon", "promo", "betting", "crypto", "discount", "vpn", "forex", "gambling", "payday"]
+    "commercial_terms": [
+      "casino",
+      "loan",
+      "loans",
+      "cheap",
+      "deal",
+      "deals",
+      "coupon",
+      "promo",
+      "betting",
+      "crypto",
+      "discount",
+      "vpn",
+      "forex",
+      "gambling",
+      "payday"
+    ],
+    "anchor_spam_terms": [
+      "backlinks",
+      "dofollow",
+      "pbn",
+      "link building",
+      "buy backlinks",
+      "guest post",
+      "seo service",
+      "seo services",
+      "rank first page",
+      "cheap seo",
+      "link farm",
+      "paid links"
+    ],
+    "anchor_spam_min_domains": 1,
+    "anchor_spam_high_share": 0.25
   },
   "clinical_pivots": {
     "avoidant attachment": "Emotional Distance / Pursuer-Distancer",
@@ -187,7 +358,10 @@
     "self care": "Self-Care as a Differentiation Strategy"
   },
   "handoff": {
-    "supported_versions": ["2.0", "2.1"],
+    "supported_versions": [
+      "2.0",
+      "2.1"
+    ],
     "schema_dir": ".",
     "minimum_version": "2.0",
     "legacy_fallback_enabled": true
@@ -207,14 +381,20 @@
     },
     "step_2_audit": {
       "name": "SERP Audit",
-      "depends_on": ["step_1_mining"],
+      "depends_on": [
+        "step_1_mining"
+      ],
       "optional": false
     },
     "step_3_scoring": {
       "name": "Systematic Scoring",
-      "depends_on": ["step_2_audit"],
+      "depends_on": [
+        "step_2_audit"
+      ],
       "optional": false,
-      "includes": ["step_2_audit"]
+      "includes": [
+        "step_2_audit"
+      ]
     },
     "step_4_gsc": {
       "name": "GSC Analysis",
@@ -223,7 +403,9 @@
     },
     "step_5_strike": {
       "name": "Strike Mapping",
-      "depends_on": ["step_4_gsc"],
+      "depends_on": [
+        "step_4_gsc"
+      ],
       "optional": true
     }
   },

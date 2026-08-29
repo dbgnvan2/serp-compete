@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import datetime
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
                             client_domain: str, competitor_keywords: Dict[str, Any],
-                            gsc: Any, dfs_client: Any, project_root: str) -> Dict[str, Any]:
+                            gsc: Any, dfs_client: Any, project_root: str,
+                            anchor_texts_by_domain: Optional[Dict[str, Any]] = None
+                            ) -> Dict[str, Any]:
     """Run C4/C2/C1/C3/C6 and persist their outputs. Never raises — each feature (including
     its own module import) is guarded, so any one failure degrades to an empty section rather
     than aborting the others or the audit."""
@@ -133,11 +135,14 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         risk_rows = compute_risk_signals(
             volatility_alerts=db.get_volatility_alerts(run_id), series_by_domain=series_by_domain,
             parasite_candidates=db.get_parasite_candidates(run_id),
-            own_domain=client_domain, config=shared_config.get("risk_signals", {}))
+            own_domain=client_domain, config=shared_config.get("risk_signals", {}),
+            anchor_texts_by_domain=anchor_texts_by_domain)
         db.save_risk_signals(run_id, risk_rows, detected_at=today)
         summary["risk_rows"] = len(risk_rows)
         own_risks = sum(1 for r in risk_rows if r["is_own_site"])
-        print(f"   🚨 Reputation risk: {len(risk_rows)} signals ({own_risks} own-site).")
+        anchor_risks = sum(1 for r in risk_rows if r["signal_type"] == "anchor_text_spam")
+        print(f"   🚨 Reputation risk: {len(risk_rows)} signals ({own_risks} own-site, "
+              f"{anchor_risks} anchor-text).")
     except Exception as risk_err:  # noqa: BLE001
         print(f"⚠️ Reputation-risk radar skipped: {risk_err}")
 

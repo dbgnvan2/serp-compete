@@ -102,6 +102,20 @@ def convert_legacy_to_targets(legacy_data: Dict[str, Any]) -> Tuple[List[Dict[st
 
     return targets, paa_data
 
+def _handoff_anchor_texts() -> Dict[str, Any]:
+    """Anchor texts per competitor domain from the latest handoff's Moz block.
+
+    Thin wrapper so the import stays local and guarded — an optional signal
+    must never stop the audit starting (Spec: compete-spec.md#C6).
+    """
+    try:
+        from src.handoff_moz import anchor_texts_by_domain, load_moz_block
+        return anchor_texts_by_domain(load_moz_block(find_latest_handoff_file()))
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ Moz anchor texts unavailable: {exc}")
+        return {}
+
+
 def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
     """
     Gap 1: Competitor handoff ingestion from Tool 1.
@@ -482,7 +496,8 @@ def run_audit():
     # independently guarded there (see tests/test_comparison_features.py).
     from src.comparison_features import run_comparison_features
     run_comparison_features(db, run_id, shared_config, client_domain, competitor_keywords,
-                            gsc, dfs_client, PROJECT_ROOT)
+                            gsc, dfs_client, PROJECT_ROOT,
+                            anchor_texts_by_domain=_handoff_anchor_texts())
 
     # Strategic Logic with PAA context from Handover
     print("Identifying Strategic Openings...")
