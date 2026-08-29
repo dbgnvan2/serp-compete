@@ -653,6 +653,15 @@ some domains, the report says so explicitly and states that the absence of a sig
 not evidence of a clean link profile for those domains. A quiet report and a clean
 report should never look the same.
 
+**How fresh is it?** Tool 1 caches anchor data for up to 30 days, so what you are
+reading may have been collected before this run. Each signal now carries a
+`collected_at` date saying when, and anchors for a domain that has dropped out of
+your SERP since are ignored rather than reported against it.
+
+**Coverage is recorded with the run**, so going back to an older report still tells
+you how many domains were readable that day. If a report has no coverage line at
+all, it predates this — which is not the same as everything having been fine.
+
 **Tuning.** The phrase list is editorial and lives in `shared_config.json` under
 `risk_signals.anchor_spam_terms`, with `anchor_spam_min_domains` (ignore anchors carried by
 fewer than N domains), `anchor_spam_min_anchor_reach` (the reach floor above) and

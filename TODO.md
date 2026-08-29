@@ -71,15 +71,15 @@ Raised by the pre-push sweeps and deliberately **not** fixed in that batch, with
 - **`anchor_spam_min_domains` above `anchor_spam_min_anchor_reach` makes the `low` branch
   unreachable** — every surviving anchor would satisfy the reach floor. Not the case at the
   shipped defaults (1 and 5), and no relative constraint is enforced.
-- **Coverage counts are not persisted.** `anchor_coverage` reaches the console and the report,
-  but no `risk_signal`-adjacent column stores it, so a past run's coverage cannot be recovered.
-  Needs a schema change; the report caveat covers the case that matters now.
-- **Stale cached anchors are stamped with today's date.** The Moz block is read from a second,
-  schema-unvalidated read of the handoff, `moz.generated_at` is discarded, and a signal is added
-  for any domain in the block whether or not it is in this run's target set. Producer caches with
-  a 30-day TTL, so weeks-old anchor data can be attributed to a domain no longer ranking. Fix:
-  pass the already-loaded handoff, carry `generated_at` into the evidence, and intersect with the
-  run's competitor set.
+- ~~**Coverage counts are not persisted.**~~ **DONE 2026-08-28** — new `anchor_coverage` table
+  (run-keyed, `INSERT OR REPLACE`, written even when empty so "attempted nothing" and "every
+  fetch failed" stay apart). `reporting.py` now reads it from the DB instead of being handed it,
+  so an *old* run's report can still state what could not be read.
+- ~~**Stale cached anchors are stamped with today's date.**~~ **DONE 2026-08-28** — the anchor
+  path reuses the handoff already validated in `get_latest_market_data` instead of re-reading the
+  file unchecked; `moz.generated_at` is carried into each signal's evidence as `collected_at`;
+  and `restrict_to_run` intersects the block with this run's competitor set plus the client, so a
+  domain that has dropped out of the SERP no longer collects a finding.
 - **Anchor text is interpolated into markdown unescaped** (`reporting.py`, pre-existing for the
   neighbouring rows). Third-party-authored text; worth `json.dumps`-escaping or code-fencing.
 - **An anchor matching a term but below `min_domains` is dropped with no counter** — the same
