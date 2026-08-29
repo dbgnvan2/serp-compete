@@ -1,0 +1,26 @@
+# Runtime + test dependencies for serp-compete.
+#
+# Pinned because an incomplete venv is invisible: before this file, 7 test
+# files could not even be collected, so `pytest tests/` reported 158 passed
+# while 277 tests in Serp-compete/tests/ never ran at all. A partial suite
+# that reports success is worse than none.
+#
+# spaCy also needs its model, which pip cannot express:
+#     python -m spacy download en_core_web_sm
+#
+# streamlit is intentionally absent: only the optional GUI imports it, and
+# no test does.
+anthropic==0.97.0
+beautifulsoup4==4.14.3
+google-api-python-client==2.199.0
+google-auth-oauthlib==1.4.1
+jsonschema==4.26.0
+openai==2.33.0
+openpyxl==3.1.5
+pandas==3.0.5
+pytest==9.0.3
+python-dotenv==1.2.2
+requests==2.33.1
+requests-mock==1.12.1
+spacy==3.8.16
+tabulate==0.10.0

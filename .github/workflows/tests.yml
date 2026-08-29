@@ -1,0 +1,44 @@
+name: tests
+
+# The value here is the blank machine: no venv built up over months, no spaCy
+# model already downloaded, no packages installed by hand and forgotten. That
+# is what catches the two failures this repo has actually had — a test suite
+# whose dependencies were never recorded, and a schema change shipped without
+# its migration.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Only the version the dev machine runs, and the only one verified
+          # green. This repo declares no floor (no python_requires anywhere),
+          # so a second version would be a guess — and a red build nobody
+          # trusts is worse than no CI. Add one deliberately once the floor is
+          # known.
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install the spaCy model
+        # pip cannot express this; src/semantic.py loads en_core_web_sm at
+        # construction and 8 tests error without it.
+        run: python -m spacy download en_core_web_sm
+
+      - name: Run the full suite
+        # No API keys are provided, and none are needed: every external call in
+        # the suite is mocked. A test that fails here for want of a local secret
+        # is fixed by stubbing the dependency, never by adding the secret.
+        run: python -m pytest -q
