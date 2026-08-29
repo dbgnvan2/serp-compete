@@ -63,6 +63,23 @@ wants cross-platform tracking **and** a provider budget is approved.
 - **D4 commodity export (serp-discover)** — would upgrade C4's local "commodity" overlap proxy to a real
   signal (`docs/TEST_RUN_CHECKLIST.md` §7).
 
+## SC-8.4 — recorded during the coverage/staleness batch (2026-08-28)
+
+Raised by the sweeps and deliberately **not** fixed, with the reason.
+
+- **`anchor_coverage.collected_at` stores the handoff's assembly timestamp**, not a per-domain
+  date. Nothing renders it — the per-domain `fetched_at` is what reaches each signal's evidence —
+  so it is a documented fallback rather than a wrong number on display. Storing a per-domain date
+  would need a row per domain.
+- **`run_domains` still defaults to `None`**, which reduces the scope to `competitor_keywords` for
+  any caller that omits it. `main.py` passes it and a test asserts that; making the parameter
+  required would break the three existing `test_comparison_features` callers for no behaviour gain.
+- **`LEARNINGS.md` has no entry for the ALTER-less column**, which is now its third occurrence in
+  `database.py` (`sov_daily.cited_gap`, `yt_channel_presence.uploads_recent`, and
+  `anchor_coverage.reason`). Worth promoting to a repo-specific checklist item: *a new column on an
+  existing table needs an ALTER beside the CREATE, and a dirty-state test — a fresh-DB test passes
+  either way.*
+
 ## SC-8.4 anchor-text spam — deferred and adjacent items (2026-08-28)
 
 Raised by the pre-push sweeps and deliberately **not** fixed in that batch, with the reason.
