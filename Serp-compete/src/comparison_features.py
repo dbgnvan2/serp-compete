@@ -25,7 +25,8 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
                             gsc: Any, dfs_client: Any, project_root: str,
                             anchor_texts_by_domain: Optional[Dict[str, Any]] = None,
                             anchor_coverage: Optional[Dict[str, int]] = None,
-                            run_domains: Optional[list] = None
+                            run_domains: Optional[list] = None,
+                            client_brand_names: Optional[list] = None
                             ) -> Dict[str, Any]:
     """Run C4/C2/C1/C3/C6 and persist their outputs. Never raises — each feature (including
     its own module import) is guarded, so any one failure degrades to an empty section rather
@@ -34,13 +35,21 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
     # fails to import, only that one feature degrades — not all five. derive_brand_name is the
     # exception: it's a dependency-free helper (no pandas/API-client deps, so its import can't
     # trip that failure mode) and both C1 and C3 need it, so it's imported once here.
-    from src.brand_utils import derive_brand_name
+    from src.brand_utils import derive_brand_name, derive_display_brand
 
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     client_da = shared_config.get("client", {}).get("da", 0)
     brand_suffixes = shared_config.get("brand", {}).get("name_suffixes")  # None → helper default
     domains = list(competitor_keywords.keys())
     summary: Dict[str, Any] = {}
+
+    # C-C-13: the client's brand names come from the HANDOFF (Tool 1 writes
+    # `client_brand_names`), falling back to shared_config `client.name`. The old
+    # code read `client.brand_names`, which is not a key in shared_config.json, so
+    # the fallback was always the bare stem 'livingsystems'.
+    client_brand = (next((str(b) for b in (client_brand_names or []) if str(b).strip()), None)
+                    or shared_config.get("client", {}).get("name")
+                    or derive_display_brand(client_domain, brand_suffixes))
 
     # Client's own GSC positions — shared by C4 (overlap) and C2 (positioning).
     # get_query_position_map catches its own fetch errors (returns {}).
@@ -115,17 +124,26 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
     # C3 / SC-5: Branded-Demand Competitive Benchmark.
     try:
         from src.brand_demand import compute_branded_demand
-        brand_by_domain = {d: derive_brand_name(d, brand_suffixes) for d in domains}
-        client_brands = shared_config.get("client", {}).get("brand_names") or []
-        brand_by_domain[client_domain] = (client_brands[0] if client_brands
-                                          else derive_brand_name(client_domain, brand_suffixes))
+        # C-M-03: the DISPLAY brand ("Lavender Counselling"), not the bare matching
+        # token ("lavender"). The token is a dictionary word for a third of the real
+        # competitive set, so its search volume was demand for plants, composers and
+        # shorelines. `ambiguity_token_by_domain` carries the bare token so
+        # compute_branded_demand can probe it and withhold an ambiguous row's share.
+        brand_by_domain = {d: derive_display_brand(d, brand_suffixes) for d in domains}
+        ambiguity_token_by_domain = {d: derive_brand_name(d, brand_suffixes) for d in domains}
+        brand_by_domain[client_domain] = client_brand
+        ambiguity_token_by_domain[client_domain] = derive_brand_name(client_domain,
+                                                                    brand_suffixes)
         bd_rows = compute_branded_demand(
             brand_by_domain, dfs_client.get_search_volume, shared_config.get("branded_demand", {}),
             period=datetime.datetime.now().strftime("%Y-%m"),
-            own_domain=client_domain, own_anchor=None)
+            own_domain=client_domain, own_anchor=None,
+            ambiguity_token_by_domain=ambiguity_token_by_domain)
         db.save_brand_demand(run_id, bd_rows)
         summary["branded_rows"] = len(bd_rows)
-        print(f"   💷 Branded demand: {len(bd_rows)} brands benchmarked.")
+        ambiguous = sum(1 for r in bd_rows if r.get("estimation_basis") == "ambiguous_brand")
+        print(f"   💷 Branded demand: {len(bd_rows)} brands benchmarked"
+              + (f" ({ambiguous} withheld as ambiguous brand names)." if ambiguous else "."))
     except Exception as bd_err:  # noqa: BLE001
         print(f"⚠️ Branded-demand benchmark skipped: {bd_err}")
 
@@ -198,8 +216,8 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
             print("   ℹ️ YouTube presence: no API key in env "
                   "(youtube_presence.api_key_env) — skipped (data_available:false).")
         else:
-            client_brand = ((shared_config.get("client", {}).get("brand_names") or [None])[0]
-                            or shared_config.get("client", {}).get("name"))
+            # C-C-13: the handoff's client_brand_names, then shared_config
+            # `client.name` — never the non-existent `client.brand_names`.
             brand_by_domain = {d: derive_brand_name(d, brand_suffixes)
                                for d in domains + [client_domain]}
             presence = compute_presence(

@@ -1,5 +1,5 @@
 import pandas as pd
-from src.database import DatabaseManager
+from src.database import DatabaseManager, load_shared_config, magnet_sql, magnet_thresholds
 import datetime
 
 from src.risk_radar import anchor_caveat_lines, anchor_data_unreadable
@@ -14,6 +14,11 @@ class ReportGenerator:
         # writes — so every section read a stale database, and the anchor
         # coverage this class now reads from the DB was never found (P6/P16).
         self.db = DatabaseManager(db_path)
+        # The magnet / vacuum definition is editorial config (C-M-02), and the
+        # report must render the same definition the audit wrote with rather than
+        # re-inventing thresholds of its own (P4).
+        self.config = load_shared_config()
+        self.vacuum_min_medical, self.magnet_max_position = magnet_thresholds(self.config)
 
     def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None):
         """
@@ -154,6 +159,19 @@ class ReportGenerator:
             if not df_metrics.empty:
                 report.append("\n## Competitor Ranking Summary")
                 report.append(df_metrics.to_markdown(index=False))
+                # C-M-01: say where this run's keywords came from. `handoff` =
+                # Tool 1 measured the URL ranking for it; `ranked_keywords` = a
+                # DataForSEO enrichment keyword that passed the relevance filter;
+                # `unlabelled` = written before provenance was recorded.
+                sources = self.db.keyword_source_counts(run_id)
+                if sources:
+                    report.append(
+                        "\n**Keyword provenance:** "
+                        + ", ".join(f"{src}: {n}" for src, n in sorted(sources.items()))
+                        + ". `handoff` keywords are what Serp-Discover measured ranking; "
+                          "`ranked_keywords` are DataForSEO enrichment keywords kept only "
+                          "when they are in the handoff set or carry a clinical term, and "
+                          "never when they contain the competitor's own brand token.")
 
             # 2b. EEAT Scores (Gap 3 enhancement)
             df_eeat = pd.read_sql_query('''
@@ -189,26 +207,51 @@ class ReportGenerator:
                 report.append(df_clusters.to_markdown(index=False))
                 report.append("\n_Note: Analysis based on N≤3 scraped pages per domain. Full site structure not visible._")
 
-            # 3. Traffic Magnets with Systemic Label
-            df_magnets = pd.read_sql_query('''
-                SELECT domain, url, primary_keyword, est_traffic, medical_score, systems_score, systemic_label
-                FROM traffic_magnets
-                WHERE run_id = ?
-                ORDER BY est_traffic DESC LIMIT 20
-            ''', conn, params=(run_id,))
+            # 3. Traffic Magnets with Systemic Label.
+            # C-M-02 (owner decision 2, 2026-11-14): the documented definition is now
+            # implemented rather than the section renamed — a magnet ranks well on a
+            # handed-over keyword (handoff rank <= magnet_max_position), uses medical
+            # language (medical_score >= vacuum_min_medical), and its keyword passed the
+            # relevance test. The predicate lives in database.magnet_sql so the magnet
+            # table, the vacuum list and the reframe query cannot drift apart.
+            floor, max_pos = self.vacuum_min_medical, self.magnet_max_position
+            df_magnets = pd.read_sql_query(
+                magnet_sql(limit=20), conn, params=(run_id, floor, max_pos))
+            audited_pages = self.db.count_audited_pages(run_id)
+            magnet_filter_note = (
+                f"_Filter: handoff rank ≤ {max_pos}, medical_score ≥ {floor} "
+                f"(`technical.vacuum_min_medical`, editorial and uncalibrated), and the "
+                f"keyword is in the handoff set or carries a clinical term and not the "
+                f"competitor's own brand token. `est_traffic` is DataForSEO's estimated "
+                f"monthly visits for that keyword×position, 0 when it was not measured._")
 
             if not df_magnets.empty:
                 report.append("\n## Identified 'Traffic Magnets'")
+                report.append(f"Showing {len(df_magnets)} of {audited_pages} audited "
+                              f"page(s) that meet the magnet definition.")
+                report.append(magnet_filter_note)
                 report.append(df_magnets.to_markdown(index=False))
-                
-                # Spec 2: Highlight Systemic Vacuums
+
+                # Spec 2: Highlight Systemic Vacuums — the magnets with no systemic
+                # language. Same predicate as the reframe targets, by construction.
                 vacuums = df_magnets[(df_magnets['systems_score'] == 0) | (df_magnets['systemic_label'] == 'Surface-Level')]
                 if not vacuums.empty:
                     report.append("\n### ⚡ Strategic Targets: Systemic Vacuums")
-                    report.append("These competitors use medical language or only surface-level systemic terms. They are our **primary targets** for content reframing.")
+                    report.append("These competitors rank on a handed-over keyword using medical language and show no real systemic framing. They are our **primary targets** for content reframing.")
                     for _, v in vacuums.iterrows():
                         label_str = f" [{v['systemic_label']}]" if v['systemic_label'] != 'Standard' else ""
-                        report.append(f"- **{v['domain']}** ({v['primary_keyword']}): Medical Score {v['medical_score']}, Systems Score {v['systems_score']}{label_str}")
+                        report.append(
+                            f"- **{v['domain']}** ({v['primary_keyword']} — "
+                            f"{v['keyword_source']}, rank {v['rank']}): Medical Score "
+                            f"{v['medical_score']}, Systems Score {v['systems_score']}{label_str}")
+            elif audited_pages:
+                # Absence stated, not implied: 100 audited pages and no magnet is a
+                # fact about the filter, and the reader cannot otherwise tell it from
+                # "nothing was audited" (P2).
+                report.append("\n## Identified 'Traffic Magnets'")
+                report.append(f"None of the {audited_pages} audited page(s) met the "
+                              f"magnet definition this run.")
+                report.append(magnet_filter_note)
 
             # 3b. GEO / Extractability — Why Competitors Get Cited (SC-1)
             df_geo = pd.read_sql_query('''
@@ -362,7 +405,8 @@ class ReportGenerator:
             # 3g. Branded-Demand Benchmark (C3 / SC-5)
             df_brand = pd.read_sql_query('''
                 SELECT domain, brand, branded_search_volume, branded_volume_share,
-                       branded_growth, est_branded_click_share, estimation_basis
+                       branded_growth, est_branded_click_share, estimation_basis,
+                       queries
                 FROM brand_demand_bench WHERE run_id = ?
                 ORDER BY branded_search_volume DESC
             ''', conn, params=(run_id,))
@@ -370,18 +414,29 @@ class ReportGenerator:
             if not df_brand.empty:
                 report.append("\n## Branded-Demand Benchmark")
                 report.append("Brand-search demand, you vs competitors, estimated from public "
-                              "search volume. _Competitor figures are volume-estimated (not "
-                              "click-measured); your own figure is GSC-anchored when the "
-                              "serp-discover D2 export is available — see `estimation_basis`._")
+                              "search volume for each practice's **display brand** (e.g. "
+                              "\"Lavender Counselling\", not the bare stem \"lavender\"). "
+                              "_Competitor figures are volume-estimated (not click-measured); "
+                              "the exact query strings are in the `queries` column of the "
+                              "Branded Demand Excel sheet — see `estimation_basis`._")
                 if (df_brand['estimation_basis'] == 'volume_unavailable').any():
                     report.append("\n> ⚠️ **Search-volume source returned nothing this run** — the "
                                   "figures below are unavailable (likely a DataForSEO outage), not "
                                   "zero demand.")
+                n_ambiguous = int((df_brand['estimation_basis'] == 'ambiguous_brand').sum())
+                if n_ambiguous:
+                    report.append(f"\n> ⚠️ **{n_ambiguous} brand name(s) are ambiguous** — the bare "
+                                  f"stem's search volume swamps the practice name's "
+                                  f"(`branded_demand.ambiguous_brand_ratio`), so the demand cannot "
+                                  f"be attributed to the practice. Their share and growth are "
+                                  f"withheld and they are excluded from the share denominator.")
                 disp = df_brand.copy()
                 disp['brand'] = disp.apply(
                     lambda r: (f"⭐ {r['brand']} (you)" if r['domain'] == client_domain
                                else r['brand']), axis=1)   # own row identifiable regardless of anchor
-                report.append(disp.to_markdown(index=False))
+                # `queries` is Excel-only: one row can carry seven query strings, which
+                # would make the markdown table unreadable.
+                report.append(disp.drop(columns=['queries']).to_markdown(index=False))
 
             # 3h. Reputation-Risk Radar (C6 / SC-8)
             df_risk = pd.read_sql_query('''
@@ -467,10 +522,14 @@ class ReportGenerator:
             # 4. Strategic Openings & Reframes
             if reframes:
                 report.append("\n## 🎯 Automated Bowen Reframes")
+                report.append("_AI-drafted scaffolds for the Systemic Vacuums above. Each "
+                              "carries its own provenance line; People-Also-Ask context "
+                              "appears only on the legacy `market_analysis` path, because "
+                              "the Tool 1 handoff carries no PAA field._")
                 for r in reframes:
                     report.append(f"\n### Reframe: {r['keyword']}")
                     report.append(f"**Target URL:** {r['url']}")
-                    if r['paa']:
+                    if r.get('paa'):
                         report.append(f"**User Anxieties (PAA):** {', '.join(r['paa'][:5])}")
                     report.append("\n" + r['reframe'])
                     report.append("\n---")

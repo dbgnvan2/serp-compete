@@ -616,3 +616,46 @@ def test_p1_report_section_renders(tmp_path, monkeypatch):
           "position": 3, "traffic": 100}], run_id=run2)
     content2 = rg.generate_summary("livingsystems.ca", run_id=run2)
     assert "## YouTube Presence" not in content2
+
+
+# ---------------------------------------------------------------------------
+# C-C-01 — a `www.` competitor must not be searched for the literal term "www"
+# (promotes docs/review_2026-11-04/probes/compete/probe_brand_www.py to the
+# consumer that turned the mis-derived brand into a definitive "no channel").
+# ---------------------------------------------------------------------------
+
+def test_cc01_search_term_is_never_www():
+    searched = []
+
+    class _Recording(FakeClient):
+        def search_channels(self, query, max_results):
+            searched.append(query)
+            return super().search_channels(query, max_results)
+
+    client = _Recording(by_query={})
+    compute_presence(client, ["www.jerichocounselling.com"], "livingsystems.ca",
+                     {"www.jerichocounselling.com": "jericho",
+                      "livingsystems.ca": "livingsystems"},
+                     CFG, "2026-11-15", client_brand="Living Systems Counselling")
+    assert "www" not in searched
+    assert "jerichocounselling" in searched
+
+
+def test_cc01_two_www_domains_are_searched_separately():
+    """Both used to search for "www", so both were recorded none_found together."""
+    searched = []
+
+    class _Recording(FakeClient):
+        def search_channels(self, query, max_results):
+            searched.append(query)
+            return super().search_channels(query, max_results)
+
+    compute_presence(_Recording(by_query={}),
+                     ["www.jerichocounselling.com", "www.averytherapy.com"],
+                     "livingsystems.ca",
+                     {"www.jerichocounselling.com": "jericho",
+                      "www.averytherapy.com": "avery",
+                      "livingsystems.ca": "livingsystems"},
+                     CFG, "2026-11-15", client_brand="Living Systems Counselling")
+    competitor_terms = [t for t in searched if t != "Living Systems Counselling"]
+    assert sorted(competitor_terms) == ["averytherapy", "jerichocounselling"]

@@ -48,19 +48,39 @@ sheet to look at.
 
 ## 2. Input & gatekeeping features
 
-### 2.1 Competitor handoff ingestion
+### 2.1 Competitor handoff ingestion — the audit universe
 **What it does:** reads a `competitor_handoff_*.json` file produced by the companion
 tool **Serp-Discover** — the list of your target keywords and the competitor
-domains/URLs that rank for them. (Supported handoff versions are listed in
+domains/URLs that rank for them — and audits **those URLs on those keywords**. Each
+target's `url`, its `primary_keyword_for_url` and the `rank` Serp-Discover measured are
+what the audit works from. (Supported handoff versions are listed in
 `shared_config.json → handoff.supported_versions`.)
 
-**What it lets you understand:** the audit is only ever as complete as this input. The
-keywords and competitors you see analysed are the ones Serp-Discover handed over —
-nothing is invented.
+DataForSEO's per-domain `ranked_keywords` list is still fetched, but only as an
+**additional enrichment**, and it is filtered before anything is audited. An
+enrichment keyword is kept only when it is already in the handoff keyword set **or**
+it carries a clinical term from `shared_config.json → clinical.*`, and it is dropped
+outright when it contains the competitor's own brand token. Every keyword in the
+report is labelled with its source — `handoff` or `ranked_keywords` — in the *Keyword
+provenance* line under *Competitor Ranking Summary*, in the `keyword_source` column of
+the Traffic-Magnet table, and in each Systemic-Vacuum bullet.
+
+**What it lets you understand:** which numbers are measured facts and which are
+enrichment. A `handoff` keyword is one Serp-Discover found the URL ranking for; a
+`ranked_keywords` keyword is one DataForSEO associates with the domain and that
+survived the relevance filter. Nothing is invented, and nothing off-topic is audited.
 
 **What you can then do:** if a competitor or keyword you care about is missing, widen
 the search in Serp-Discover and re-run — don't expect Serp-Compete to discover new
-keywords on its own.
+keywords on its own. If a domain shows only `handoff` keywords, DataForSEO returned no
+usable enrichment for it; the console says so per domain.
+
+> **Fixed 2026-11-15 (C-M-01, owner decision 1b).** Until this change the handoff
+> targets were grouped by domain and then discarded: the audit worked from each
+> domain's DataForSEO top-10 (Canada, API default order, no position filter). That is
+> why run_11's "Traffic Magnets" were `archdiocese of vancouver`, `airport heights
+> medical clinic` (a St John's NL page) and `555 homer street`. Reports generated
+> before this date describe that sample, not your target keywords.
 
 ### 2.2 High-authority filter (Page Authority > 50 is skipped)
 **What it does:** before auditing a domain, it checks the domain's average Moz Page
@@ -191,31 +211,56 @@ Strong→Weak) and the *GEO Extractability* Excel sheet.
 ## 4. Opportunity features (where to act)
 
 ### 4.1 Traffic Magnets
-**What it does:** ranks the audited competitor pages by estimated traffic and shows
-each one's keyword, traffic, medical/systems scores, and systemic label.
+**What it does:** of the audited competitor pages, shows the ones that meet all three
+parts of the magnet definition, richest estimated traffic first:
+
+| Part of the definition | How it is tested |
+|---|---|
+| **Ranks well** | the handoff `rank` Serp-Discover measured is ≤ `technical.magnet_max_position` (10) |
+| **Uses medical language** | `medical_score` ≥ `technical.vacuum_min_medical` (10) |
+| **On a keyword that matters** | the keyword is in the handoff set or carries a clinical term, and is not the competitor's own brand token |
+
+The section header states how many of the audited pages qualified ("Showing 3 of 97"),
+and the filter itself is printed under it, so an empty list reads as "nothing met the
+definition", never as "nothing was audited".
 
 **What it lets you understand:** which competitor pages are worth the most attention —
-the high-traffic keywords where a better page would capture real demand.
+pages already ranking for one of *your* keywords, on medical-model language a systemic
+page can out-argue.
 
 **What you can then do:** treat the top of this list as your content backlog, richest
 opportunity first.
 
 **Where you see it:** *Identified 'Traffic Magnets'* section and the *Traffic Magnets*
-Excel sheet.
+Excel sheet. `est_traffic` is DataForSEO's estimated monthly visits for that
+keyword×position; **0 means not measured**, not "no traffic" — the handoff carries no
+traffic estimate, so a figure appears only where DataForSEO reported the same URL and
+keyword.
 
 ### 4.2 Systemic Vacuums (strategic targets)
-**What it does:** from the traffic magnets, isolates the pages that score **zero** on
-systems language **or** are labelled **Surface-Level** — high demand met only by
-medical-model or shallow content.
+**What it does:** from the traffic magnets — so all three conditions above already
+hold — isolates the pages that score **zero** on systems language **or** are labelled
+**Surface-Level**: your keyword, met by a well-ranking page with medical vocabulary and
+no systemic framing.
 
-**What it lets you understand:** the cleanest openings — keywords with proven traffic
-and *no* real systemic answer competing.
+**What it lets you understand:** the cleanest openings — keywords with proven ranking
+and *no* real systemic answer competing. These are also exactly the pages §6.1 drafts a
+reframe for; the two lists cannot disagree, because they are one database query.
 
 **What you can then do:** write the differentiation/emotional-process page for these
 exact keywords first; you're filling a vacuum, not fighting for a crowded term.
 
 **Where you see it:** *⚡ Strategic Targets: Systemic Vacuums* (a sub-list under Traffic
-Magnets).
+Magnets). Each bullet names the keyword's source and handoff rank.
+
+> **Fixed 2026-11-15 (C-M-02, owner decision 2).** The previous rule was
+> `systems_score = 0 OR systemic_label = 'Surface-Level'`, ordered by estimated traffic
+> alone — no medical-language condition, no position condition, no relevance test. A
+> page with no vocabulary of any kind (empty, blocked-but-200, or simply off-topic)
+> sorted to the top: run_11 named `rcav.org` (medical 0, systems 0) a *primary target
+> for content reframing*. `technical.vacuum_min_medical` is an **editorial, uncalibrated**
+> floor as of 2026-11-14, started at 10 to match the `penalty_thresholds.tier_1_max`
+> value in use at the time.
 
 ### 4.3 Your own site — Google Search Console gaps
 **What it does:** analyses *your* site's Search Console data for **High-Impression /
@@ -318,7 +363,11 @@ gaps) and the *AI Share-of-Voice* Excel sheet.
 ### 4.7 Branded-Demand Benchmark — how your brand pull compares  ⭐ newest
 **What it does:** estimates each competitor's *branded* search demand (searches for
 "<brand>", "<brand> reviews/pricing/…") from public search volume, and ranks you against them
-by branded volume, share, and growth.
+by branded volume, share, and growth. The brand searched is the **display brand**
+reassembled from the domain — "Lavender Counselling", not the bare stem "lavender" —
+and your own row uses the `client_brand_names` the handoff carries (falling back to
+`client.name`), not your domain stem. The exact query strings are in the `queries`
+column of the *Branded Demand* Excel sheet.
 
 **What it lets you understand:** the strength of each brand's *pull* — how many people already
 search for them by name. Branded demand is a lead indicator of market presence that on-page
@@ -333,6 +382,18 @@ spot competitors whose branded demand is growing fast (rising threats) or shrink
 > **Read it honestly:** competitor figures are *search-volume estimates*, not click-measured
 > (only your own can be GSC-anchored, when that export exists). Generic brand names are pruned
 > rather than guessed; if the volume source is down for a run, the section says so, not zeros.
+> An **ambiguous** brand name — one whose bare stem pulls at least
+> `branded_demand.ambiguous_brand_ratio` (10, editorial and uncalibrated) times the
+> practice name's volume — is labelled `ambiguous_brand`: its share and growth are
+> withheld and it leaves the share denominator, because that demand cannot be
+> attributed to the practice.
+>
+> **Fixed 2026-11-15 (C-M-03, C-C-01, C-C-13).** The volume was previously fetched for
+> the bare matching token, so "lavender", "bach", "clear", "coast" and "wong" measured
+> demand for plants, composers, shorelines and surnames; every `www.` domain searched
+> for the literal term "www" and so shared one identical row; and your own row used the
+> stem `livingsystems` because the code read a `client.brand_names` key that does not
+> exist in `shared_config.json`.
 
 ### 4.8 YouTube Presence — who in your competitive set is on YouTube  ⭐ newest
 **What it does:** for each competitor (and you), asks the official **YouTube Data API** whether
@@ -410,9 +471,9 @@ competitor signals) and the *Reputation Risk* Excel sheet.
 ## 6. Action features (drafting help)
 
 ### 6.1 Automated Bowen Reframes (OpenAI `gpt-4o`)
-**What it does:** for the strategic openings, generates a structured content outline
-that reframes the competitor's medical-model angle into a Bowen systems approach,
-weaving in the real "People Also Ask" anxieties captured for that keyword.
+**What it does:** for the Systemic Vacuums (§4.2 — the same query, so the same pages),
+generates a structured content outline that reframes the competitor's medical-model
+angle into a Bowen systems approach.
 
 **What it lets you understand:** a concrete starting structure — how the systemic
 counter-argument to a given competitor page could be organised.
@@ -422,6 +483,18 @@ not publish-ready copy — the clinical judgement and voice are still yours.
 
 **Where you see it:** *🎯 Automated Bowen Reframes* section and the *Automated Reframes*
 Excel sheet. (Token spend is reported under *💰 AI Token Usage*.)
+
+> **What the model is given.** The keyword, the competitor's URL and its medical score —
+> **not the competitor's page text**, which is never fetched for the prompt. Every
+> generated draft therefore ends with the line *"Generated by gpt-4o from the keyword,
+> URL and score above — no page content was supplied."* A page with `medical_score` 0
+> gets *"No medical vocabulary detected … reframe not applicable"* and costs no tokens,
+> instead of a draft asserting a "Medical Model" page that was never observed
+> (C-M-15). `temperature` is 0.7, so two runs will not produce identical text.
+>
+> **People-Also-Ask context** appears only on the deprecated `market_analysis_*.json`
+> path. The Tool 1 handoff has no PAA field (`handoff_schema.json`), so a handoff-driven
+> run has no PAA to weave in; this guide previously promised it on every run.
 
 ---
 
@@ -447,12 +520,12 @@ and `audit_results_run_12.xlsx`).
 | 📈 Internal GSC Performance Gaps | Your own low-CTR / Page-2 / mismatch opportunities | Fix titles, boost near-misses |
 | 💰 AI Token Usage | Cost of the reframes this run | Budget awareness |
 | 📉 / ⚡ / 🚩 Alerts | Who moved since last run | Re-prioritise & time your strike |
-| Competitor Ranking Summary | Each competitor's depth, position, recommended strategy | Pick who to target |
+| Competitor Ranking Summary | Each competitor's depth, position, recommended strategy, and the **Keyword provenance** line (how many keywords came from the handoff vs. enrichment) | Pick who to target |
 | EEAT Competitive Analysis | How credible each page *looks* | Out-signal the weak, match the strong |
 | Internal Linking Cluster Analysis | How defended each competitor is | Prefer isolated targets |
 | GEO / Extractability | *Why* AI engines cite each page | Copy the structure that earns citations |
-| Identified 'Traffic Magnets' | Highest-value keyword pages | Your content backlog |
-| ⚡ Systemic Vacuums | Traffic with no systemic answer | Write these first |
+| Identified 'Traffic Magnets' | Pages ranking top-10 on one of your keywords with medical-model language (§4.1 states the filter and how many of the audited pages met it) | Your content backlog |
+| ⚡ Systemic Vacuums | Those same pages with no systemic answer — the reframe targets | Write these first |
 | SERP Overlap & Differentiation Gap | Where you collide (commodity) vs. are exclusive | Fill exclusive-competitor gaps; differentiate/skip commodity |
 | Barbell Positioning Diagnostic | The 2×2 shape of the field (who's authoritative / niche / stuck in the middle) | Target the middle; win by picking a barbell end |
 | YouTube Presence | Which competitors run a channel, how big/active (you ⭐); Data-API metadata check | Decide if YouTube is worth entering; confirm `candidate` channels |
@@ -463,12 +536,34 @@ and `audit_results_run_12.xlsx`).
 `GEO Extractability` · `SERP Overlap` · `Feasibility` · `Positioning` · `AI Share-of-Voice` · `Branded Demand` · `Reputation Risk` · `YouTube Presence` · `Automated Reframes` · `AI Usage Stats`. Each sheet is the
 tabular form of the matching briefing section — use it to sort/filter (e.g. sort
 *GEO Extractability* by tier, or *Traffic Magnets* by traffic) and to paste into a
-content plan. A sheet only appears if that run produced data for it.
+content plan. *Traffic Magnets* carries `keyword_source` and the handoff `rank`;
+*Branded Demand* carries the `queries` actually sent for volume. A sheet only appears if that run produced data for it.
 
 ---
 
 ## 9. How to read the numbers honestly (limitations in one place)
 
+- **The audited universe is the handoff, plus filtered enrichment** (§2.1). Every
+  keyword carries a source: `handoff` = Serp-Discover measured that URL ranking for it;
+  `ranked_keywords` = a DataForSEO enrichment keyword that passed the relevance filter;
+  `unlabelled` = a row written before 2026-11-15, whose provenance is unknown and which
+  is therefore never treated as a magnet, vacuum or reframe target.
+- **The handoff `rank` is whatever Serp-Discover wrote.** Serp-Compete does not
+  re-measure it. Tool 1's rank semantics are themselves under repair (its paginated
+  SERP positions restart at 1 per page), so a rank from a handoff generated before that
+  fix understates how far down the page a result really was.
+- **The magnet / vacuum thresholds are editorial and uncalibrated**
+  (`technical.vacuum_min_medical` = 10 and `technical.magnet_max_position` = 10, both
+  dated 2026-11-14; `branded_demand.ambiguous_brand_ratio` = 10). They were chosen to
+  match the documented definitions, not derived from outcome data. Raising or lowering
+  them changes the magnet, vacuum and reframe lists together, by design.
+- **`est_traffic` is DataForSEO's `etv`** — estimated monthly visits for that
+  keyword×position, not measured traffic, and **0 means not measured**: the handoff
+  carries no traffic figure, so one appears only where DataForSEO reported the same URL
+  and keyword.
+- **Reframes never see the competitor's page** (§6.1), and the vocabulary scores behind
+  the floor are counts of configured terms on the first ~500 words plus headings, not a
+  judgement of what the page argues.
 - **EEAT, cluster, and GEO tiers are heuristic proxies**, not ground truth or Google's
   real models. They're for *comparing* competitors and building a checklist — not for
   declaring anyone objectively good or bad.

@@ -101,9 +101,22 @@ Serp-Compete (Tool 2)
 
 ## Key Concepts
 
-**Traffic Magnets:** High-volume competitor pages that rank well but use only medical language. Opportunity to capture traffic with systems-focused alternative.
+**Audit universe:** the URLs and keywords Serp-Discover handed over — each target's
+`url` audited on its `primary_keyword_for_url`, at the `rank` Tool 1 measured. DataForSEO's
+per-domain `ranked_keywords` list is fetched as an *additional enrichment* only, and a keyword
+from it is kept only when it is in the handoff set or carries a clinical term, and never when it
+contains the competitor's own brand token. Every keyword in the report is labelled `handoff` or
+`ranked_keywords`.
 
-**Systemic Vacuum:** Keyword where competitors dominate with medical model but no strong systems approach exists. Prime target for reframing content.
+**Traffic Magnets:** competitor pages that meet all three parts of the definition — they rank
+well (handoff rank ≤ `technical.magnet_max_position`), they use medical language
+(`medical_score` ≥ `technical.vacuum_min_medical`), and their keyword passes the relevance test
+above. Opportunity to capture traffic with a systems-focused alternative. The briefing states
+how many of the audited pages qualified.
+
+**Systemic Vacuum:** a Traffic Magnet with no systemic language (systems score 0 or the
+Surface-Level label) — your keyword, met by a well-ranking medical-model page. Prime target for
+reframing content, and the input to the automated reframes, which are the same query.
 
 **Bowen Reframe:** Content outline that shifts from individual pathology ("What's wrong with me?") to relationship dynamics ("How does our system work?").
 
@@ -122,6 +135,12 @@ All settings in `shared_config.json`:
 - `client.da` — Your Domain Authority (for feasibility scoring)
 - `clinical_pivots` — Bowen concepts for reframing (non-code editable)
 - `technical.max_audit_pages_per_domain` — Pages scraped per competitor (default 3)
+- `technical.vacuum_min_medical` — Minimum medical score before a page can be a Traffic Magnet,
+  a Systemic Vacuum or a reframe target (default 10; **editorial, uncalibrated 2026-11-14**)
+- `technical.magnet_max_position` — The "ranks well" ceiling, read against the handoff rank
+  (default 10; encodes the documented "top 10")
+- `branded_demand.ambiguous_brand_ratio` — Withhold a brand's share/growth when its bare stem
+  pulls this many times the practice name's search volume (default 10; editorial, uncalibrated)
 - `handoff.supported_versions` — Tool 1 handoff formats accepted (e.g. `2.0`, `2.1`)
 - `eeat_weights`, `cluster_thresholds`, `scoring_weights` — tuning for the scoring engines
 

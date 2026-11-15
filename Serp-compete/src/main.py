@@ -18,6 +18,7 @@ from src.analysis import AnalysisEngine
 from src.database import DatabaseManager
 from typing import Dict, Set, List, Tuple, Any
 from src.brand_utils import normalise_domain
+from src import audit_universe
 from src.reporting import ReportGenerator
 from src.reframe_engine import ReframeEngine
 from src.velocity_module import VelocityTracker
@@ -57,25 +58,39 @@ def find_latest_legacy_file() -> str | None:
         return None
     return max(legacy_files, key=os.path.getmtime)
 
-def convert_handoff_to_targets(handoff_data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
-    """Convert handoff format to internal targets format."""
+def convert_handoff_to_targets(handoff_data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]], List[str]]:
+    """Convert handoff format to internal targets format.
+
+    Returns `(targets, paa_map, client_brand_names)`. The third element used to be
+    dropped on the floor while `comparison_features` read a `client.brand_names`
+    key that does not exist in shared_config.json, so the client's branded-demand
+    query was the bare stem 'livingsystems' (C-C-13).
+
+    `est_traffic` is 0 because the handoff carries no traffic estimate — it means
+    "not measured", and src/audit_universe.py fills it from DataForSEO's `etv`
+    only when DataForSEO reports the same url AND keyword.
+    """
     targets = []
     for target in handoff_data.get("targets", []):
         targets.append({
             "domain": target["domain"],
             "url": target["url"],
             "primary_keyword": target["primary_keyword_for_url"],
-            "est_traffic": 0,  # Handoff doesn't include traffic; it's deterministic audit data
+            "est_traffic": 0,  # Handoff doesn't include traffic; 0 = not measured
             "rank": target["rank"],
             "entity_type": target["entity_type"],
             "content_type": target["content_type"],
             "title": target["title"],
             "source_keyword": target["source_keyword"]
         })
-    return targets, {}
+    return targets, {}, list(handoff_data.get("client_brand_names") or [])
 
-def convert_legacy_to_targets(legacy_data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
-    """Convert legacy market_analysis format to internal targets format."""
+def convert_legacy_to_targets(legacy_data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]], List[str]]:
+    """Convert legacy market_analysis format to internal targets format.
+
+    Third element (client brand names) is always [] — the legacy format has no
+    such field; the caller falls back to shared_config `client.name`.
+    """
     targets = []
     if "organic_results" in legacy_data:
         for res in legacy_data["organic_results"]:
@@ -101,7 +116,7 @@ def convert_legacy_to_targets(legacy_data: Dict[str, Any]) -> Tuple[List[Dict[st
                     paa_data[kw] = []
                 paa_data[kw].append(question)
 
-    return targets, paa_data
+    return targets, paa_data, []
 
 def _handoff_anchor_texts(run_domains=None, client_domain: str = "") -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Anchor texts and fetch coverage from the latest handoff's Moz block.
@@ -145,7 +160,7 @@ def _remember_moz_block(handoff_data: Dict[str, Any]) -> None:
         print(f"⚠️ Moz block not retained: {exc}")
 
 
-def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
+def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]], List[str]]:
     """
     Gap 1: Competitor handoff ingestion from Tool 1.
 
@@ -154,7 +169,8 @@ def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]
     2. market_analysis_*.json (legacy, deprecated) — with DeprecationWarning
     3. manual_targets.json (developer override) — fallback only
 
-    Returns: (list of target entries, dict of keyword -> paa_questions)
+    Returns: (list of target entries, dict of keyword -> paa_questions,
+              client brand names from the handoff — [] on the legacy/manual paths)
     """
     schema = load_handoff_schema()
     # Cleared per ingestion: the legacy and manual paths never set it, so a
@@ -214,14 +230,14 @@ def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]
                 data = json.load(f)
                 targets = [{"domain": d, "url": f"https://{d}", "primary_keyword": "manual_audit", "est_traffic": 0}
                            for d in data.get("competitors", [])]
-                return targets, {}
+                return targets, {}, []
         except Exception as e:
             print(f"❌ Error loading manual targets: {e}")
-            return [], {}
+            return [], {}, []
 
     # No data sources found
     print(f"⚠️ No data sources found (checked: handoff, legacy, manual).")
-    return [], {}
+    return [], {}, []
 
 def pre_flight_check():
     """
@@ -314,7 +330,7 @@ def run_audit():
     client_domain = shared_config.get("client", {}).get("domain", "livingsystems.ca")
 
     # 1. Foundation: Dynamic Handover & Velocity Tracker
-    targets_raw, paa_map = get_latest_market_data()
+    targets_raw, paa_map, client_brand_names = get_latest_market_data()
     if not targets_raw:
         print("❌ No competitors identified. Aborting.")
         return
@@ -374,6 +390,19 @@ def run_audit():
     competitor_keywords: Dict[str, Set[str]] = {}
     all_metrics_to_save = []
 
+    # C-M-01 (owner decision 1(b), 2026-11-14): the handoff is the PRIMARY audit
+    # universe — `url` / `primary_keyword_for_url` is what Tool 1 actually ranked and
+    # what FEATURE_GUIDE §2.1 promises. DataForSEO `ranked_keywords` is kept only as an
+    # additional enrichment, filtered by the relevance test below, with each keyword's
+    # source carried into the report. See src/audit_universe.py.
+    from src.brand_utils import derive_brand_name
+    brand_suffixes = shared_config.get("brand", {}).get("name_suffixes")
+    handoff_keywords = audit_universe.handoff_keyword_set(targets_raw)
+    clinical_terms = audit_universe.clinical_term_set(shared_config.get("clinical", {}))
+    universe_stats = audit_universe.new_universe_stats()
+    print(f"🎯 Audit universe: {len(handoff_keywords)} keyword(s) handed over by Tool 1 "
+          f"across {len(targets_raw)} target URL(s) in {len(domain_groups)} domain(s).")
+
     # Finding 1/4 (P8/P2): make enrichment coverage provable, so an empty EEAT/GEO/
     # cluster report section is never silently indistinguishable from "competitors
     # had no signals". Counts fresh scores, cache-served carry-forwards, cache hits
@@ -390,13 +419,25 @@ def run_audit():
             continue
             
         print(f"Analyzing competitor: {domain}")
-        pages = dfs_client.get_relevant_pages(domain)
+        brand_token = derive_brand_name(domain, brand_suffixes)
+        # Enrichment only now, never the universe itself: a DataForSEO failure here
+        # costs this domain its keyword enrichment, not its audit.
+        enrichment_items = dfs_client.get_relevant_pages(domain)
+        if not enrichment_items:
+            print(f"  ℹ️ No DataForSEO ranked keywords for {domain} — "
+                  f"auditing its handoff targets only.")
+        pages = audit_universe.build_domain_universe(
+            group_targets, enrichment_items, handoff_keywords, clinical_terms,
+            brand_token, universe_stats)
         if not pages:
+            print(f"  ⚠️ No auditable (url, keyword) rows for {domain} — skipped.")
             continue
 
         # Moz metrics for filtering
-        urls = [p.get('ranked_serp_element', {}).get('serp_item', {}).get('url') for p in pages]
-        urls = [u for u in urls if u]
+        urls = []
+        for record in pages:
+            if record["url"] not in urls:
+                urls.append(record["url"])
         moz_metrics_map = {}
         try:
             moz_results = moz_client.get_url_metrics(urls)
@@ -430,24 +471,24 @@ def run_audit():
         for page in pages:
             if domain_blocked:
                 break
-                
-            serp_item = page.get('ranked_serp_element', {}).get('serp_item', {})
-            url = serp_item.get('url')
-            if not url: continue
-            
-            keyword = page.get('keyword_data', {}).get('keyword') or page.get('keyword')
-            pos = serp_item.get('rank_absolute')
-            traffic = serp_item.get('etv') or 0
-            
+
+            url = page["url"]
+            keyword = page["keyword"]
+            pos = page["position"]
+            traffic = page["traffic"]
+            keyword_source = page["keyword_source"]
+            keyword_relevant = page["keyword_relevant"]
+
             if keyword:
                 domain_keywords.add(keyword)
-                
+
             all_metrics_to_save.append({
                 "domain": domain,
                 "url": url,
                 "keyword": keyword,
                 "position": pos,
-                "traffic": traffic
+                "traffic": traffic,
+                "keyword_source": keyword_source
             })
             
             pa = moz_metrics_map.get(url, 0)
@@ -489,8 +530,16 @@ def run_audit():
                     # scraped page (both were built but never called). See enrichment.py.
                     enrich_scraped_page(db, run_id, content, pa, eeat_scorer, geo_profiler, enrich)
 
-                db.save_traffic_magnet(run_id, domain, url, keyword, traffic, scores['medical_score'], scores['systems_score'], label=scores.get('systemic_label', 'Standard'))
-                print(f"  Audit {url}: Medical {scores['medical_score']}, Systems {scores['systems_score']} ({scores.get('systemic_label')})")
+                db.save_traffic_magnet(run_id, domain, url, keyword, traffic,
+                                       scores['medical_score'], scores['systems_score'],
+                                       label=scores.get('systemic_label', 'Standard'),
+                                       keyword_source=keyword_source,
+                                       keyword_relevant=keyword_relevant,
+                                       rank=pos)
+                print(f"  Audit {url}: Medical {scores['medical_score']}, Systems {scores['systems_score']} "
+                      f"({scores.get('systemic_label')}) — keyword '{keyword}' "
+                      f"[{keyword_source}, rank {pos}, "
+                      f"{'relevant' if keyword_relevant else 'not a magnet candidate'}]")
                 
                 # Spec 4: Save every audit result (DA, Rank, Scores) into market_history
                 velocity.save_market_snapshot(
@@ -525,6 +574,10 @@ def run_audit():
     # Finding 1/4 (P8/P2): surface enrichment coverage. An empty EEAT/GEO/cluster
     # section must never be silently mistaken for "no signals" — report exactly how
     # many were computed fresh, served from cache, or failed.
+    # C-M-01 (P2): say how the keyword universe was assembled, so an enrichment
+    # keyword in the report can never be mistaken for a handed-over ranked fact.
+    print(f"\n🎯 Keyword universe: {audit_universe.universe_summary_line(universe_stats)}")
+
     print("\n📊 Enrichment coverage  (fresh / carried-forward / cache-hit-no-prior / failed):")
     print(f"   EEAT:    {enrich['eeat_fresh']} / {enrich['eeat_carried']} / {enrich['eeat_no_prior']} / {enrich['eeat_failed']}")
     print(f"   GEO:     {enrich['geo_fresh']} / {enrich['geo_carried']} / {enrich['geo_no_prior']} / {enrich['geo_failed']}")
@@ -551,11 +604,23 @@ def run_audit():
                             gsc, dfs_client, PROJECT_ROOT,
                             anchor_texts_by_domain=_moz_anchors,
                             anchor_coverage=_moz_coverage,
-                            run_domains=audited_domains)
+                            run_domains=audited_domains,
+                            client_brand_names=client_brand_names)
 
-    # Strategic Logic with PAA context from Handover
+    # Strategic Logic with PAA context from Handover.
+    # C-M-02 (owner decision 2, 2026-11-14): a page is a reframe target only when it
+    # clears the medical floor, ranks well on a handed-over keyword, and that keyword
+    # passed the relevance test — not merely because its systems score is 0.
+    from src.database import magnet_thresholds
+    vacuum_min_medical, magnet_max_position = magnet_thresholds(shared_config)
     print("Identifying Strategic Openings...")
-    openings = db.identify_strategic_openings(run_id)
+    openings = db.identify_strategic_openings(
+        run_id, min_medical=vacuum_min_medical, max_position=magnet_max_position)
+    audited_pages = db.count_audited_pages(run_id)
+    print(f"   {len(openings)} reframe target(s) of {audited_pages} audited page(s) "
+          f"(medical_score >= {vacuum_min_medical}, handoff rank <= "
+          f"{magnet_max_position}, keyword passes the relevance test, no systemic "
+          f"language).")
     reframes = []
     total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     

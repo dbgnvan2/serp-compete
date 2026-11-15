@@ -127,3 +127,75 @@ def test_p13_one_feature_import_failure_degrades_only_that_feature(tmp_path, mon
     assert count("brand_demand_bench") > 0  # C3 unaffected
     assert count("risk_signal") == 0        # C6 degraded to empty — but no crash, others survived
     assert "risk_rows" not in summary       # C6 never reached its summary write
+
+
+# ── C-C-13: the handoff's client_brand_names reaches the branded-demand query ──
+# Tool 1 writes `client_brand_names: ['Living Systems']`; the pre-fix code read
+# `shared_config["client"]["brand_names"]`, which is not a key in
+# shared_config.json, so the client's query set was the bare stem 'livingsystems'.
+
+class _RecordingDfs:
+    def __init__(self):
+        self.queries = []
+
+    def get_search_volume(self, keywords):
+        self.queries.append(list(keywords))
+        return {str(k).lower(): {"search_volume": 100, "monthly_searches": []}
+                for k in keywords}
+
+
+def _brand_rows(db, run_id):
+    with db._get_connection() as conn:
+        return dict(conn.execute(
+            "SELECT domain, brand FROM brand_demand_bench WHERE run_id=?",
+            (run_id,)).fetchall())
+
+
+def test_cc13_handoff_client_brand_names_drive_the_clients_query_set(tmp_path):
+    db = DatabaseManager(str(tmp_path / "cc13.db"))
+    run_id = db.create_run("livingsystems.ca")
+    dfs = _RecordingDfs()
+    run_comparison_features(db, run_id, SHARED_CONFIG, "livingsystems.ca",
+                            {"jerichocounselling.com": {"couples therapy"}},
+                            _FakeGsc(), dfs, str(tmp_path),
+                            client_brand_names=["Living Systems Counselling"])
+    assert _brand_rows(db, run_id)["livingsystems.ca"] == "Living Systems Counselling"
+    assert ["Living Systems Counselling", "Living Systems Counselling reviews"] in dfs.queries
+
+
+def test_cc13_falls_back_to_config_client_name_without_a_handoff_name(tmp_path):
+    """The legacy / manual ingestion paths carry no brand names."""
+    db = DatabaseManager(str(tmp_path / "cc13b.db"))
+    run_id = db.create_run("livingsystems.ca")
+    config = {**SHARED_CONFIG,
+              "client": {**SHARED_CONFIG["client"], "name": "Living Systems Counselling"}}
+    run_comparison_features(db, run_id, config, "livingsystems.ca",
+                            {"jerichocounselling.com": {"couples therapy"}},
+                            _FakeGsc(), _RecordingDfs(), str(tmp_path),
+                            client_brand_names=None)
+    assert _brand_rows(db, run_id)["livingsystems.ca"] == "Living Systems Counselling"
+
+
+def test_cm03_competitor_brands_are_display_brands_not_bare_stems(tmp_path):
+    db = DatabaseManager(str(tmp_path / "cm03.db"))
+    run_id = db.create_run("livingsystems.ca")
+    dfs = _RecordingDfs()
+    config = {**SHARED_CONFIG,
+              "brand": {"name_suffixes": ["counselling", "therapy", "psychology"]}}
+    run_comparison_features(db, run_id, config, "livingsystems.ca",
+                            {"lavendercounselling.com": {"couples therapy"},
+                             "www.averytherapy.com": {"couples therapy"}},
+                            _FakeGsc(), dfs, str(tmp_path),
+                            client_brand_names=["Living Systems Counselling"])
+    brands = _brand_rows(db, run_id)
+    assert brands["lavendercounselling.com"] == "Lavender Counselling"
+    assert brands["www.averytherapy.com"] == "Avery Therapy"      # C-C-01: not "Www"
+    # The bare stem is still queried, but only as the ambiguity probe: a call of its
+    # own, whose volume stays out of the branded total (2 display queries × 100).
+    assert ["lavender"] in dfs.queries
+    with db._get_connection() as conn:
+        volume = conn.execute(
+            "SELECT branded_search_volume FROM brand_demand_bench "
+            "WHERE run_id=? AND domain=?", (run_id, "lavendercounselling.com")
+        ).fetchone()[0]
+    assert volume == 200

@@ -24,6 +24,10 @@
     "max_audit_pages_per_domain": 3,
     "moderate_feasibility_max_gap": 15,
     "score_normaliser": 30.0,
+    "_vacuum_min_medical_comment": "C-M-02 / owner decision 2 (2026-11-14): the MINIMUM medical score a page must reach before it can be a Traffic Magnet, a Systemic Vacuum or a gpt-4o reframe target. Editorial and UNCALIBRATED as of 2026-11-14; the starting value is anchored to penalty_thresholds.tier_1_max (10) so it is a real number rather than an invented one. Deliberately NOT the same key: tier_1_max means 'the highest Tier-1 count still counted as Tier 1', so reading it as a minimum inverts its sense.",
+    "vacuum_min_medical": 10,
+    "_magnet_max_position_comment": "The 'ranks well' half of the documented Traffic Magnet definition (README Key Concepts, USER_MANUAL 'Rank well (top 10)'), read against the HANDOFF rank Tool 1 measured. Editorial, uncalibrated as of 2026-11-14; 10 encodes the published 'top 10' wording.",
+    "magnet_max_position": 10,
     "scoring_weights": {
       "tier_1_medical": 1.0,
       "tier_2_systems": 0.5,
@@ -295,7 +299,9 @@
       "health",
       "wellness"
     ],
-    "growth_window_months": 3
+    "growth_window_months": 3,
+    "_ambiguous_brand_ratio_comment": "C-M-03: branded demand is measured for the DISPLAY brand ('Lavender Counselling'). When the bare stem's volume ('lavender') is at least this many times the display brand's, the demand cannot be attributed to the practice: the row is labelled estimation_basis=ambiguous_brand, its share and growth are withheld, and it leaves the share denominator. Editorial default, uncalibrated, 2026-11-14.",
+    "ambiguous_brand_ratio": 10
   },
   "risk_signals": {
     "cliff_drop_pct": 0.3,

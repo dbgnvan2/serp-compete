@@ -24,6 +24,7 @@ import datetime
 import re
 from typing import Any, Dict, List, Optional
 
+from src.brand_utils import normalise_domain
 from src.youtube_client import YouTubeError, YouTubeTransientError
 
 # Quota unit costs (YouTube Data API v3, current defaults — see sc7-yt-spec.md#3.2).
@@ -41,7 +42,15 @@ def _norm(s: Any) -> str:
 
 
 def _stem(domain: str) -> str:
-    return str(domain or "").split(".")[0].lower()
+    """The domain's leading label, `www.`-stripped.
+
+    Without the strip every `www.` competitor searched YouTube for the literal term
+    "www" and was recorded `none_found` / has_channel 0 — a definitive negative for
+    half a real handoff's competitive set (C-C-01). Uses the same
+    `brand_utils.normalise_domain` as the omit-list and the brand derivation, so the
+    three cannot drift apart.
+    """
+    return normalise_domain(domain).split(".")[0]
 
 
 def compute_presence(client: Any, competitor_domains: List[str], client_domain: str,

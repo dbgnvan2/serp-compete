@@ -37,6 +37,40 @@ _(none open — the two risks found during the F7 review were fixed; see the fix
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The audit never read the handoff: `main.py` grouped Tool 1's targets by domain and then audited each domain's DataForSEO top-10 instead (C-M-01, and C-M-02 / C-M-15 / C-M-03 / C-C-01 / C-C-13 downstream).**
+- **Root cause (P21 / P6):** `for domain, group_targets in domain_groups.items():` never read
+  `group_targets`; the loop body called `dfs_client.get_relevant_pages(domain)`
+  (`ranked_keywords/live`, Canada, API default order, `limit 10`, no position filter) and
+  audited whatever came back. A built-and-ingested capability — the handoff targets, validated
+  against `handoff_schema.json` on the way in — had no consumer, while the docs
+  (`FEATURE_GUIDE` §2.1: "nothing is invented") described the consumer that did not exist.
+  Everything downstream inherited the wrong universe: run_11's "Traffic Magnets" were
+  `archdiocese of vancouver`, `airport heights medical clinic` (a St John's NL page) and
+  `555 homer street`, and gpt-4o was spent reframing the Archdiocese of Vancouver. Three
+  more findings were the same shape: `derive_brand_name("www.x.com")` → `"www"` (the
+  `normalise_domain` helper existed in the same file and was not applied — P7), the handoff's
+  `client_brand_names` dropped while the code read a `client.brand_names` key that does not
+  exist in `shared_config.json` (P4/P21), and the vacuum query having no language, position or
+  relevance condition at all (P7).
+- **What would have caught it:** an end-to-end `run_audit` test with every external call faked,
+  asserting that the handoff's URL and keyword are what get audited
+  (`Serp-compete/tests/test_main_audit_universe.py`). Nothing short of that would: each unit
+  on its own was correct, and the suite was 441-green with the universe wrong. A unit test of
+  the ingestion would have passed too — the ingestion worked; nobody consumed it.
+- **Fix:** `src/audit_universe.py` builds the (url, keyword) rows a domain may be audited on —
+  handoff first, `ranked_keywords` admitted only as enrichment that is in the handoff set or
+  carries a clinical term and never carries the competitor's brand token, with every drop
+  counted. Provenance (`keyword_source`), the relevance verdict (`keyword_relevant`) and the
+  handoff `rank` are persisted (ALTER beside CREATE) and printed. One predicate
+  (`database.magnet_sql`) now defines magnet / vacuum / reframe target, so the vacuum list and
+  the reframe list cannot disagree. `normalise_domain` runs before every brand derivation;
+  branded demand queries the display brand with an ambiguous-brand gate; a reframe at medical 0
+  states the absence and spends no tokens.
+- **Rule:** when a module ingests and validates an input, grep for the *consumer* of that
+  input, not just the producer (P21 applies to data as well as to functions) — and when a doc
+  states what a tool audits, that sentence is a test case. A loop variable that is never read
+  is a missing consumer, so treat an unused binding in a run path as a finding, not lint.
+
 **Comparison-layer feature imports sat outside their per-feature guards → one bad import aborted all five.**
 - **Root cause (P13):** in `run_comparison_features` the five `from src.… import …` compute-imports were at
   the top of the function, *outside* each feature's `try/except`, while the docstring promised "Never raises."

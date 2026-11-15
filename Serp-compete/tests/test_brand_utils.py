@@ -7,7 +7,9 @@ case fix, the config override, and parity with the historical multi-suffix behav
 """
 import pytest
 
-from src.brand_utils import DEFAULT_NAME_SUFFIXES, derive_brand_name
+from src.brand_utils import (
+    DEFAULT_NAME_SUFFIXES, derive_brand_name, derive_display_brand, normalise_domain,
+)
 
 
 @pytest.mark.parametrize("domain,expected", [
@@ -48,6 +50,64 @@ def test_empty_suffix_list_disables_stripping():
 def test_stacked_suffixes_strip_in_order():
     """Parity with the historical loop: stacked suffixes reduce past each match in list order."""
     assert derive_brand_name("xtherapycounselling.com") == "x"
+
+
+# ── C-C-01: `www.` hosts must not derive the brand "www" ─────────────────────
+# Promotes docs/review_2026-11-04/probes/compete/probe_brand_www.py. Tool 1 writes
+# `urlparse(url).netloc.lower()`, so 15 of 34 domains in the real handoff carry the
+# prefix; every one of them derived the brand "www", which then drove branded demand,
+# AI share-of-voice and the YouTube search term.
+
+@pytest.mark.parametrize("domain,expected", [
+    ("www.jerichocounselling.com", "jericho"),
+    ("www.averytherapy.com", "avery"),
+    ("www.psychologytoday.com", "psychologytoday"),
+    ("WWW.JerichoCounselling.com", "jericho"),
+])
+def test_www_prefix_stripped_before_brand_derivation(domain, expected):
+    assert derive_brand_name(domain) == expected
+
+
+def test_www_and_bare_spellings_derive_the_same_brand():
+    """The two forms Tool 1 can emit for one site must not become two brands."""
+    assert derive_brand_name("www.jerichocounselling.com") == \
+        derive_brand_name("jerichocounselling.com")
+
+
+def test_two_different_www_domains_never_share_a_brand():
+    """The failure that made every www competitor share one query set and one volume."""
+    assert derive_brand_name("www.jerichocounselling.com") != \
+        derive_brand_name("www.averytherapy.com")
+
+
+def test_a_stem_that_is_itself_a_suffix_keeps_it():
+    """An empty brand matches nothing, so 'therapy.com' derives 'therapy', not ''."""
+    assert derive_brand_name("therapy.com") == "therapy"
+
+
+# ── C-M-03: the display brand is what gets searched ──────────────────────────
+
+@pytest.mark.parametrize("domain,expected", [
+    ("lavendercounselling.com", "Lavender Counselling"),
+    ("www.jerichocounselling.com", "Jericho Counselling"),
+    ("bowentherapy.org", "Bowen Therapy"),
+    ("hollyburn.ca", "Hollyburn"),            # no suffix → the token, title-cased
+    ("xtherapycounselling.com", "X Therapy Counselling"),   # stacked, outermost last
+    (None, ""),
+])
+def test_derive_display_brand(domain, expected):
+    assert derive_display_brand(domain) == expected
+
+
+def test_display_brand_differs_from_the_matching_token():
+    """The bare token is for matching an export's brand to a domain; sending it to a
+    search-volume API measures demand for a plant (C-M-03)."""
+    assert derive_brand_name("lavendercounselling.com") == "lavender"
+    assert derive_display_brand("lavendercounselling.com") == "Lavender Counselling"
+
+
+def test_normalise_domain_is_the_one_canonical_form():
+    assert normalise_domain(" WWW.Example.COM ") == "example.com"
 
 
 def test_default_suffixes_are_lowercase_vocab():

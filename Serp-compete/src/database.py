@@ -8,13 +8,71 @@ from typing import List, Tuple, Dict, Any
 # Paths relative to serp-compete/src/
 SHARED_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "shared_config.json"))
 
-def load_db_path():
+def load_shared_config() -> Dict[str, Any]:
+    """shared_config.json, or {} when it is absent.
+
+    Here rather than only in main.py so a consumer that is handed a DB but not a
+    config (ReportGenerator) reads the same editorial thresholds the audit wrote
+    with, instead of hard-coding them (P4).
+    """
     if os.path.exists(SHARED_CONFIG_PATH):
         with open(SHARED_CONFIG_PATH, 'r') as f:
-            config = json.load(f)
-            db_name = config.get("technical", {}).get("database_path", "competitor_history.db")
-            # Return absolute path relative to shared_config.json
-            return os.path.abspath(os.path.join(os.path.dirname(SHARED_CONFIG_PATH), db_name))
+            return json.load(f)
+    return {}
+
+
+# C-M-02 / owner decision 2 (2026-11-14): the magnet floor and the "ranks well"
+# ceiling are editorial config, and both have a documented default. The fallbacks
+# here mirror shared_config.json so a missing config degrades to the documented
+# definition rather than to "no filter at all", which is the bug being fixed.
+DEFAULT_VACUUM_MIN_MEDICAL = 10
+DEFAULT_MAGNET_MAX_POSITION = 10
+
+
+def magnet_thresholds(config: Dict[str, Any] = None) -> Tuple[int, int]:
+    """(vacuum_min_medical, magnet_max_position) from `technical.*`."""
+    technical = (config if config is not None else load_shared_config()).get("technical", {}) or {}
+    return (int(technical.get("vacuum_min_medical", DEFAULT_VACUUM_MIN_MEDICAL)),
+            int(technical.get("magnet_max_position", DEFAULT_MAGNET_MAX_POSITION)))
+
+
+# ONE definition of "Traffic Magnet" and of "Systemic Vacuum", shared by the
+# briefing's magnet table, its vacuum list and the reframe target query. Two
+# producers with different definitions is exactly what made the vacuum list and
+# the reframe list disagree, so these predicates are not duplicated in SQL
+# anywhere else. Parameter order: run_id, min_medical, max_position.
+#
+# "Ranks well" is the HANDOFF rank (what Tool 1 measured), "uses only medical
+# language" is the medical floor, and `keyword_relevant` is the C-M-02 relevance
+# test evaluated at ingest by src/audit_universe.py. A row written before those
+# columns existed has keyword_relevant NULL and is therefore NOT a magnet: the
+# relevance of an old row cannot be reconstructed, and claiming it is relevant is
+# the failure this fix removes.
+_MAGNET_PREDICATE = (
+    "run_id = ? AND keyword_relevant = 1 AND medical_score >= ? "
+    "AND rank IS NOT NULL AND rank <= ?"
+)
+_VACUUM_EXTRA = " AND (systems_score = 0 OR systemic_label = 'Surface-Level')"
+_MAGNET_COLUMNS = ("domain, url, primary_keyword, keyword_source, rank, est_traffic, "
+                   "medical_score, systems_score, systemic_label")
+
+
+def magnet_sql(vacuum_only: bool = False, columns: str = _MAGNET_COLUMNS,
+               limit: int = None) -> str:
+    """The magnet (or vacuum) SELECT. Bind (run_id, min_medical, max_position)."""
+    sql = (f"SELECT {columns} FROM traffic_magnets WHERE {_MAGNET_PREDICATE}"
+           f"{_VACUUM_EXTRA if vacuum_only else ''} ORDER BY est_traffic DESC")
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    return sql
+
+
+def load_db_path():
+    if os.path.exists(SHARED_CONFIG_PATH):
+        config = load_shared_config()
+        db_name = config.get("technical", {}).get("database_path", "competitor_history.db")
+        # Return absolute path relative to shared_config.json
+        return os.path.abspath(os.path.join(os.path.dirname(SHARED_CONFIG_PATH), db_name))
     return "competitor_history.db"
 
 class DatabaseManager:
@@ -59,6 +117,9 @@ class DatabaseManager:
                     medical_score INTEGER,
                     systems_score INTEGER,
                     systemic_label TEXT,
+                    keyword_source TEXT,
+                    keyword_relevant BOOLEAN,
+                    rank INTEGER,
                     FOREIGN KEY(run_id) REFERENCES runs(id)
                 )
             ''')
@@ -85,6 +146,7 @@ class DatabaseManager:
                     keyword TEXT,
                     position INTEGER,
                     traffic REAL,
+                    keyword_source TEXT,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -218,6 +280,24 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE traffic_magnets ADD COLUMN systemic_label TEXT DEFAULT 'Standard'")
             except sqlite3.OperationalError:
                 pass # Already exists
+
+            # C-M-01 / C-M-02: keyword provenance, the relevance verdict and the
+            # handoff rank. ALTER beside CREATE (the fourth occurrence of this
+            # class in this file) so a DB written before this chunk is repaired
+            # instead of breaking save_traffic_magnet and the magnet query.
+            for table, column, decl in (
+                ("traffic_magnets", "keyword_source", "TEXT"),
+                ("traffic_magnets", "keyword_relevant", "BOOLEAN"),
+                ("traffic_magnets", "rank", "INTEGER"),
+                ("competitor_metrics", "keyword_source", "TEXT"),
+                # C-M-03: the query strings whose volume became "branded demand",
+                # so the Excel sheet can show what was actually asked for.
+                ("brand_demand_bench", "queries", "TEXT"),
+            ):
+                try:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                except sqlite3.OperationalError:
+                    pass  # Already exists
 
             try:
                 # C1/SC-3: add cited_gap to an EXISTING sov_daily (the C1 commit created the
@@ -367,6 +447,7 @@ class DatabaseManager:
                     branded_growth REAL,
                     est_branded_click_share REAL,
                     estimation_basis TEXT,
+                    queries TEXT,
                     FOREIGN KEY(run_id) REFERENCES runs(id)
                 )
             ''')
@@ -463,13 +544,28 @@ class DatabaseManager:
             ''', (domain, avg_da))
             conn.commit()
 
-    def save_traffic_magnet(self, run_id: int, domain: str, url: str, keyword: str, traffic: float, medical: int, systems: float, label: str = "Standard"):
+    def save_traffic_magnet(self, run_id: int, domain: str, url: str, keyword: str,
+                            traffic: float, medical: int, systems: float,
+                            label: str = "Standard", keyword_source: str = None,
+                            keyword_relevant: bool = None, rank: int = None):
+        """Persist one audited page.
+
+        `keyword_source` / `keyword_relevant` / `rank` come from
+        src/audit_universe.py (C-M-01/C-M-02). They are nullable on purpose: a
+        caller that cannot say where a keyword came from must not be able to claim
+        it was relevant, and `magnet_sql` requires `keyword_relevant = 1`, so an
+        unlabelled row is persisted and reported but never becomes a magnet, a
+        vacuum or a reframe target.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO traffic_magnets (run_id, domain, url, primary_keyword, est_traffic, medical_score, systems_score, systemic_label)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (run_id, domain, url, keyword, traffic, medical, systems, label))
+                INSERT INTO traffic_magnets (run_id, domain, url, primary_keyword, est_traffic, medical_score, systems_score, systemic_label, keyword_source, keyword_relevant, rank)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (run_id, domain, url, keyword, traffic, medical, systems, label,
+                  keyword_source,
+                  (None if keyword_relevant is None else int(bool(keyword_relevant))),
+                  rank))
             conn.commit()
 
     def save_geo_profile(self, run_id: int, profile: Any):
@@ -561,10 +657,11 @@ class DatabaseManager:
             cursor = conn.cursor()
             for metric in metrics:
                 cursor.execute('''
-                    INSERT INTO competitor_metrics (run_id, domain, url, keyword, position, traffic)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO competitor_metrics (run_id, domain, url, keyword, position, traffic, keyword_source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (run_id, metric['domain'], metric['url'], metric.get('keyword'),
-                      metric.get('position'), metric.get('traffic')))
+                      metric.get('position'), metric.get('traffic'),
+                      metric.get('keyword_source')))
             conn.commit()
 
     def save_serp_overlap(self, run_id: int, rows: List[Dict[str, Any]]):
@@ -807,13 +904,13 @@ class DatabaseManager:
             cursor.executemany('''
                 INSERT INTO brand_demand_bench (run_id, domain, brand, period,
                     branded_search_volume, branded_volume_share, branded_growth,
-                    est_branded_click_share, estimation_basis)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    est_branded_click_share, estimation_basis, queries)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', [
                 (run_id, r.get("domain"), r.get("brand"), r.get("period"),
                  r.get("branded_search_volume"), r.get("branded_volume_share"),
                  r.get("branded_growth"), r.get("est_branded_click_share"),
-                 r.get("estimation_basis"))
+                 r.get("estimation_basis"), " | ".join(r.get("queries") or []) or None)
                 for r in rows
             ])
             conn.commit()
@@ -1031,19 +1128,60 @@ class DatabaseManager:
                 })
             return alerts
 
-    def identify_strategic_openings(self, run_id: int) -> List[Dict[str, Any]]:
+    def count_audited_pages(self, run_id: int) -> int:
+        """Every page this run audited, magnet or not — the M in "N of M"."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                'SELECT COUNT(*) FROM traffic_magnets WHERE run_id = ?', (run_id,)
+            ).fetchone()
+        return int(row[0] or 0)
+
+    def keyword_source_counts(self, run_id: int) -> Dict[str, int]:
+        """{keyword_source: distinct keywords} for a run — the report's provenance line.
+
+        Rows written before the column existed group under 'unlabelled', which is
+        what they are; they are not folded into 'handoff'.
         """
-        Logic: High traffic meet total 'Systemic Vacuum' (systems_score = 0) or 'Surface-Level' label.
+        counts: Dict[str, int] = {}
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT COALESCE(keyword_source, 'unlabelled'), COUNT(DISTINCT keyword) "
+                "FROM competitor_metrics WHERE run_id = ? AND keyword IS NOT NULL "
+                "GROUP BY 1", (run_id,)).fetchall()
+        for source, count in rows:
+            counts[str(source)] = int(count or 0)
+        return counts
+
+    def identify_strategic_openings(self, run_id: int, min_medical: int = None,
+                                    max_position: int = None,
+                                    limit: int = 5) -> List[Dict[str, Any]]:
+        """The reframe targets: Systemic Vacuums, highest estimated traffic first.
+
+        A row qualifies only when it is a magnet — handoff rank <= `max_position`,
+        `medical_score >= min_medical`, and its keyword passed the C-M-02 relevance
+        test at ingest — AND it shows no systemic language (systems_score 0 or the
+        Surface-Level label).
+
+        Before this gate existed the only condition was "systems_score = 0 OR
+        Surface-Level", ordered by est_traffic alone, so `rcav.org` (medical 0,
+        systems 0) was named a primary target for content reframing and gpt-4o was
+        spent reframing the Archdiocese of Vancouver (C-M-02 / C-M-15). The floor
+        and ceiling default to shared_config `technical.vacuum_min_medical` /
+        `technical.magnet_max_position`.
         """
+        if min_medical is None or max_position is None:
+            config_min, config_max = magnet_thresholds()
+            min_medical = config_min if min_medical is None else min_medical
+            max_position = config_max if max_position is None else max_position
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT url, primary_keyword, est_traffic, medical_score, systemic_label
-                FROM traffic_magnets
-                WHERE run_id = ? AND (systems_score = 0 OR systemic_label = 'Surface-Level')
-                ORDER BY est_traffic DESC LIMIT 5
-            ''', (run_id,))
-            
+            cursor.execute(
+                magnet_sql(vacuum_only=True,
+                           columns="url, primary_keyword, est_traffic, medical_score, "
+                                   "systemic_label, keyword_source, rank",
+                           limit=limit),
+                (run_id, min_medical, max_position))
+
             openings = []
             for row in cursor.fetchall():
                 openings.append({
@@ -1051,7 +1189,9 @@ class DatabaseManager:
                     "keyword": row[1],
                     "traffic": row[2],
                     "medical_score": row[3],
-                    "systemic_label": row[4]
+                    "systemic_label": row[4],
+                    "keyword_source": row[5],
+                    "rank": row[6],
                 })
             return openings
 

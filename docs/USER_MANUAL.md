@@ -156,6 +156,16 @@ The system executes in 5 optional steps (configurable via `shared_config.json`):
 
 **Detailed process:**
 
+0. **The audit universe** (what gets looked at at all): the handoff's target URLs, each
+   on its `primary_keyword_for_url`, at the rank Serp-Discover measured. DataForSEO's
+   per-domain `ranked_keywords` list is fetched only as an **additional enrichment**,
+   and a keyword from it is kept only when it is already in the handoff keyword set or
+   carries a clinical term from `clinical.*`, and dropped outright when it contains the
+   competitor's own brand token. The console prints the per-run counts ("handoff targets
+   N … enrichment keywords kept N, dropped N brand-token + N off-topic"), and every
+   keyword in the briefing is labelled `handoff` or `ranked_keywords`.
+   Handoff rows come first, so they get the `max_audit_pages_per_domain` scrape slots.
+
 1. **Fetching**: Downloads the top N competitor pages for each keyword
    - Uses realistic browser headers to avoid blocking
    - Handles rate-limiting (429 errors trigger circuit breaker)
@@ -203,9 +213,11 @@ The system executes in 5 optional steps (configurable via `shared_config.json`):
 - **Feasibility**: Can we realistically compete for this keyword?
 
 **Output:**
-- Competitor summary table (domain, top pages, avg position, systemic depth)
-- Traffic magnets ranked by traffic potential
-- Strategic targets identified (competitors using medical model in high-traffic areas)
+- Competitor summary table (domain, top pages, avg position, systemic depth) plus a
+  **Keyword provenance** line counting handoff vs. enrichment keywords
+- Traffic magnets — the audited pages meeting the magnet definition, by traffic potential
+- Strategic targets identified (well-ranking competitor pages on your keywords that use
+  medical-model language and no systemic framing)
 
 ---
 
@@ -263,19 +275,28 @@ The system executes in 5 optional steps (configurable via `shared_config.json`):
 - Assumes change happens through relational awareness
 
 ### Traffic Magnets
-High-value competitor pages that:
-- Rank well (top 10)
-- Get significant traffic
-- Use medical model language
+Competitor pages that meet **all three** parts of the definition — the filter is applied
+in the briefing, and the section states how many of the audited pages qualified:
+- **Rank well** — the handoff rank Serp-Discover measured is ≤ `technical.magnet_max_position` (10)
+- **Use medical model language** — `medical_score` ≥ `technical.vacuum_min_medical` (10)
+- **On a keyword that matters** — the keyword is in the handoff set or carries a clinical
+  term, and is not the competitor's own brand token
 - Represent unmet systems-approach demand
+
+`est_traffic` is DataForSEO's estimate for that keyword×position; **0 means it was not
+measured** (the handoff carries no traffic figure), not that the page has no traffic.
 
 **Strategy:** Create systems-focused content for the same keyword, potentially converting a portion of that traffic.
 
 ### Systemic Vacuum
-A keyword where:
-- Competitors rank but use only medical model
+A Traffic Magnet — so all three conditions above already hold — that additionally shows
+no systemic language (systems score 0, or the Surface-Level label):
+- Competitors rank on **your** keyword but use only medical model language
 - No strong systems approach content exists
 - Users asking the question would benefit from relational framing
+
+This is one database query, so the Systemic Vacuum list and the Automated Bowen
+Reframes cannot disagree about what the targets are.
 
 **Example:**
 - Competitor ranks for "How to fix anxiety in relationships" with only medication advice
@@ -297,6 +318,36 @@ Automated content outlines that reframe competitor content using Bowen Family Sy
 ## Configuration
 
 All behavior is controlled via `shared_config.json`:
+
+### **technical** (magnet / vacuum definition)
+```json
+"technical": {
+  "vacuum_min_medical": 10,
+  "magnet_max_position": 10,
+  "max_audit_pages_per_domain": 3
+}
+```
+`vacuum_min_medical` is the **minimum** medical score a page must reach before it can be
+a Traffic Magnet, a Systemic Vacuum or a gpt-4o reframe target; `magnet_max_position` is
+the "ranks well" ceiling, read against the handoff rank. Both are **editorial and
+uncalibrated** as of 2026-11-14: `vacuum_min_medical` was started at 10 to match the
+`penalty_thresholds.tier_1_max` value then in use, and 10 for the position encodes the
+"top 10" wording in this manual. Raising either shortens the magnet, vacuum and reframe
+lists together — they are one query.
+
+Note that `vacuum_min_medical` is deliberately a separate key from
+`penalty_thresholds.tier_1_max`, which means "the highest Tier-1 count still counted as
+Tier 1". Reading that ceiling as a floor would invert its sense.
+
+### **branded_demand.ambiguous_brand_ratio**
+```json
+"branded_demand": { "ambiguous_brand_ratio": 10 }
+```
+Branded demand is measured for the display brand ("Lavender Counselling"). When the bare
+stem ("lavender") pulls at least this many times the display brand's volume, the demand
+cannot be attributed to the practice: the row is labelled `ambiguous_brand`, its share
+and growth are withheld, and it leaves the share denominator. Editorial, uncalibrated,
+2026-11-14.
 
 ### **clinical_pivots**
 ```json
@@ -375,17 +426,23 @@ Table showing:
 **How to use:** Focus on competitors whose pages are mostly **Surface-Level** (heavy medical language, no deep systems framing)—they're your reframing opportunities.
 
 #### Section E: Traffic Magnets
-Top competitor pages ranked by traffic potential, showing:
+Competitor pages meeting the magnet definition, ranked by traffic potential, showing:
 - Domain & URL
-- Keyword
-- Estimated traffic
+- Keyword, and its **source** (`handoff` = Serp-Discover measured this URL ranking for it;
+  `ranked_keywords` = a DataForSEO enrichment keyword that passed the relevance filter)
+- The handoff **rank**
+- Estimated traffic (0 = not measured)
 - Medical vs. systems score
 - Systemic label
+
+The header reads "Showing N of M audited page(s)" and prints the filter beneath it. If
+none qualified, the section says so rather than disappearing.
 
 **How to use:** These are your target keywords. Create systems-focused content for each.
 
 #### Section F: Strategic Targets (Systemic Vacuums)
-Competitors using ONLY medical language. 
+The magnets with no systemic language — competitors ranking on your keyword using ONLY
+medical language. Each bullet names the keyword's source and handoff rank.
 
 **Action:** Create systems-focused alternative content for these exact keywords.
 
@@ -399,6 +456,14 @@ AI-generated content outlines for reframing competitor content.
 4. **Differentiation Strategy**: Why Bowen is more effective than tools/tips
 
 **How to use:** Use these as starting points for your content writers. Not production-ready, but provides structure.
+
+**What the model was given:** the keyword, the competitor's URL and its medical score —
+**not the competitor's page text**, which is never fetched for the prompt. Each draft
+ends with the line *"Generated by gpt-4o from the keyword, URL and score above — no page
+content was supplied."* A page with a medical score of 0 gets *"No medical vocabulary
+detected … reframe not applicable"* and spends no tokens, instead of a confident draft
+about a "Medical Model" page nobody observed. "People Also Ask" context appears only on
+the deprecated `market_analysis_*.json` path; the Tool 1 handoff has no PAA field.
 
 #### Market Velocity Alerts
 Each audit also records a market snapshot (rank, authority, and medical/systems

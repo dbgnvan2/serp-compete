@@ -22,6 +22,13 @@ from typing import Any, Callable, Dict, List, Optional
 
 DEFAULT_MODIFIERS = ["reviews", "pricing", "login", "cost", "vs"]
 DEFAULT_GROWTH_WINDOW = 3
+# C-M-03 ambiguous-brand gate. A bare stem that is also a dictionary word
+# ("lavender", "bach", "clear", "coast") carries search demand that has nothing to
+# do with the practice. When the bare token's volume towers over the display
+# brand's by this factor, the brand name cannot be attributed and the row's share
+# and growth are withheld. Editorial default, uncalibrated, 2026-11-14
+# (shared_config `branded_demand.ambiguous_brand_ratio`).
+DEFAULT_AMBIGUOUS_BRAND_RATIO = 10.0
 
 
 def expand_branded_queries(brand: str, modifiers: List[str]) -> List[str]:
@@ -69,59 +76,105 @@ def compute_growth(series: List[int], window: int = DEFAULT_GROWTH_WINDOW) -> Op
     return round((recent - prior) / prior, 3)
 
 
+def is_ambiguous_brand(display_volume: int, token_volume: int,
+                       ratio: float = DEFAULT_AMBIGUOUS_BRAND_RATIO) -> bool:
+    """True when the bare stem's demand swamps the display brand's (C-M-03).
+
+    `max(display_volume, 1)` so a display brand with no measured volume beside a
+    bare token with plenty still reads as ambiguous rather than dividing by zero;
+    both at zero is not ambiguous, it is simply unmeasured.
+    """
+    if ratio <= 0 or token_volume <= 0:
+        return False
+    return float(token_volume) >= float(ratio) * max(float(display_volume), 1.0)
+
+
 def compute_branded_demand(brand_by_domain: Dict[str, str],
                            volume_provider: Callable[[List[str]], Dict[str, Dict[str, Any]]],
                            config: Dict[str, Any], period: str,
                            own_domain: Optional[str] = None,
-                           own_anchor: Optional[float] = None) -> List[Dict[str, Any]]:
-    """One benchmark row per domain: branded_search_volume, share, growth, and (for the
-    client only) the GSC-anchored click share. Pure over the provider's returned volumes.
+                           own_anchor: Optional[float] = None,
+                           ambiguity_token_by_domain: Optional[Dict[str, str]] = None
+                           ) -> List[Dict[str, Any]]:
+    """One benchmark row per domain: branded_search_volume, share, growth, the query
+    strings used, and (for the client only) the GSC-anchored click share. Pure over
+    the provider's returned volumes.
+
+    `brand_by_domain` must carry the DISPLAY brand ("Lavender Counselling").
+    `ambiguity_token_by_domain` optionally carries the bare stem ("lavender"): when
+    its volume swamps the display brand's, the brand name cannot be attributed, so
+    the row is labelled `ambiguous_brand` and its share and growth are withheld and
+    it is excluded from the share denominator (C-M-03).
     """
     modifiers = config.get("branded_modifiers", DEFAULT_MODIFIERS)
     generic = config.get("generic_brand_prune", [])
     window = int(config.get("growth_window_months", DEFAULT_GROWTH_WINDOW))
+    ratio = float(config.get("ambiguous_brand_ratio", DEFAULT_AMBIGUOUS_BRAND_RATIO))
     own = (own_domain or "").lower()
+    tokens = ambiguity_token_by_domain or {}
 
     volume: Dict[str, int] = {}
     growth: Dict[str, Optional[float]] = {}
     pruned: Dict[str, bool] = {}
+    queries_used: Dict[str, List[str]] = {}
+    ambiguous: Dict[str, bool] = {}
     for domain, brand in brand_by_domain.items():
         if not brand or is_generic_brand(brand, generic):
             pruned[domain] = True
+            queries_used[domain] = []
             continue
         queries = expand_branded_queries(brand, modifiers)
         vols = volume_provider(queries) or {}
         volume[domain] = sum(int(v.get("search_volume") or 0) for v in vols.values())
         growth[domain] = compute_growth(
             _aggregate_monthly([v.get("monthly_searches", []) for v in vols.values()]), window)
+        queries_used[domain] = list(queries)
 
-    total = sum(volume.values())
+        # The ambiguity probe is a separate call for the bare stem alone, so its
+        # volume never enters the branded total.
+        token = str(tokens.get(domain) or "").strip()
+        if token and token.lower() != str(brand).strip().lower():
+            probe = volume_provider([token]) or {}
+            token_volume = sum(int(v.get("search_volume") or 0) for v in probe.values())
+            if is_ambiguous_brand(volume[domain], token_volume, ratio):
+                ambiguous[domain] = True
+                queries_used[domain].append(f"[ambiguity probe] {token}")
+
+    # Ambiguous rows are excluded from the denominator: their share is withheld, so
+    # counting their volume in the total would silently shrink everybody else's.
+    total = sum(v for d, v in volume.items() if not ambiguous.get(d))
     # Every non-pruned brand returned zero volume → the source (DataForSEO) is almost
     # certainly unavailable, not that the whole market has no branded demand. Say so
     # rather than render a table of zeros as fact (P1/P2).
-    volume_unavailable = total == 0 and len(volume) > 0
+    volume_unavailable = sum(volume.values()) == 0 and len(volume) > 0
     rows: List[Dict[str, Any]] = []
     for domain, brand in brand_by_domain.items():
         if pruned.get(domain):
             rows.append({"domain": domain, "brand": brand, "period": period,
                          "branded_search_volume": None, "branded_volume_share": None,
                          "branded_growth": None, "est_branded_click_share": None,
-                         "estimation_basis": "pruned_generic_brand"})
+                         "estimation_basis": "pruned_generic_brand",
+                         "queries": queries_used.get(domain, [])})
             continue
         vol = volume[domain]
         is_own = bool(own) and domain.lower() == own
         if volume_unavailable:
             basis = "volume_unavailable"
+        elif ambiguous.get(domain):
+            basis = "ambiguous_brand"
         elif is_own and own_anchor is not None:
             basis = "gsc_anchored"
         else:
             basis = "volume_estimated"
+        withheld = basis == "ambiguous_brand"
         rows.append({
             "domain": domain, "brand": brand, "period": period,
             "branded_search_volume": vol,
-            "branded_volume_share": round(100.0 * vol / total, 2) if total else 0.0,
-            "branded_growth": growth[domain],
+            "branded_volume_share": (None if withheld else
+                                     (round(100.0 * vol / total, 2) if total else 0.0)),
+            "branded_growth": (None if withheld else growth[domain]),
             "est_branded_click_share": (own_anchor if is_own else None),
             "estimation_basis": basis,
+            "queries": queries_used.get(domain, []),
         })
     return rows

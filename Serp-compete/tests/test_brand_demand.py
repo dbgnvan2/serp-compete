@@ -94,3 +94,94 @@ def test_save_brand_demand_roundtrip(tmp_path):
         n = conn.execute("SELECT COUNT(*) FROM brand_demand_bench WHERE run_id=?",
                          (run_id,)).fetchone()[0]
     assert n == 1
+
+
+# ── C-M-03: display brand, not the bare stem; and the ambiguous-brand gate ────
+# Promotes docs/review_2026-11-04/probes/compete/probe_brand_demand.py and
+# probes/compete_method/p04_overlap_positioning_brand.py §C: the query set sent for
+# Google Ads volume was ['lavender', 'lavender reviews', ...] — demand for a plant —
+# and every `www.` domain sent the identical set ['www', 'www reviews', ...].
+
+def _recording_provider(volumes):
+    """volumes: {query_lower: search_volume}; unknown queries return 0."""
+    seen = []
+
+    def provider(queries):
+        seen.append(list(queries))
+        return {q.lower(): {"search_volume": volumes.get(q.lower(), 0),
+                            "monthly_searches": []} for q in queries}
+    provider.seen = seen
+    return provider
+
+
+def test_cm03_query_set_is_the_display_brand():
+    provider = _recording_provider({"lavender counselling": 50})
+    compute_branded_demand({"lavendercounselling.com": "Lavender Counselling"}, provider,
+                           CONFIG, period="p")
+    assert provider.seen[0] == ["Lavender Counselling", "Lavender Counselling reviews",
+                                "Lavender Counselling pricing"]
+
+
+def test_cm03_two_www_domains_never_share_a_query_set():
+    """The C-C-01 consequence, asserted at the branded-demand layer: both domains used
+    to send ['www', 'www reviews', 'www pricing'] and persist identical volume rows."""
+    from src.brand_utils import derive_display_brand
+    provider = _recording_provider({})
+    brands = {d: derive_display_brand(d) for d in
+              ("www.jerichocounselling.com", "www.averytherapy.com")}
+    compute_branded_demand(brands, provider, CONFIG, period="p")
+    assert provider.seen[0] != provider.seen[1]
+    assert not any("www" in q.lower() for call in provider.seen for q in call)
+
+
+def test_cm03_ambiguous_brand_withholds_share_and_growth():
+    """'lavender' alone pulls 10x the practice name → the demand is not the practice's."""
+    provider = _recording_provider({"lavender counselling": 50, "lavender": 40000,
+                                    "jericho counselling": 100})
+    rows = compute_branded_demand(
+        {"lavendercounselling.com": "Lavender Counselling",
+         "jerichocounselling.com": "Jericho Counselling"},
+        provider, dict(CONFIG, ambiguous_brand_ratio=10), period="p",
+        ambiguity_token_by_domain={"lavendercounselling.com": "lavender",
+                                   "jerichocounselling.com": "jericho"})
+    by_domain = {r["domain"]: r for r in rows}
+    amb = by_domain["lavendercounselling.com"]
+    assert amb["estimation_basis"] == "ambiguous_brand"
+    assert amb["branded_volume_share"] is None and amb["branded_growth"] is None
+    assert amb["branded_search_volume"] == 50          # the measured display-brand volume
+    # The unambiguous rival keeps a real share, computed without the withheld row.
+    assert by_domain["jerichocounselling.com"]["estimation_basis"] == "volume_estimated"
+    assert by_domain["jerichocounselling.com"]["branded_volume_share"] == 100.0
+
+
+def test_cm03_specific_brand_is_not_flagged_ambiguous():
+    provider = _recording_provider({"jericho counselling": 500, "jericho": 900})
+    rows = compute_branded_demand({"jerichocounselling.com": "Jericho Counselling"},
+                                  provider, dict(CONFIG, ambiguous_brand_ratio=10),
+                                  period="p",
+                                  ambiguity_token_by_domain={"jerichocounselling.com": "jericho"})
+    assert rows[0]["estimation_basis"] == "volume_estimated"
+    assert rows[0]["branded_volume_share"] == 100.0
+
+
+def test_cm03_ambiguity_probe_volume_never_enters_the_branded_total():
+    provider = _recording_provider({"hollyburn": 9999})
+    rows = compute_branded_demand({"hollyburn.ca": "Hollyburn"}, provider,
+                                  dict(CONFIG, ambiguous_brand_ratio=0), period="p",
+                                  ambiguity_token_by_domain={"hollyburn.ca": "hollyburn"})
+    # ratio 0 disables the gate; the stem's 9999 must not be counted as branded demand
+    # (the display brand "Hollyburn" is the same word, so no probe call is made at all).
+    assert rows[0]["branded_search_volume"] == 9999   # queried as the display brand itself
+    assert provider.seen == [["Hollyburn", "Hollyburn reviews", "Hollyburn pricing"]]
+
+
+def test_cm03_query_strings_are_persisted_for_the_excel_sheet(tmp_path):
+    db = DatabaseManager(str(tmp_path / "bdq.db"))
+    run_id = db.create_run("c.com")
+    rows = compute_branded_demand({"a.com": "Acme Counselling"}, _provider(100), CONFIG,
+                                  period="2026-07")
+    db.save_brand_demand(run_id, rows)
+    with db._get_connection() as conn:
+        queries = conn.execute("SELECT queries FROM brand_demand_bench WHERE run_id=?",
+                               (run_id,)).fetchone()[0]
+    assert "Acme Counselling reviews" in queries
