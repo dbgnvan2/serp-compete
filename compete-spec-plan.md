@@ -233,7 +233,7 @@ competitor figures labeled volume-estimated; Excel sheet. DataForSEO mocked in t
 ## 9. Phase C6 / SC-8 — Reputation-Risk Radar  *(requires C2)*
 
 **Reuse:** `get_volatility_alerts` (ranking_volatility feed), `get_feasibility_drift`
-(Fragile Magnet), `velocity_module.VelocityTracker`/`market_history` (visibility series);
+(Fragile Magnet), `velocity_module.VelocityTracker`/`market_history` (visibility series); **[Removed 2026-11-15 by review chunk C2 (C-C-05 / C-M-06): it was one of two Fragile-Magnet detectors with different thresholds under two headings for the same event, and it was neither run-scoped nor thresholded. The survivor is the run-scoped detector in `velocity_module.py`. Do not reuse this name.]**
 **C2's focus/cluster analysis** for the topical-mismatch signal. **New:** `src/risk_radar.py`
 — `visibility_cliff` (step-change > X% over N days), `parasite_subfolder`/`affiliate_arm`
 (topical mismatch **AND** commercial-intent keywords — subfolder name is a hint, not proof),

@@ -58,7 +58,7 @@ Both specs now open with a "Repo conventions" section pinning these down, and ev
 **C5 off-platform attention — `new` (deferred).** Integration flag retained (only feature needing sources beyond the confirmed three). `third_party_crawlers.py` confirmed *not* a social tracker. Added the nonprofit-ROI caveat from `CLAUDE.md`.
 
 **C6 reputation-risk radar — `partially-exists`.**
-- Reuse: `get_volatility_alerts()`, `get_feasibility_drift()` (Fragile Magnet), `velocity_module.py` (`market_history`). New only: `visibility_cliff` + `parasite_subfolder`/`affiliate_arm` detection (reuse C2 cluster analysis for topical-mismatch). Clarified the only code "penalty" is the scoring penalty in `scoring_logic.py`, unrelated.
+- Reuse: `get_volatility_alerts()`, `get_feasibility_drift()` (Fragile Magnet), `velocity_module.py` (`market_history`). **[Removed 2026-11-15 by review chunk C2 (C-C-05 / C-M-06): it was one of two Fragile-Magnet detectors with different thresholds under two headings for the same event, and it was neither run-scoped nor thresholded. The survivor is the run-scoped detector in `velocity_module.py`. Do not reuse this name.]** New only: `visibility_cliff` + `parasite_subfolder`/`affiliate_arm` detection (reuse C2 cluster analysis for topical-mismatch). Clarified the only code "penalty" is the scoring penalty in `scoring_logic.py`, unrelated.
 
 ## Already-built, added as "do NOT re-propose" (Compete SC-1, shipped)
 

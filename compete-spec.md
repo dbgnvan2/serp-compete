@@ -175,7 +175,7 @@ attention_rollup (run_id, date, competitor_id, presence_platforms INT, attention
 
 **What already exists (volatility only — reuse).**
 - `database.py::get_volatility_alerts(run_id)` — flags competitors whose avg SERP position shifts ≥3 places vs the previous run (JOIN on `competitor_metrics` across runs); rendered as "Volatility Alerts" in `reporting.py`.
-- `database.py::get_feasibility_drift()` — "Fragile Magnet" (Moz PA drift < -2).
+- `database.py::get_feasibility_drift()` — "Fragile Magnet" (Moz PA drift < -2). **[Removed 2026-11-15 by review chunk C2 (C-C-05 / C-M-06): it was one of two Fragile-Magnet detectors with different thresholds under two headings for the same event, and it was neither run-scoped nor thresholded. The survivor is the run-scoped detector in `velocity_module.py`. Do not reuse this name.]**
 - `src/velocity_module.py::VelocityTracker` — market-velocity alerts (rank/DA drift), table `market_history`.
 
 **What is new.** `visibility_cliff` step-change detection, `parasite_subfolder` / `affiliate_arm` structural detection, and a unified reputation radar. `cliff|parasite|reputation|penalty|subfolder` → the only "penalty" in code is the *scoring* penalty in `scoring_logic.py` (Surface-Level tier-2), unrelated to SERP penalties. (Note: dedicated volatility *visualization* lives in serp-discover's `metrics.py` + `visualize_volatility.py`, not here.)
