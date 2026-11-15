@@ -339,6 +339,31 @@ Note that `vacuum_min_medical` is deliberately a separate key from
 `penalty_thresholds.tier_1_max`, which means "the highest Tier-1 count still counted as
 Tier 1". Reading that ceiling as a floor would invert its sense.
 
+### **reporting** (display caps and depth bands)
+```json
+"reporting": {
+  "markdown_row_cap": 30,
+  "magnet_markdown_row_cap": 20,
+  "systems_depth_min_t2": 3
+}
+```
+The first two cap how many rows the **markdown briefing** prints for its long
+sections; each capped section says "Showing the first N of M". **The Excel sheets
+always carry every row** — before 2026-11-15 the cap was a `LIMIT` in the SQL, so the
+sheet that is meant to be the full export was truncated identically and said nothing.
+`systems_depth_min_t2` is the Tier-2 term count at which `systemic_depth` reads
+"Systems (Tier 2 only)" rather than "Trace"; editorial, uncalibrated 2026-11-15, and a
+count rather than a density (densities need the per-page word counts that chunk C4
+adds).
+
+### **orchestrator.reports_dir**
+The GUI's **Settings → Reports Directory** is now honoured by the report writer: the
+briefing and workbook are written there (the directory is created if missing, and the
+run falls back to the working directory with a warning if it cannot be used). Until
+2026-11-15 the value was saved to `shared_config.json` and never read, so new reports
+kept landing in `Serp-compete/` while "Previous Reports" browsed the configured
+directory and found nothing.
+
 ### **risk_signals** (alert thresholds)
 ```json
 "risk_signals": {
@@ -438,10 +463,24 @@ For each competitor domain:
 Table showing:
 - Domain name
 - Number of top pages
-- Total keywords ranking
-- Average position
-- Systemic depth (derived from the **Standard** / **Surface-Level** page labels)
-- Recommended strategy
+- `sampled_keywords` — the **distinct keywords this run audited** for the domain (its
+  handoff targets plus any enrichment keywords that passed the relevance filter). This
+  is a sample size, not the number of keywords the competitor ranks for. Until
+  2026-11-15 the column was called `total_keywords` and was inflated by a cross join
+  (keywords × audited pages), so a domain with 10 keywords and 3 audited pages read as
+  30 and the column mis-ranked competitors by breadth.
+- `pages_audited` — how many of its pages were scored this run (capped by
+  `technical.max_audit_pages_per_domain`)
+- Average position — over whatever each keyword's source measured: the handoff rank
+  for a handoff keyword, DataForSEO's `rank_absolute` for an enrichment one
+- `systemic_depth` — from the **Tier-2 / Tier-3 term counts**:
+  `Bowen (Tier 3 present)` → `Systems (Tier 2 only)` → `Surface-Level` →
+  `Trace (1-2 Tier 2 terms)` → `None detected`, and **`Not recorded`** when a
+  cache-served page predates the stored counts. It previously read "High" whenever the
+  weighted systems score was above 0 — one occurrence of "relationship" — and
+  "Medical" by comparing a raw Tier-1 count with a weighted systems score.
+- Recommended strategy — withheld as `Not classified (incomplete tier counts)` when
+  some of the domain's pages came from the cache without stored counts
 
 **How to use:** Focus on competitors whose pages are mostly **Surface-Level** (heavy medical language, no deep systems framing)—they're your reframing opportunities.
 

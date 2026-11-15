@@ -22,6 +22,8 @@ from src.velocity_module import VelocityTracker
 ENRICHED = "enriched.ca"          # DataForSEO answers, Moz answers
 NO_ENRICHMENT = "noenrich.ca"     # DataForSEO 429s for this one
 NO_MOZ = "nomoz.ca"               # Moz has no record for its URLs
+BLOCKED = "blocked.ca"            # 429s the scraper (circuit breaker)
+CACHED = "cached.ca"              # served from the 7-day semantic cache
 OMITTED = "psychologytoday.com"   # on the omit list
 
 CONFIG = {
@@ -57,20 +59,28 @@ def _handoff():
         "client_domain": "livingsystems.ca",
         "client_brand_names": ["Living Systems Counselling"],
         "targets": [_target(ENRICHED), _target(NO_ENRICHMENT), _target(NO_MOZ),
-                    _target(OMITTED)],
+                    _target(BLOCKED), _target(CACHED), _target(OMITTED)],
         "exclusions": {"client_urls_excluded": 0, "omit_list_excluded": 0,
                        "omit_list_used": []},
     }
 
 
 class _FakeAuditor:
-    """Every page reads fine except the one that is meant to error."""
+    """Every page reads fine except the ones meant to error or to 429."""
 
-    def __init__(self, error_urls=()):
+    def __init__(self, error_urls=(), blocked_urls=()):
         self.error_urls = set(error_urls)
+        self.blocked_urls = set(blocked_urls)
+        self.scraped = []
 
     def scrape_content(self, url):
-        status = "error" if url in self.error_urls else "complete"
+        self.scraped.append(url)
+        if url in self.blocked_urls:
+            status = "blocked"
+        elif url in self.error_urls:
+            status = "error"
+        else:
+            status = "complete"
         return SimpleNamespace(url=url, extraction_status=status, outline=[],
                                first_500_words="counselling copy", metadata={})
 
@@ -119,32 +129,23 @@ class _FakeReframe:
         return {"reframe": "Draft.", "usage": {}}
 
 
-@pytest.fixture
-def audited(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    config_path = tmp_path / "shared_config.json"
-    config_path.write_text(json.dumps(CONFIG))
-    omit_path = tmp_path / "omitted_domains.txt"
-    omit_path.write_text(f"{OMITTED}\n")
-    config = dict(CONFIG)
-    config["filtering"] = {"omitted_domains_path": str(omit_path)}
-    db_path = str(tmp_path / "coverage.db")
-    handoff_path = tmp_path / "competitor_handoff_cov_20261115_1200.json"
-    handoff_path.write_text(json.dumps(_handoff()))
-
+def _run_audit_with_fakes(tmp_path, db_path, config, config_path, handoff_path,
+                          auditor, runs=1):
+    """Run the real `run_audit` `runs` times against fakes; return the markdown of
+    each run. Shared so a second (cache-served) run can be compared with the first."""
     import src.main as main
 
-    captured = {}
+    captured = []
 
     class _Reporter(ReportGenerator):
         def __init__(self, *a, **kw):
             super().__init__(db_path)
 
         def generate_summary(self, *a, **kw):
-            captured["markdown"] = super().generate_summary(*a, **kw)
-            return captured["markdown"]
+            content = super().generate_summary(*a, **kw)
+            captured.append(content)
+            return content
 
-    auditor = _FakeAuditor(error_urls={f"https://{NO_MOZ}/couples"})
     with patch.object(main, "pre_flight_check", return_value=_FakeGsc()), \
          patch.object(main, "load_shared_config", return_value=config), \
          patch.object(main, "PROJECT_ROOT", str(tmp_path)), \
@@ -160,9 +161,39 @@ def audited(tmp_path, monkeypatch):
          patch.object(main, "EEATScorer", MagicMock()), \
          patch.object(main, "ClusterDetector", MagicMock()), \
          patch.object(main, "ReportGenerator", _Reporter):
-        main.run_audit()
+        for _ in range(runs):
+            main.run_audit()
+    return captured
 
-    return DatabaseManager(db_path), captured.get("markdown", ""), str(tmp_path)
+
+def _prepare(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "shared_config.json"
+    config_path.write_text(json.dumps(CONFIG))
+    omit_path = tmp_path / "omitted_domains.txt"
+    omit_path.write_text(f"{OMITTED}\n")
+    config = dict(CONFIG)
+    config["filtering"] = {"omitted_domains_path": str(omit_path)}
+    db_path = str(tmp_path / "coverage.db")
+    handoff_path = tmp_path / "competitor_handoff_cov_20261115_1200.json"
+    handoff_path.write_text(json.dumps(_handoff()))
+    return config, config_path, db_path, handoff_path
+
+
+@pytest.fixture
+def audited(tmp_path, monkeypatch):
+    config, config_path, db_path, handoff_path = _prepare(tmp_path, monkeypatch)
+    auditor = _FakeAuditor(error_urls={f"https://{NO_MOZ}/couples"},
+                           blocked_urls={f"https://{BLOCKED}/couples"})
+    # One page already in the 7-day semantic cache, with its tier counts recorded —
+    # so the run exercises the cache path without estimating anything (C-C-08).
+    seed_db = DatabaseManager(db_path)
+    seed_db.save_semantic_audit(f"https://{CACHED}/couples", 14, 0.0,
+                                run_id=seed_db.create_run("livingsystems.ca"),
+                                label="Standard", t2_count=0, t3_count=0)
+    markdowns = _run_audit_with_fakes(tmp_path, db_path, config, config_path,
+                                      handoff_path, auditor)
+    return DatabaseManager(db_path), (markdowns[-1] if markdowns else ""), auditor
 
 
 def _rows(db, sql, params=()):
@@ -173,12 +204,12 @@ def _rows(db, sql, params=()):
 # ── C-C-12: a domain that drops out leaves a trace in the ARTEFACT ───────────
 
 def test_the_briefing_states_run_coverage(audited):
-    _db, markdown, _tmp = audited
-    assert "**Run coverage:** audited 3 of 4 handoff domain(s)" in markdown
+    _db, markdown, _auditor = audited
+    assert "**Run coverage:** audited 5 of 6 handoff domain(s)" in markdown
 
 
 def test_an_omitted_domain_is_named_with_its_reason(audited):
-    _db, markdown, _tmp = audited
+    _db, markdown, _auditor = audited
     assert "**Skipped domains:**" in markdown
     assert f"{OMITTED} — on the omit list" in markdown
 
@@ -186,7 +217,7 @@ def test_an_omitted_domain_is_named_with_its_reason(audited):
 def test_a_domain_whose_enrichment_failed_is_named(audited):
     """A DataForSEO 429 used to drop the competitor entirely, with the console line as
     its only trace. It is now audited on its handoff target and the failure is stated."""
-    db, markdown, _tmp = audited
+    db, markdown, _auditor = audited
     assert "Keyword enrichment was unavailable" in markdown
     assert f"{NO_ENRICHMENT} (HTTP 429)" in markdown
     audited_domains = {r[0] for r in _rows(
@@ -198,7 +229,7 @@ def test_a_domain_whose_enrichment_failed_is_named(audited):
 # ── C-C-03: unknown Page Authority is NULL, and says so ──────────────────────
 
 def test_an_unmeasured_page_authority_is_null_not_zero(audited):
-    db, markdown, _tmp = audited
+    db, markdown, _auditor = audited
     run_id = db.get_latest_run_id()
     rows = _rows(db, "SELECT url, pa FROM competitor_history WHERE run_id=? "
                      "AND url LIKE ?", (run_id, f"https://{NO_MOZ}%"))
@@ -210,14 +241,14 @@ def test_an_unmeasured_page_authority_is_null_not_zero(audited):
 def test_no_competitors_row_is_written_without_a_measured_authority(audited):
     """`avg_pa = 0` used to be stored as this domain's Domain Authority, which then
     fed positioning and feasibility as a measured figure."""
-    db, _markdown, _tmp = audited
+    db, _markdown, _auditor = audited
     stored = {r[0] for r in _rows(db, "SELECT domain FROM competitors")}
     assert NO_MOZ not in stored
     assert ENRICHED in stored
 
 
 def test_pa_coverage_is_reported_as_n_of_m(audited):
-    db, markdown, _tmp = audited
+    db, markdown, _auditor = audited
     measured, total = db.get_pa_coverage(db.get_latest_run_id())
     assert total > measured > 0
     assert f"Page Authority measured for {measured} of {total} audited URL(s)" in markdown
@@ -225,14 +256,14 @@ def test_pa_coverage_is_reported_as_n_of_m(audited):
 
 def test_no_fragile_magnet_is_claimed_on_a_single_run(audited):
     """There is nothing to compare a first run with — silence, not a -30 collapse."""
-    _db, markdown, _tmp = audited
+    _db, markdown, _auditor = audited
     assert "Fragile Magnets" not in markdown
 
 
 # ── C-C-06: an errored scrape is recorded, not omitted ───────────────────────
 
 def test_an_errored_scrape_leaves_a_null_rank_snapshot(audited):
-    db, _markdown, _tmp = audited
+    db, _markdown, _auditor = audited
     with db._get_connection() as conn:
         rows = conn.execute(
             "SELECT url, rank FROM market_history WHERE url LIKE ?",
@@ -241,8 +272,85 @@ def test_an_errored_scrape_leaves_a_null_rank_snapshot(audited):
 
 
 def test_an_errored_page_is_not_persisted_as_a_zero_score_magnet(audited):
-    db, _markdown, _tmp = audited
+    db, _markdown, _auditor = audited
     run_id = db.get_latest_run_id()
     magnet_urls = {r[0] for r in _rows(
         db, "SELECT url FROM traffic_magnets WHERE run_id=?", (run_id,))}
     assert f"https://{NO_MOZ}/couples" not in magnet_urls
+
+
+# ── C-M-20 / C-C-08: blocked and cached domains reach the briefing ───────────
+
+def test_a_blocked_domain_is_named_in_the_briefing(audited):
+    """The 429 circuit breaker stops the domain's remaining pages; until now only the
+    console said so, and the briefing read as though the domain had nothing."""
+    _db, markdown, _auditor = audited
+    assert "Blocked by the 429 circuit breaker" in markdown
+    assert BLOCKED in markdown
+
+
+def test_a_cache_served_domain_is_named_in_the_briefing(audited):
+    _db, markdown, _auditor = audited
+    assert "Served at least one page from the 7-day semantic cache" in markdown
+    assert CACHED in markdown
+
+
+def test_a_cached_page_is_not_re_scraped(audited):
+    _db, _markdown, auditor = audited
+    assert f"https://{CACHED}/couples" not in auditor.scraped
+
+
+def test_the_cached_pages_tier_counts_are_read_not_estimated(audited):
+    """The cached row carries t2=0, t3=0 with a systems score of 0.0. The deleted
+    estimate would have produced t2 = 0/0.5 = 0 and t3 = 0, but for a score of 2.0 it
+    produced "one Tier-3 term" out of four generic Tier-2 words — this asserts the
+    counts now travel on the row instead."""
+    db, _markdown, _auditor = audited
+    run_id = db.get_latest_run_id()
+    with db._get_connection() as conn:
+        row = conn.execute(
+            "SELECT t2_count, t3_count FROM traffic_magnets WHERE run_id=? AND url=?",
+            (run_id, f"https://{CACHED}/couples")).fetchone()
+    assert row == (0, 0)
+
+
+# ── C-C-08 (P8): the same page, fresh then cached, must classify the same ────
+
+def test_cc08_market_position_is_stable_across_a_cached_rerun(tmp_path, monkeypatch):
+    """The test C-C-08 asks for. Run the audit twice: the second run serves every page
+    from the 7-day semantic cache. With the deleted estimate, a page with four generic
+    Tier-2 words (weighted score 2.0) came back as "t3 = 1" and its domain was
+    re-labelled *Direct Systemic — use 'Functional Facts'…* on the Wednesday after a
+    Monday that said *Generalist*, for identical unchanged content."""
+    config, config_path, db_path, handoff_path = _prepare(tmp_path, monkeypatch)
+
+    class _TierAuditor(_FakeAuditor):
+        """Four generic Tier-2 terms, no Tier-3: weighted systems score 2.0 — the exact
+        shape the estimate mis-read."""
+
+        def analyze_text(self, content):
+            return {"medical_score": 12, "systems_score": 2.0,
+                    "systemic_label": "Standard", "t2_count": 4, "t3_count": 0}
+
+    auditor = _TierAuditor()
+    db = DatabaseManager(db_path)
+
+    _run_audit_with_fakes(tmp_path, db_path, config, config_path, handoff_path, auditor)
+    fresh_position = db.get_competitor_metadata(ENRICHED)["market_position"]
+
+    second = _run_audit_with_fakes(tmp_path, db_path, config, config_path,
+                                   handoff_path, auditor)
+    cached_position = db.get_competitor_metadata(ENRICHED)["market_position"]
+
+    assert cached_position == fresh_position      # the whole point
+    assert cached_position != "Direct Systemic"   # what the estimate produced
+
+    # The cached run re-used the stored counts rather than guessing them…
+    runs = [r[0] for r in _rows(db, "SELECT id FROM runs ORDER BY id")]
+    with db._get_connection() as conn:
+        counts = conn.execute(
+            "SELECT t2_count, t3_count FROM traffic_magnets WHERE run_id=? AND url=?",
+            (runs[-1], f"https://{ENRICHED}/couples")).fetchone()
+    assert counts == (4, 0)
+    # …so nothing had to be withheld for want of counts.
+    assert "Not classified (incomplete tier counts)" not in second[-1]

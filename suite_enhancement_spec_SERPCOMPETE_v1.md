@@ -309,7 +309,13 @@ prints a loud caveat (never a false "you're absent"). (2) The join key is normal
 split. (3) The SC-6.3 volume rollup and the `check_feasibility` half are surfaced, not
 discarded: `keyword_volume` per row + a "Volume by cell" line, and a new
 `competitor_feasibility` table rendered as a "Competitor Feasibility" section + Excel
-sheet.
+sheet. **[Renamed 2026-11-15 by review chunk C3 (C-M-20): the row key, the
+`serp_overlap` column, the report line and the Excel header are all `best_rival_etv`.
+The figure is `MAX(competitor_metrics.traffic)` — the best-ranking rival's DataForSEO
+ETV for the keyword — so "volume" read as search demand. The reader is
+`database.get_best_rival_etv(run_id)`, not `get_keyword_volumes`. C-C-10 also made
+`get_competitor_das(run_id)` run-scoped with `run_id` required, so the
+`competitor_feasibility` table lists only the competitors the run audited.]**
 
 **Known limitation.** A page-2 client (GSC position > `top_n`) is treated as absent
 from the top-N battle for cell purposes (raw `self_position` retained for

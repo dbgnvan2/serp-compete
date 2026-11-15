@@ -109,7 +109,7 @@ def build_overlap_rows(competitor_positions: Dict[str, Dict[str, int]],
                        client_positions: Dict[str, int],
                        config: Dict[str, Any], snapshot_date: str,
                        gap_keywords: Optional[Set[str]] = None,
-                       keyword_volumes: Optional[Dict[str, float]] = None,
+                       best_rival_etv: Optional[Dict[str, float]] = None,
                        client_positions_available: bool = True) -> List[Dict[str, Any]]:
     """Build one classified overlap row per ranked keyword. Deterministic.
 
@@ -124,7 +124,9 @@ def build_overlap_rows(competitor_positions: Dict[str, Dict[str, int]],
     gap_keywords = {_norm_kw(k) for k in (gap_keywords or set())}
     comp = _normalize_positions(competitor_positions)
     client = _normalize_client(client_positions)
-    volumes = {_norm_kw(k): float(v or 0.0) for k, v in (keyword_volumes or {}).items()}
+    # C-M-20: the best-ranking RIVAL's DataForSEO ETV for the keyword — not a search
+    # volume, and not the client's traffic. Named for what it is, everywhere.
+    rival_etv = {_norm_kw(k): float(v or 0.0) for k, v in (best_rival_etv or {}).items()}
     config_ref = f"top_n={top_n};commodity_high_overlap={commodity_high_overlap}"
 
     rows: List[Dict[str, Any]] = []
@@ -143,7 +145,7 @@ def build_overlap_rows(competitor_positions: Dict[str, Dict[str, int]],
             "self_position": raw_self,      # raw GSC position (may exceed top_n) or None
             "overlap_count": n_comp,
             "commodity_score": float(n_comp),  # local overlap-density proxy
-            "keyword_volume": volumes.get(kw, 0.0),
+            "best_rival_etv": rival_etv.get(kw, 0.0),
             "cell": classify_cell(self_present, n_comp, n_comp >= commodity_high_overlap),
             "config_ref": config_ref,
             "estimation_basis": LOCAL_ESTIMATION_BASIS,
@@ -153,14 +155,14 @@ def build_overlap_rows(competitor_positions: Dict[str, Dict[str, int]],
 
 
 def rollup_by_cell(rows: List[Dict[str, Any]]) -> Dict[str, float]:
-    """Sum each row's keyword_volume into its cell (SC-6.3).
+    """Sum each row's best_rival_etv into its cell (SC-6.3).
 
     Every keyword contributes to exactly one cell, so the sum of the cell rollups
-    equals the sum of the member keyword volumes — no double-count, no drop.
+    equals the sum of the member rows' figures — no double-count, no drop.
     """
     rollup: Dict[str, float] = {}
     for row in rows:
-        rollup[row["cell"]] = rollup.get(row["cell"], 0.0) + float(row.get("keyword_volume", 0.0) or 0.0)
+        rollup[row["cell"]] = rollup.get(row["cell"], 0.0) + float(row.get("best_rival_etv", 0.0) or 0.0)
     return rollup
 
 
@@ -196,7 +198,7 @@ def analyze_serp_overlap(competitor_positions: Dict[str, Dict[str, int]],
                          client_keywords: Set[str], client_domain: str,
                          client_da: int, competitor_das: Dict[str, int],
                          config: Dict[str, Any], snapshot_date: str,
-                         keyword_volumes: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                         best_rival_etv: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
     """Orchestrate C4: the classified matrix + AnalysisEngine gap/feasibility + the
     per-cell volume rollup + action queues. Pure — the caller persists rows via
     db.save_serp_overlap and feasibility via db.save_competitor_feasibility.
@@ -206,7 +208,7 @@ def analyze_serp_overlap(competitor_positions: Dict[str, Dict[str, int]],
     client_positions_available = bool(client_positions)
     gap_keywords = compute_analysis_gap(client_domain, competitor_keywords, client_keywords)
     rows = build_overlap_rows(competitor_positions, client_positions, config,
-                              snapshot_date, gap_keywords, keyword_volumes,
+                              snapshot_date, gap_keywords, best_rival_etv,
                               client_positions_available)
     return {
         "rows": rows,

@@ -62,9 +62,12 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
             competitor_positions=db.get_competitor_positions(run_id),
             client_positions=client_positions, competitor_keywords=competitor_keywords,
             client_keywords=set(client_positions.keys()), client_domain=client_domain,
-            client_da=client_da, competitor_das=db.get_competitor_das(),
+            client_da=client_da,
+            # C-C-10: this run's domains only. `competitors` is domain-keyed and
+            # overwritten in place, so unscoped it listed every domain ever audited.
+            competitor_das=db.get_competitor_das(run_id),
             config=shared_config.get("serp_overlap", {}), snapshot_date=today,
-            keyword_volumes=db.get_keyword_volumes(run_id))
+            best_rival_etv=db.get_best_rival_etv(run_id))
         db.save_serp_overlap(run_id, overlap["rows"])
         db.save_competitor_feasibility(run_id, client_da, overlap["feasibility"])
         summary["overlap_rows"] = len(overlap["rows"])

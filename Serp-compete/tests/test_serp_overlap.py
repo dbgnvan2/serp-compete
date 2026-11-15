@@ -73,16 +73,20 @@ def test_sc63_rollup_matches_member_volumes():
         "kw_excl_self": {},                                    # only client → exclusive_self
     }
     client = {"kw_commodity": 5, "kw_excl_self": 2}
+    # C-M-20: the figure is the best-ranking RIVAL's DataForSEO ETV per keyword,
+    # not a search volume — named for what it is on the row, in the DB and in the
+    # report.
     volumes = {"kw_commodity": 1000.0, "kw_excl_comp": 400.0, "kw_excl_self": 50.0}
-    rows = build_overlap_rows(comp, client, CONFIG, "d", keyword_volumes=volumes)
+    rows = build_overlap_rows(comp, client, CONFIG, "d", best_rival_etv=volumes)
     rollup = rollup_by_cell(rows)
     assert rollup[CELL_SHARED_COMMODITY] == 1000.0
     assert rollup[CELL_EXCLUSIVE_COMPETITOR] == 400.0
     assert rollup[CELL_EXCLUSIVE_SELF] == 50.0
     # invariant: sum of cell rollups == sum of all member volumes (no drop/double-count)
     assert sum(rollup.values()) == sum(volumes.values())
-    # keyword_volume is carried on each row (surfaced, not discarded)
-    assert all("keyword_volume" in r for r in rows)
+    # best_rival_etv is carried on each row (surfaced, not discarded)
+    assert all("best_rival_etv" in r for r in rows)
+    assert not any("keyword_volume" in r for r in rows)   # the misleading name is gone
 
 
 # ── SC-6.4 AnalysisEngine wired (find_keyword_intersection + check_feasibility) ─
@@ -159,24 +163,35 @@ def test_get_competitor_positions_best_per_domain(tmp_path):
     assert pos == {"kw": {"a.com": 3, "b.com": 6}}  # best (lowest) per domain
 
 
-def test_get_keyword_volumes_max_per_keyword(tmp_path):
+def test_get_best_rival_etv_max_per_keyword(tmp_path):
     db = DatabaseManager(str(tmp_path / "v.db"))
     run_id = db.create_run("c.com")
     db.save_competitor_metrics([
         {"domain": "a.com", "url": "u1", "keyword": "kw", "position": 2, "traffic": 100},
         {"domain": "b.com", "url": "u2", "keyword": "kw", "position": 5, "traffic": 300},  # max
     ], run_id)
-    assert db.get_keyword_volumes(run_id) == {"kw": 300.0}
+    assert db.get_best_rival_etv(run_id) == {"kw": 300.0}
+    assert not hasattr(db, "get_keyword_volumes")     # C-M-20: one name for it
 
 
 def test_get_competitor_das_from_competitors_table(tmp_path):
+    """C-C-10: run-scoped, and `run_id` is REQUIRED — an unscoped read listed every
+    domain ever audited in the feasibility table."""
     db = DatabaseManager(str(tmp_path / "d.db"))
+    run_id = db.create_run("c.com")
     with db._get_connection() as conn:
         conn.execute("INSERT INTO competitors (domain, avg_da) VALUES ('a.com', 42)")
         conn.execute("INSERT INTO competitors (domain, avg_da) VALUES ('b.com', NULL)")
+        conn.execute("INSERT INTO competitors (domain, avg_da) VALUES ('old.com', 60)")
         conn.commit()
-    das = db.get_competitor_das()
-    assert das == {"a.com": 42}  # NULL avg_da excluded
+    db.save_competitor_metrics([
+        {"domain": "a.com", "url": "u", "keyword": "kw", "position": 3, "traffic": 1},
+        {"domain": "b.com", "url": "u2", "keyword": "kw", "position": 4, "traffic": 1},
+    ], run_id)
+    das = db.get_competitor_das(run_id)
+    assert das == {"a.com": 42}   # NULL avg_da excluded; old.com not in this run
+    with pytest.raises(TypeError):
+        db.get_competitor_das()   # the unscoped call cannot be made at all
 
 
 # ── sweep-fix regression tests ───────────────────────────────────────────────

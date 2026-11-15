@@ -33,8 +33,16 @@ def get_top_domains(path: str, limit: int = 5) -> List[str]:
         print(f"Error: {path} not found.")
         return []
     df = pd.read_excel(path)
-    if 'total_keywords' in df.columns:
-        df = df.sort_values(by='total_keywords', ascending=False)
+    # C-C-02: the column is `sampled_keywords` since 2026-11-15 — the distinct
+    # keywords a run audited for the domain. It used to be `total_keywords`, inflated
+    # by a cross join (keywords × audited pages), which is what this sort read. The
+    # old name is still accepted so an older workbook can be mined, but note that
+    # sorting a pre-2026-11-15 workbook by it ranks by pages audited as much as by
+    # breadth.
+    for column in ('sampled_keywords', 'total_keywords'):
+        if column in df.columns:
+            df = df.sort_values(by=column, ascending=False)
+            break
     return df['domain'].head(limit).tolist()
 
 def contains_numbers(text: str) -> bool:

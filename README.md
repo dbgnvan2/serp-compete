@@ -38,6 +38,13 @@ Auto-finds latest competitor handoff from Serp-Discover and runs audit.
 cd Serp-compete
 PYTHONPATH=. python3 src/main.py
 ```
+With no argument the newest `competitor_handoff_*.json` in the project root is used.
+To audit a specific one — and have the briefing header name it:
+```bash
+PYTHONPATH=. python3 src/main.py --handoff /path/to/competitor_handoff_….json
+```
+The GUI passes this flag for the handoff you select, so its selection now takes effect
+whether or not "Copy handoff to root" is ticked.
 
 ## Output
 
@@ -146,6 +153,13 @@ All settings in `shared_config.json`:
 - `risk_signals.cliff_min_sample` — Smallest per-run keyword sample a `visibility_cliff` may be
   computed on; below it the signal is withheld and the briefing says so (default 10; editorial,
   uncalibrated 2026-11-15)
+- `reporting.markdown_row_cap` / `reporting.magnet_markdown_row_cap` — How many rows the
+  **markdown** briefing prints per long section (30 / 20); every Excel sheet always carries the
+  full set, and each capped section says "Showing the first N of M"
+- `reporting.systems_depth_min_t2` — Tier-2 term count at which `systemic_depth` reads
+  "Systems (Tier 2 only)" rather than "Trace" (default 3; editorial, uncalibrated 2026-11-15)
+- `orchestrator.reports_dir` — Where the briefing and workbook are written (set in the GUI's
+  Settings tab; honoured by the writer since 2026-11-15)
 - `handoff.supported_versions` — Tool 1 handoff formats accepted (e.g. `2.0`, `2.1`)
 - `eeat_weights`, `cluster_thresholds`, `scoring_weights` — tuning for the scoring engines
 

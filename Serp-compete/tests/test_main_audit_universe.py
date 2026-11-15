@@ -14,6 +14,7 @@ Promotes the C-M-01 trace and probes/compete_method/p02 §B to behaviour:
   * the client's branded-demand query comes from the handoff's client_brand_names.
 """
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -246,7 +247,7 @@ def test_only_the_page_clearing_the_floor_is_a_magnet(audited):
                         "keyword_relevant=1 AND medical_score>=10 AND rank<=10",
                     (run_id,))
     assert [r[0] for r in magnets] == [HANDOFF_URL]   # …one qualifies
-    assert "Showing 1 of 2 audited page(s)" in markdown
+    assert "1 of 2 audited page(s) meet the magnet definition" in markdown
 
 
 def test_the_reframe_target_is_the_vacuum_and_carries_its_score(audited):
@@ -286,3 +287,69 @@ def test_the_competitors_branded_queries_use_the_display_brand(audited):
         db, "SELECT brand FROM brand_demand_bench WHERE run_id=?",
         (db.get_latest_run_id(),))}
     assert "Jericho Counselling" in db_brands
+
+
+# ── C-C-16: the handoff the caller selects is the handoff that is audited ────
+
+def test_cc16_parse_args_reads_the_handoff_flag():
+    from src.main import parse_args
+    assert parse_args(["--handoff", "/outputs/h.json"])["handoff"] == "/outputs/h.json"
+    assert parse_args(["--handoff=/outputs/h.json"])["handoff"] == "/outputs/h.json"
+    assert parse_args([])["handoff"] is None          # unchanged default behaviour
+
+
+def test_cc16_an_explicit_handoff_beats_the_newest_file(tmp_path, monkeypatch):
+    """`find_latest_handoff_file` picks the newest mtime in the project root, so the
+    GUI's selection only took effect when "Copy handoff to root" was ticked: with it
+    cleared, selecting an OLDER handoff silently audited the newest one."""
+    import src.main as main
+
+    older = tmp_path / "competitor_handoff_older_20260101_0000.json"
+    newer = tmp_path / "competitor_handoff_newer_20261115_0000.json"
+    chosen = _handoff()
+    chosen["source_run_id"] = "the-one-i-picked"
+    older.write_text(json.dumps(chosen))
+    other = _handoff()
+    other["source_run_id"] = "the-newest-file"
+    newer.write_text(json.dumps(other))
+    os.utime(newer, (2_000_000_000, 2_000_000_000))    # definitively newest
+
+    with patch.object(main, "find_latest_handoff_file", return_value=str(newer)):
+        _targets, _paa, _brands, used = main.get_latest_market_data(str(older))
+    assert used == str(older)
+
+    # …and with no explicit path the newest file is still used, as before.
+    with patch.object(main, "find_latest_handoff_file", return_value=str(newer)):
+        _targets, _paa, _brands, used_default = main.get_latest_market_data()
+    assert used_default == str(newer)
+
+
+def test_cc16_a_missing_explicit_handoff_fails_loudly(tmp_path):
+    import src.main as main
+    with pytest.raises(SystemExit):
+        main.get_latest_market_data(str(tmp_path / "does_not_exist.json"))
+
+
+def test_cc16_the_briefing_names_the_handoff_that_was_audited(audited):
+    _db, markdown, _fakes = audited
+    assert "**Handoff:** competitor_handoff_test_20261114_1200.json" in markdown
+
+
+def test_cc16_the_orchestrator_passes_the_selected_handoff():
+    """The GUI needs streamlit, which this repo deliberately does not install (only
+    the optional GUI imports it), so its call site is checked by parsing rather than
+    executing — the same approach test_risk_radar.TestMainWiring uses for main.py.
+    Matching source TEXT would also match a comment; the AST cannot."""
+    import ast
+    src_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "src", "orchestrator.py")
+    with open(src_path, encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    cmd_lists = [node.value for node in ast.walk(tree)
+                 if isinstance(node, ast.Assign)
+                 and any(getattr(t, "id", None) == "cmd" for t in node.targets)
+                 and isinstance(node.value, ast.List)]
+    assert cmd_lists, "orchestrator.py no longer builds a `cmd` list"
+    rendered = [ast.unparse(node) for node in cmd_lists]
+    assert any("--handoff" in r and "selected_handoff_path" in r for r in rendered), \
+        f"orchestrator must pass the selected handoff to main.py; got {rendered}"

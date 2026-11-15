@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 from src.database import DatabaseManager, load_shared_config, magnet_sql, magnet_thresholds
 import datetime
@@ -19,6 +21,32 @@ class ReportGenerator:
         # re-inventing thresholds of its own (P4).
         self.config = load_shared_config()
         self.vacuum_min_medical, self.magnet_max_position = magnet_thresholds(self.config)
+        # C-C-16: honour `orchestrator.reports_dir`. The GUI wrote the setting into
+        # shared_config.json and nothing read it, so new reports kept landing in
+        # Serp-compete/ while "Previous Reports" browsed somewhere else.
+        orchestrator_cfg = self.config.get("orchestrator", {}) or {}
+        self.output_dir = orchestrator_cfg.get("reports_dir") or "."
+        # C-C-07: display caps for the MARKDOWN only; the Excel sheets get the full
+        # frame. Editorial, display-only (shared_config `reporting.*`).
+        reporting_cfg = self.config.get("reporting", {}) or {}
+        self.markdown_row_cap = int(reporting_cfg.get("markdown_row_cap", 30))
+        self.magnet_row_cap = int(reporting_cfg.get("magnet_markdown_row_cap", 20))
+        self.t2_depth_min = int(reporting_cfg.get("systems_depth_min_t2", 3))
+
+    def _capped(self, df, cap: int, label: str):
+        """(display frame, "showing N of M" note) — C-C-07.
+
+        A LIMIT in the SQL truncated the markdown AND the Excel sheet identically and
+        said nothing: the EEAT and GEO sections showed the alphabetically-first ~10
+        competitors of 15 and the Excel sheet, which is supposed to be the full
+        export, was cut to the same 30 rows.
+        """
+        total = len(df)
+        if total <= cap:
+            return df, f"_{total} {label}._"
+        return (df.head(cap),
+                f"_Showing the first {cap} of {total} {label} — the full set is in "
+                f"the Excel workbook._")
 
     def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None, run_coverage: dict = None):
         """
@@ -38,10 +66,14 @@ class ReportGenerator:
             return
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        handoff_name = (run_coverage or {}).get("handoff_file")
         report = [
             f"# Serp-comp Strategic Briefing (Run ID: {run_id})",
             f"**Client:** {client_domain}",
             f"**Date:** {timestamp}",
+            # C-C-16: name the input. Two handoffs in the project root differ only by
+            # timestamp, and the briefing used to be silent about which one it read.
+            f"**Handoff:** {os.path.basename(handoff_name) if handoff_name else 'not recorded for this run'}",
             "\n## Executive Summary",
             "This report identifies strategic openings where competitors rely on the 'Medical Model' and provides automated Bowen-based reframes."
         ]
@@ -71,6 +103,23 @@ class ReportGenerator:
                     "> ℹ️ **Keyword enrichment was unavailable** for "
                     + "; ".join(f"{d} ({r})" for d, r in enrichment_failures)
                     + ". Those domains were audited on their handoff targets only.")
+            blocked = run_coverage.get("blocked_domains") or []
+            if blocked:
+                report.append(
+                    "> 🛑 **Blocked by the 429 circuit breaker** (remaining pages not "
+                    "audited): " + ", ".join(blocked) + ".")
+            cached = run_coverage.get("cached_domains") or []
+            if cached:
+                report.append(
+                    "> ⚡ **Served at least one page from the 7-day semantic cache:** "
+                    + ", ".join(cached)
+                    + ". Their scores are as fresh as that cached scrape, not as this run.")
+            incomplete = run_coverage.get("incomplete_tier_domains") or []
+            if incomplete:
+                report.append(
+                    "> ℹ️ **Tier counts incomplete** for " + ", ".join(incomplete)
+                    + " (pages cached before the counts were persisted), so their "
+                      "`market_position` classification is withheld this run.")
             universe = run_coverage.get("universe") or {}
             if universe:
                 report.append(
@@ -131,6 +180,12 @@ class ReportGenerator:
             volatility = self.db.get_volatility_alerts(run_id)
             if volatility:
                 report.append("\n## 📉 Volatility Alerts")
+                # C-M-20: the sign convention was never stated, and in SERP positions
+                # a bigger number is worse — the opposite of most metrics.
+                report.append("_`shift` is the change in the domain's average "
+                              "position since the previous run: **positive = moved "
+                              "DOWN** (worse), negative = moved up. Averaged over the "
+                              "keywords both runs measured._")
                 df_vol = pd.DataFrame(volatility)
                 report.append(df_vol.to_markdown(index=False))
 
@@ -164,44 +219,80 @@ class ReportGenerator:
                     else:
                         report.append(f"- **{alert['type']}**: {alert['domain']} ({alert['keyword']})")
 
-            # Revision 3: Competitor Overview with Market Position & Systemic Depth
+            # Revision 3: Competitor Overview with Market Position & Systemic Depth.
+            #
+            # C-C-02 / C-M-04: `total_keywords` used to be
+            # SUM(CASE WHEN m.keyword IS NOT NULL ...) over a LEFT JOIN against
+            # traffic_magnets with no URL condition — a cross product. Each metrics
+            # row was multiplied by the number of magnet rows for the domain, so a
+            # domain with 10 ranked keywords and 3 audited pages reported 30
+            # keywords (run_11 shows 30 for almost every domain, 21 = 7×3, 27 = 9×3)
+            # and `competitor_mining.get_top_domains` sorted competitors by it. The
+            # magnet aggregates now come from a per-domain subquery, and the keyword
+            # count is COUNT(DISTINCT m.keyword).
             df_metrics = pd.read_sql_query('''
-                SELECT m.domain, 
-                       COUNT(DISTINCT m.url) as top_pages, 
-                       SUM(CASE WHEN m.keyword IS NOT NULL AND m.keyword != "" THEN 1 ELSE 0 END) as total_keywords, 
+                SELECT m.domain,
+                       COUNT(DISTINCT m.url) as top_pages,
+                       COUNT(DISTINCT m.keyword) as sampled_keywords,
                        AVG(m.position) as avg_pos,
-                       MAX(tm.medical_score) as max_med,
-                       MAX(tm.systems_score) as max_sys,
-                       MAX(CASE WHEN tm.systemic_label = "Surface-Level" THEN 1 ELSE 0 END) as has_surface,
-                       MAX(CASE WHEN tm.systems_score > 0 AND tm.systemic_label != "Surface-Level" THEN 1 ELSE 0 END) as has_expert,
+                       tm.pages_audited,
+                       tm.max_med,
+                       tm.max_sys,
+                       tm.max_t3,
+                       tm.t2_total,
+                       tm.tier_counts_known,
+                       tm.has_surface,
                        meta.market_position,
                        meta.strategy as recommended_strategy
                 FROM competitor_metrics m
                 LEFT JOIN competitor_metadata meta ON m.domain = meta.domain
-                LEFT JOIN traffic_magnets tm ON m.run_id = tm.run_id AND m.domain = tm.domain
+                LEFT JOIN (
+                    SELECT domain,
+                           COUNT(*) as pages_audited,
+                           MAX(medical_score) as max_med,
+                           MAX(systems_score) as max_sys,
+                           MAX(COALESCE(t3_count, 0)) as max_t3,
+                           SUM(COALESCE(t2_count, 0)) as t2_total,
+                           MIN(CASE WHEN t2_count IS NULL OR t3_count IS NULL
+                                    THEN 0 ELSE 1 END) as tier_counts_known,
+                           MAX(CASE WHEN systemic_label = "Surface-Level" THEN 1 ELSE 0 END) as has_surface
+                    FROM traffic_magnets
+                    WHERE run_id = ?
+                    GROUP BY domain
+                ) tm ON tm.domain = m.domain
                 WHERE m.run_id = ?
                 GROUP BY m.domain
-            ''', conn, params=(run_id,))
+            ''', conn, params=(run_id, run_id))
 
             def get_systemic_depth(row):
-                # Safety check for None values
-                max_med = row['max_med'] if row['max_med'] is not None else 0
-                max_sys = row['max_sys'] if row['max_sys'] is not None else 0
-                
-                if row['has_expert'] == 1:
-                    return "High"
-                if row['has_surface'] == 1:
-                    return "Surface"
-                if max_med > max_sys:
-                    return "Medical"
-                if max_sys > 0:
-                    return "Systems"
-                return "Unknown"
+                """C-M-05: depth from the TIER COUNTS, not from a comparison of a raw
+                medical count with a weighted systems score.
+
+                The old bands were: `systems_score > 0 AND label != 'Surface-Level'`
+                → "High" (so one occurrence of "relationship", score 0.5, read as
+                high systemic depth); then `max_med > max_sys` → "Medical", comparing
+                a raw Tier-1 count with a ×2.0/×0.5-weighted score, so two medical
+                words beat three Tier-2 words. The manual tells the owner to pick
+                targets with this column.
+                """
+                if not row.get('tier_counts_known'):
+                    return "Not recorded"
+                if (row.get('max_t3') or 0) >= 1:
+                    return "Bowen (Tier 3 present)"
+                if (row.get('t2_total') or 0) >= self.t2_depth_min:
+                    return "Systems (Tier 2 only)"
+                if row.get('has_surface') == 1:
+                    return "Surface-Level"
+                if (row.get('t2_total') or 0) > 0:
+                    return "Trace (1-2 Tier 2 terms)"
+                return "None detected"
 
             if not df_metrics.empty:
                 df_metrics['systemic_depth'] = df_metrics.apply(get_systemic_depth, axis=1)
                 # Reorder columns to include systemic_depth
-                cols = ['domain', 'top_pages', 'total_keywords', 'avg_pos', 'systemic_depth', 'market_position', 'recommended_strategy']
+                cols = ['domain', 'top_pages', 'sampled_keywords', 'pages_audited',
+                        'avg_pos', 'systemic_depth', 'market_position',
+                        'recommended_strategy']
                 df_metrics = df_metrics[cols]
 
 
@@ -214,6 +305,16 @@ class ReportGenerator:
 
             if not df_metrics.empty:
                 report.append("\n## Competitor Ranking Summary")
+                report.append(
+                    "_`sampled_keywords` is the number of DISTINCT keywords this run "
+                    "audited for the domain — its handoff targets plus any enrichment "
+                    "keywords that passed the relevance filter — not the keywords it "
+                    "ranks for in total. `pages_audited` is how many of its pages were "
+                    "scored (capped by `technical.max_audit_pages_per_domain`). "
+                    "`avg_pos` averages whatever each keyword's source measured: the "
+                    "handoff rank for a handoff keyword, DataForSEO's `rank_absolute` "
+                    "for an enrichment one. `systemic_depth` reads the Tier-2/Tier-3 "
+                    "counts; `Not recorded` means a cached page predates those counts._")
                 report.append(df_metrics.to_markdown(index=False))
                 # C-M-01: say where this run's keywords came from. `handoff` =
                 # Tool 1 measured the URL ranking for it; `ranked_keywords` = a
@@ -229,14 +330,20 @@ class ReportGenerator:
                           "when they are in the handoff set or carry a clinical term, and "
                           "never when they contain the competitor's own brand token.")
 
-            # 2b. EEAT Scores (Gap 3 enhancement)
+            # 2b. EEAT Scores (Gap 3 enhancement).
+            # C-C-07: no LIMIT in the SQL — the Excel sheet gets every row and the
+            # markdown is capped for readability with a "showing N of M" line.
+            # Ordered by confidence tier, then url: `ORDER BY url LIMIT 30` meant the
+            # section showed the alphabetically-first ~10 competitors of 15.
             df_eeat = pd.read_sql_query('''
                 SELECT url, score_confidence, experience_score, expertise_score,
                        authoritativeness_score, trustworthiness_score
                 FROM eeat_scores
                 WHERE run_id = ?
-                ORDER BY url
-                LIMIT 30
+                ORDER BY
+                    CASE score_confidence
+                        WHEN 'high' THEN 0 WHEN 'medium' THEN 1
+                        WHEN 'low' THEN 2 ELSE 3 END, url
             ''', conn, params=(run_id,))
 
             if not df_eeat.empty:
@@ -245,7 +352,10 @@ class ReportGenerator:
                 # Format numeric columns to 2 decimals
                 for col in ['experience_score', 'expertise_score', 'authoritativeness_score', 'trustworthiness_score']:
                     df_eeat[col] = df_eeat[col].apply(lambda x: f"{x:.2f}" if x is not None else "—")
-                report.append(df_eeat.to_markdown(index=False))
+                disp_eeat, eeat_note = self._capped(df_eeat, self.markdown_row_cap,
+                                                    "scored page(s)")
+                report.append(eeat_note)
+                report.append(disp_eeat.to_markdown(index=False))
                 report.append("\n_Note: These scores are heuristic proxies based on SEO industry conventions, not Google's proprietary EEAT model._")
 
             # 2c. Cluster Analysis (Gap 4 enhancement)
@@ -271,8 +381,12 @@ class ReportGenerator:
             # relevance test. The predicate lives in database.magnet_sql so the magnet
             # table, the vacuum list and the reframe query cannot drift apart.
             floor, max_pos = self.vacuum_min_medical, self.magnet_max_position
+            # C-C-07: the full magnet frame. `LIMIT 20` truncated the Excel sheet
+            # identically to the markdown, and the Systemic-Vacuum list was then a
+            # subset of that truncated set — with est_traffic ties (DataForSEO `etv`
+            # 0 is common) deciding arbitrarily which 20 survived.
             df_magnets = pd.read_sql_query(
-                magnet_sql(limit=20), conn, params=(run_id, floor, max_pos))
+                magnet_sql(), conn, params=(run_id, floor, max_pos))
             audited_pages = self.db.count_audited_pages(run_id)
             magnet_filter_note = (
                 f"_Filter: handoff rank ≤ {max_pos}, medical_score ≥ {floor} "
@@ -282,19 +396,24 @@ class ReportGenerator:
                 f"monthly visits for that keyword×position, 0 when it was not measured._")
 
             if not df_magnets.empty:
+                disp_magnets, magnet_note = self._capped(
+                    df_magnets, self.magnet_row_cap, "qualifying page(s)")
                 report.append("\n## Identified 'Traffic Magnets'")
-                report.append(f"Showing {len(df_magnets)} of {audited_pages} audited "
-                              f"page(s) that meet the magnet definition.")
+                report.append(f"{len(df_magnets)} of {audited_pages} audited page(s) "
+                              f"meet the magnet definition. {magnet_note}")
                 report.append(magnet_filter_note)
-                report.append(df_magnets.to_markdown(index=False))
+                report.append(disp_magnets.to_markdown(index=False))
 
                 # Spec 2: Highlight Systemic Vacuums — the magnets with no systemic
                 # language. Same predicate as the reframe targets, by construction.
                 vacuums = df_magnets[(df_magnets['systems_score'] == 0) | (df_magnets['systemic_label'] == 'Surface-Level')]
                 if not vacuums.empty:
+                    disp_vacuums, vacuum_note = self._capped(
+                        vacuums, self.markdown_row_cap, "vacuum(s)")
                     report.append("\n### ⚡ Strategic Targets: Systemic Vacuums")
                     report.append("These competitors rank on a handed-over keyword using medical language and show no real systemic framing. They are our **primary targets** for content reframing.")
-                    for _, v in vacuums.iterrows():
+                    report.append(vacuum_note)
+                    for _, v in disp_vacuums.iterrows():
                         label_str = f" [{v['systemic_label']}]" if v['systemic_label'] != 'Standard' else ""
                         report.append(
                             f"- **{v['domain']}** ({v['primary_keyword']} — "
@@ -319,7 +438,6 @@ class ReportGenerator:
                     CASE extractability_tier
                         WHEN 'Strong' THEN 0 WHEN 'Moderate' THEN 1
                         WHEN 'Weak' THEN 2 ELSE 3 END, url
-                LIMIT 30
             ''', conn, params=(run_id,))
 
             if not df_geo.empty:
@@ -328,7 +446,12 @@ class ReportGenerator:
                               "competitor page (schema markup, credentialed authorship, question-shaped "
                               "headings, freshness). These explain *why* a page is citable — match or "
                               "exceed them on the client's equivalent page.")
-                for _, g in df_geo.iterrows():
+                # C-C-07: capped for display only (tier order, then url); the sheet
+                # carries all of them.
+                disp_geo, geo_note = self._capped(df_geo, self.markdown_row_cap,
+                                                  "profiled page(s)")
+                report.append(geo_note)
+                for _, g in disp_geo.iterrows():
                     report.append(f"- **{g['url']}** — _{g['extractability_tier']}_: {g['why_cited']}")
                 report.append("\n_Heuristic structural proxies for AI citability, not measured citations. "
                               "Answer-first placement and FAQ-answers-in-HTML are not yet measured._")
@@ -336,7 +459,7 @@ class ReportGenerator:
             # 3c. SERP Overlap & Differentiation Gap (C4 / SC-6)
             df_overlap = pd.read_sql_query('''
                 SELECT keyword, cell, self_position, overlap_count, commodity_score,
-                       keyword_volume, all_competitor_gap, estimation_basis,
+                       best_rival_etv, all_competitor_gap, estimation_basis,
                        competitors_ranking_json
                 FROM serp_overlap
                 WHERE run_id = ?
@@ -361,8 +484,13 @@ class ReportGenerator:
                 counts = df_overlap['cell'].value_counts().to_dict()
                 report.append("\n**Cell distribution:** "
                               + ", ".join(f"{cell}: {n}" for cell, n in sorted(counts.items())))
-                vol = df_overlap.groupby('cell')['keyword_volume'].sum().to_dict()
-                report.append("**Volume by cell (est. traffic):** "
+                # C-M-20: this is not a search volume and not your traffic. It is
+                # MAX(competitor_metrics.traffic) per keyword — the best-ranking
+                # RIVAL's DataForSEO ETV — summed per cell.
+                vol = df_overlap.groupby('cell')['best_rival_etv'].sum().to_dict()
+                report.append("**Best-rival ETV by cell** (summed DataForSEO estimated "
+                              "monthly visits of the best-ranking competitor per "
+                              "keyword — not search volume, not your traffic): "
                               + ", ".join(f"{cell}: {int(v)}" for cell, v in sorted(vol.items())))
                 excl = df_overlap[df_overlap['cell'] == 'exclusive_competitor']
                 if not excl.empty:
@@ -609,9 +737,18 @@ class ReportGenerator:
                     report.append("\n" + r['reframe'])
                     report.append("\n---")
 
-        # Output paths
-        md_path = f"strategic_briefing_run_{run_id}.md"
-        excel_path = f"audit_results_run_{run_id}.xlsx"
+        # Output paths — `orchestrator.reports_dir` when the GUI set one (C-C-16),
+        # else the working directory as before.
+        out_dir = self.output_dir or "."
+        if out_dir not in (".", ""):
+            try:
+                os.makedirs(out_dir, exist_ok=True)
+            except OSError as exc:
+                print(f"⚠️ Reports directory {out_dir} unusable ({exc}) — "
+                      f"writing to the working directory instead.")
+                out_dir = "."
+        md_path = os.path.join(out_dir, f"strategic_briefing_run_{run_id}.md")
+        excel_path = os.path.join(out_dir, f"audit_results_run_{run_id}.xlsx")
 
         report_content = "\n".join(report)
         with open(md_path, "w") as f:

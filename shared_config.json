@@ -303,6 +303,12 @@
     "_ambiguous_brand_ratio_comment": "C-M-03: branded demand is measured for the DISPLAY brand ('Lavender Counselling'). When the bare stem's volume ('lavender') is at least this many times the display brand's, the demand cannot be attributed to the practice: the row is labelled estimation_basis=ambiguous_brand, its share and growth are withheld, and it leaves the share denominator. Editorial default, uncalibrated, 2026-11-14.",
     "ambiguous_brand_ratio": 10
   },
+  "reporting": {
+    "_comment": "C-C-07: DISPLAY caps for the markdown briefing only — every Excel sheet carries the full frame, and each capped section prints 'Showing the first N of M'. Before this the LIMITs were in the SQL, so the sheet that is meant to be the full export was truncated identically and said nothing. systems_depth_min_t2 is the Tier-2 term count at which a domain's systemic_depth reads 'Systems (Tier 2 only)' rather than 'Trace'; editorial, uncalibrated 2026-11-15, and a COUNT not a density (densities need the per-page word counts that C-M-19 / chunk C4 adds).",
+    "markdown_row_cap": 30,
+    "magnet_markdown_row_cap": 20,
+    "systems_depth_min_t2": 3
+  },
   "risk_signals": {
     "cliff_drop_pct": 0.3,
     "cliff_lookback": 6,

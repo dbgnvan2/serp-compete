@@ -306,6 +306,12 @@ winning while you're not on the board.
 undifferentiated ground). The feasibility read (your Domain Authority vs each
 competitor's) flags which are realistic.
 
+> **Fixed 2026-11-15.** The per-cell figure is now labelled **best-rival ETV**: it
+> is `MAX(competitor_metrics.traffic)` per keyword — the DataForSEO estimated monthly
+> visits of the best-ranking audited rival — summed per cell. It was presented as
+> "Volume by cell (est. traffic)" and stored in a column called `keyword_volume`,
+> which reads as search demand (C-M-20).
+
 **Where you see it:** the *SERP Overlap & Differentiation Gap* section (cell
 distribution + both action queues) and the *SERP Overlap* Excel sheet. It **folds in**
 the Systemic Vacuum list rather than repeating it.
@@ -316,7 +322,11 @@ the Systemic Vacuum list rather than repeating it.
 > "absent") and those keywords are withheld from the action queues. "Commodity" is a
 > **local overlap-density proxy** (how many rivals share the SERP) — a strategic
 > framing, not a measured index. A companion **Competitor Feasibility** read (your
-> Domain Authority vs each competitor's) flags which targets are realistic.
+> Domain Authority vs each competitor's) flags which targets are realistic — **for
+> the competitors this run audited**. Until 2026-11-15 that table read every domain
+> ever stored, so it listed competitors that were not in the current handoff at all,
+> with authority figures of unknown age, while the Barbell section beside it (reading
+> the same column) listed only this run's (C-C-10).
 
 ### 4.5 Barbell Positioning — the shape of the competitive field  ⭐ newest
 **What it does:** places every competitor (and you) on a 2×2 — an **authority** axis
@@ -561,7 +571,7 @@ and `audit_results_run_12.xlsx`).
 | 📈 Internal GSC Performance Gaps | Your own low-CTR / Page-2 / mismatch opportunities | Fix titles, boost near-misses |
 | 💰 AI Token Usage | Cost of the reframes this run | Budget awareness |
 | 📉 Volatility / 🚩 Fragile Magnets | Who moved since the last run that saw the same page (one authority-drift detector, thresholded) | Re-prioritise & time your strike |
-| Competitor Ranking Summary | Each competitor's depth, position, recommended strategy, and the **Keyword provenance** line (how many keywords came from the handoff vs. enrichment) | Pick who to target |
+| Competitor Ranking Summary | Each competitor's `sampled_keywords` (distinct keywords THIS run audited, not keywords it ranks for), `pages_audited`, avg position, `systemic_depth` from the Tier-2/3 counts, recommended strategy, and the **Keyword provenance** line | Pick who to target |
 | EEAT Competitive Analysis | How credible each page *looks* | Out-signal the weak, match the strong |
 | Internal Linking Cluster Analysis | How defended each competitor is | Prefer isolated targets |
 | GEO / Extractability | *Why* AI engines cite each page | Copy the structure that earns citations |
@@ -578,7 +588,17 @@ and `audit_results_run_12.xlsx`).
 tabular form of the matching briefing section — use it to sort/filter (e.g. sort
 *GEO Extractability* by tier, or *Traffic Magnets* by traffic) and to paste into a
 content plan. *Traffic Magnets* carries `keyword_source` and the handoff `rank`;
-*Branded Demand* carries the `queries` actually sent for volume. A sheet only appears if that run produced data for it.
+*Branded Demand* carries the `queries` actually sent for volume; *SERP Overlap*
+carries `best_rival_etv` (see §4.4).
+
+**Every sheet is the FULL set of rows for the run.** The markdown briefing caps the
+long sections for readability — `reporting.markdown_row_cap` (30) and
+`reporting.magnet_markdown_row_cap` (20) — and says so inline ("Showing the first 30
+of 45 profiled page(s)"). Until 2026-11-15 the cap was a `LIMIT` in the SQL, so the
+sheet was truncated identically and nothing said so: with 15 competitors × 3 pages the
+*EEAT* and *GEO* sections and sheets showed the alphabetically-first ~10 competitors
+and silently dropped the other five, and the *Traffic Magnets* sheet was cut to 20
+rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only appears if that run produced data for it.
 
 ---
 
@@ -600,6 +620,21 @@ content plan. *Traffic Magnets* carries `keyword_source` and the handoff `rank`;
   used to be, the briefing states the coverage — *Run coverage* in the Executive
   Summary names the skipped domains, the unmeasured authorities and the "N of M URLs
   had PA" count.
+- **`sampled_keywords` is this run's sample, not the competitor's keyword count.**
+  It is the distinct keywords audited for the domain: its handoff targets plus any
+  enrichment keywords that passed the relevance filter. Until 2026-11-15 the column
+  was called `total_keywords` and was inflated by a cross join — keywords × audited
+  pages — so a domain with 10 keywords and 3 pages reported 30 and the column
+  mis-ranked competitors by breadth (C-C-02).
+- **`systemic_depth` reads the Tier-2 / Tier-3 counts**, with `Not recorded` when a
+  cache-served page predates those counts. It used to read "High" from
+  `systems_score > 0` (one occurrence of "relationship") and "Medical" from a raw
+  Tier-1 count compared with a weighted systems score (C-M-05). The Tier-2 band is a
+  COUNT, not a density: per-1000-word densities need the page word counts that
+  C-M-19 (chunk C4) adds.
+- **`best_rival_etv` is the best-ranking RIVAL's estimated monthly visits** for that
+  keyword — not search volume and not your traffic. It was labelled "Volume by cell
+  (est. traffic)" and stored as `keyword_volume` (C-M-20).
 - **The magnet / vacuum thresholds are editorial and uncalibrated**
   (`technical.vacuum_min_medical` = 10 and `technical.magnet_max_position` = 10, both
   dated 2026-11-14; `branded_demand.ambiguous_brand_ratio` = 10). They were chosen to

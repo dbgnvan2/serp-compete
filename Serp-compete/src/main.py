@@ -160,17 +160,25 @@ def _remember_moz_block(handoff_data: Dict[str, Any]) -> None:
         print(f"⚠️ Moz block not retained: {exc}")
 
 
-def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]], List[str]]:
+def get_latest_market_data(handoff_path: str = None) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]], List[str], str]:
     """
     Gap 1: Competitor handoff ingestion from Tool 1.
 
-    Tries sources in order:
+    With `handoff_path` that exact file is used (the orchestrator's selection, passed
+    through as `--handoff`). Without it, sources are tried in order:
     1. competitor_handoff_*.json (Tool 1 Gap 3) — validated against handoff_schema.json
     2. market_analysis_*.json (legacy, deprecated) — with DeprecationWarning
     3. manual_targets.json (developer override) — fallback only
 
     Returns: (list of target entries, dict of keyword -> paa_questions,
-              client brand names from the handoff — [] on the legacy/manual paths)
+              client brand names from the handoff — [] on the legacy/manual paths,
+              the path or label of the source actually used)
+
+    C-C-16: the GUI's handoff selection only reached this function when "Copy handoff
+    to root" happened to be ticked, because the path was never passed and this
+    function picked whichever `competitor_handoff_*.json` in the repo root was newest.
+    Unticked, the owner could select an older handoff and silently get a report about
+    a different file — and nothing in the report named the file it used.
     """
     schema = load_handoff_schema()
     # Cleared per ingestion: the legacy and manual paths never set it, so a
@@ -178,8 +186,11 @@ def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]
     # handoff's anchors to it (P8).
     _remember_moz_block({})
 
-    # 1. Try competitor_handoff_*.json (Tool 1 Gap 3)
-    handoff_file = find_latest_handoff_file()
+    # 1. The explicitly selected handoff, else the newest in the project root.
+    handoff_file = handoff_path or find_latest_handoff_file()
+    if handoff_path and not os.path.exists(handoff_path):
+        print(f"❌ Handoff not found: {handoff_path}")
+        sys.exit(1)
     if handoff_file:
         print(f"📦 Loading competitor handoff from: {handoff_file}")
         try:
@@ -192,7 +203,7 @@ def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]
                     jsonschema.validate(instance=handoff_data, schema=schema)
                     print(f"✅ Handoff validated against schema v{handoff_data.get('schema_version')}")
                     _remember_moz_block(handoff_data)
-                    return convert_handoff_to_targets(handoff_data)
+                    return (*convert_handoff_to_targets(handoff_data), handoff_file)
                 except jsonschema.ValidationError as e:
                     print(f"❌ Handoff validation failed: {e.message}")
                     print(f"   Path: {list(e.path)}")
@@ -200,7 +211,7 @@ def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]
             else:
                 print("⚠️ Schema file not found; skipping validation. Using handoff data as-is.")
                 _remember_moz_block(handoff_data)
-                return convert_handoff_to_targets(handoff_data)
+                return (*convert_handoff_to_targets(handoff_data), handoff_file)
         except Exception as e:
             print(f"❌ Error loading handoff: {e}")
             sys.exit(1)
@@ -217,7 +228,7 @@ def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]
         try:
             with open(legacy_file, 'r') as f:
                 legacy_data = json.load(f)
-            return convert_legacy_to_targets(legacy_data)
+            return (*convert_legacy_to_targets(legacy_data), legacy_file)
         except Exception as e:
             print(f"❌ Error loading legacy file: {e}")
             # Continue to fallback
@@ -230,14 +241,14 @@ def get_latest_market_data() -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]
                 data = json.load(f)
                 targets = [{"domain": d, "url": f"https://{d}", "primary_keyword": "manual_audit", "est_traffic": 0}
                            for d in data.get("competitors", [])]
-                return targets, {}, []
+                return targets, {}, [], MANUAL_TARGETS_PATH
         except Exception as e:
             print(f"❌ Error loading manual targets: {e}")
-            return [], {}, []
+            return [], {}, [], MANUAL_TARGETS_PATH
 
     # No data sources found
     print(f"⚠️ No data sources found (checked: handoff, legacy, manual).")
-    return [], {}, []
+    return [], {}, [], "none"
 
 def pre_flight_check():
     """
@@ -322,7 +333,22 @@ def load_omitted_domains(config):
             return {normalise_domain(line) for line in f if line.strip()}
     return set()
 
-def run_audit():
+def parse_args(argv: List[str]) -> Dict[str, Any]:
+    """`--handoff <path>` — the handoff the caller selected (C-C-16).
+
+    Hand-rolled rather than argparse so the one flag stays trivially testable and
+    `python3 src/main.py` with no arguments behaves exactly as before.
+    """
+    options: Dict[str, Any] = {"handoff": None}
+    for i, arg in enumerate(argv):
+        if arg == "--handoff" and i + 1 < len(argv):
+            options["handoff"] = argv[i + 1]
+        elif arg.startswith("--handoff="):
+            options["handoff"] = arg.split("=", 1)[1]
+    return options
+
+
+def run_audit(handoff_path: str = None):
     gsc = pre_flight_check()
     if not gsc:
         print("🛑 Pre-flight check failed. Aborting run.")
@@ -333,7 +359,8 @@ def run_audit():
     client_domain = shared_config.get("client", {}).get("domain", "livingsystems.ca")
 
     # 1. Foundation: Dynamic Handover & Velocity Tracker
-    targets_raw, paa_map, client_brand_names = get_latest_market_data()
+    targets_raw, paa_map, client_brand_names, handoff_file = get_latest_market_data(
+        handoff_path)
     if not targets_raw:
         print("❌ No competitors identified. Aborting.")
         return
@@ -410,6 +437,12 @@ def run_audit():
     skipped_domains: List[Tuple[str, str]] = []
     enrichment_failures: List[Tuple[str, str]] = []
     unmeasured_pa_domains: List[str] = []
+    # C-M-20: the Executive Summary must state run coverage, which until now reached
+    # only the console — so a reader of the .md could not tell fresh from cached, nor
+    # a blocked domain from one with nothing to report.
+    blocked_domains: List[str] = []
+    cached_domains: List[str] = []
+    incomplete_tier_domains: List[str] = []
     print(f"🎯 Audit universe: {len(handoff_keywords)} keyword(s) handed over by Tool 1 "
           f"across {len(targets_raw)} target URL(s) in {len(domain_groups)} domain(s).")
 
@@ -507,6 +540,8 @@ def run_audit():
         domain_blocked = False
         domain_scraped_pages = []  # wire-up fix: retain pages for cluster detection
         domain_had_cache_hit = False  # Finding 1: track cache hits for cluster carry-forward
+        domain_tier_counts_complete = True  # C-C-08: False once a page's counts are unknown
+        domain_pages_audited = 0
 
         for page in pages:
             if domain_blocked:
@@ -573,7 +608,12 @@ def run_audit():
                         print(f"  ⚠️ Skipping unreadable page: {url}")
                         continue
                     scores = auditor.analyze_text(content)
-                    db.save_semantic_audit(url, scores['medical_score'], scores['systems_score'], run_id=run_id, label=scores.get('systemic_label', 'Standard'))
+                    db.save_semantic_audit(
+                        url, scores['medical_score'], scores['systems_score'],
+                        run_id=run_id, label=scores.get('systemic_label', 'Standard'),
+                        # C-C-08: persist the real tier counts so a cache hit never
+                        # has to guess them back out of the weighted score.
+                        t2_count=scores.get('t2_count'), t3_count=scores.get('t3_count'))
                     domain_scraped_pages.append(content)
                     # Wire-up fix + SC-1: score EEAT and profile GEO for the freshly-
                     # scraped page (both were built but never called). See enrichment.py.
@@ -584,7 +624,11 @@ def run_audit():
                                        label=scores.get('systemic_label', 'Standard'),
                                        keyword_source=keyword_source,
                                        keyword_relevant=keyword_relevant,
-                                       rank=pos)
+                                       rank=pos,
+                                       # C-C-08: the real counts travel with the row;
+                                       # None for a pre-C3 cached page, never guessed.
+                                       t2_count=scores.get('t2_count'),
+                                       t3_count=scores.get('t3_count'))
                 print(f"  Audit {url}: Medical {scores['medical_score']}, Systems {scores['systems_score']} "
                       f"({scores.get('systemic_label')}) — keyword '{keyword}' "
                       f"[{keyword_source}, rank {pos}, "
@@ -603,10 +647,21 @@ def run_audit():
                 )
 
                 domain_medical_total += scores['medical_score']
-                # Correctly handle potential missing T2/T3 in cached audit
-                domain_t2_total += scores.get('t2_count', 0) if not cached_audit else (scores['systems_score'] / 0.5 if scores['systems_score'] < 2.0 else 0) # Rough estimate for cache
-                domain_t3_total += scores.get('t3_count', 0) if not cached_audit else (scores['systems_score'] / 2.0 if scores['systems_score'] >= 2.0 else 0)
+                # C-C-08 / C-M-05: the tier counts are READ, never estimated. The
+                # deleted estimate (`t3 = systems_score / 2.0 if >= 2.0`) turned a
+                # page with four generic Tier-2 words into "one Tier-3 term" on a
+                # cached re-run and re-labelled its domain *Direct Systemic*. A
+                # cached row written before the counts were persisted has None, and
+                # that is carried as UNKNOWN to tag_competitor_position rather than
+                # silently counted as zero.
+                t2_count, t3_count = scores.get('t2_count'), scores.get('t3_count')
+                if t2_count is None or t3_count is None:
+                    domain_tier_counts_complete = False
+                else:
+                    domain_t2_total += t2_count
+                    domain_t3_total += t3_count
                 domain_traffic_total += traffic
+                domain_pages_audited += 1
                 processed_urls.add(url)
 
         # Wire-up fix (built but never called) + Finding 1 mixed-domain fix: compute
@@ -618,7 +673,18 @@ def run_audit():
             cluster_detector, enrich,
         )
 
-        db.tag_competitor_position(domain, domain_medical_total, domain_t2_total, domain_t3_total, domain_traffic_total)
+        db.tag_competitor_position(domain, domain_medical_total, domain_t2_total,
+                                   domain_t3_total, domain_traffic_total,
+                                   tier_counts_complete=domain_tier_counts_complete)
+        if not domain_tier_counts_complete:
+            print(f"  ℹ️ Tier counts incomplete for {domain} (cache-served pages "
+                  f"audited before the counts were persisted) — the Direct Systemic / "
+                  f"Generalist classification is withheld this run.")
+            incomplete_tier_domains.append(domain)
+        if domain_had_cache_hit:
+            cached_domains.append(domain)
+        if domain_blocked:
+            blocked_domains.append(domain)
         competitor_keywords[domain] = domain_keywords
 
     # Finding 1/4 (P8/P2): surface enrichment coverage. An empty EEAT/GEO/cluster
@@ -646,11 +712,15 @@ def run_audit():
     # competitor that was skipped from one that has nothing to report.
     pa_measured, pa_total = db.get_pa_coverage(run_id)
     run_coverage = {
+        "handoff_file": handoff_file or "unknown",
         "domains_in_handoff": len(domain_groups),
         "domains_audited": len(competitor_keywords),
         "skipped_domains": skipped_domains,
         "enrichment_failures": enrichment_failures,
         "unmeasured_pa_domains": unmeasured_pa_domains,
+        "blocked_domains": blocked_domains,
+        "cached_domains": cached_domains,
+        "incomplete_tier_domains": incomplete_tier_domains,
         "pa_measured": pa_measured,
         "pa_total": pa_total,
         "universe": dict(universe_stats),
@@ -735,4 +805,4 @@ def run_audit():
     )
 
 if __name__ == "__main__":
-    run_audit()
+    run_audit(handoff_path=parse_args(sys.argv[1:])["handoff"])

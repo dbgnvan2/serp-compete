@@ -213,8 +213,14 @@ elif run_button and selected_handoff_path:
     # 2. Run audit
     st.header("🔄 Running Competitor Analysis...")
 
-    cmd = ["python3", "src/main.py"]
+    # C-C-16: pass the handoff the user actually SELECTED. Without this the audit
+    # ran against whichever competitor_handoff_*.json in the project root was newest,
+    # so the selection only took effect when "Copy handoff to root" happened to be
+    # ticked — and picking an older handoff to compare silently produced a report
+    # about a different file. The report header now names the file it used.
+    cmd = ["python3", "src/main.py", "--handoff", selected_handoff_path]
     st.info(f"Running: {' '.join(cmd)} in {SERP_COMPETE_DIR}")
+    st.caption(f"Handoff: {selected_handoff_path}")
 
     try:
         process = subprocess.Popen(

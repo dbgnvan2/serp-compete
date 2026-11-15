@@ -3,8 +3,10 @@
 What to check when you do a **real end-to-end audit run** — the things unit tests can't
 cover (live APIs, the assembled report, and the judgement calls). Tick as you go.
 
-Run: `cd Serp-compete && PYTHONPATH=. python3 src/main.py`  (or `./run_audit.sh`).
-Outputs: `strategic_briefing_run_N.md` + `audit_results_run_N.xlsx`.
+Run: `cd Serp-compete && PYTHONPATH=. python3 src/main.py [--handoff <path>]`
+(or `./run_audit.sh`, which passes the flag for you).
+Outputs: `strategic_briefing_run_N.md` + `audit_results_run_N.xlsx`, in
+`orchestrator.reports_dir` when that is set, else the working directory.
 
 ---
 
@@ -53,6 +55,16 @@ Outputs: `strategic_briefing_run_N.md` + `audit_results_run_N.xlsx`.
   the run stopped early on purpose (the skipped domains are retryable `error`, not "no channel").
 - [ ] **Any `⚠️ … skipped` line = that feature errored.** Should be rare now — investigate the
   message (an import/signature/data problem hides here rather than crashing the audit).
+
+## 2b. Report header and coverage (C-C-16, C-M-20)
+- [ ] **`**Handoff:**` in the header names the file you selected** — not "not recorded",
+  and not a different timestamp. This is the check that the GUI's selection took effect.
+- [ ] **Run coverage** in the Executive Summary: audited N of M handoff domains, the
+  skipped ones with reasons, any blocked (429) or cache-served domains, and "Page
+  Authority measured for N of M audited URL(s)". Compare with the console's
+  `📋 Run coverage` line.
+- [ ] Each long section that was capped says "Showing the first N of M" — and the Excel
+  sheet for it has **all M rows** (C-C-07). Spot-check one: *GEO Extractability*.
 
 ## 3. Report sections — each new section renders, numbers look sane, caveat present
 - [ ] **SERP Overlap & Differentiation Gap** — cell distribution + "Volume by cell" + the two

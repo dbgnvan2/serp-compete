@@ -35,7 +35,9 @@ echo ""
 
 cd "$SERP_COMPETE_DIR"
 export PYTHONPATH=.
-python3 src/main.py
+# Pass the handoff this script picked, so the audit cannot silently use a different
+# file and the briefing header names the one it read (C-C-16).
+python3 src/main.py --handoff "$HANDOFF_FILE"
 
 # 4. Show results
 echo ""

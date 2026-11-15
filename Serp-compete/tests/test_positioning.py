@@ -171,8 +171,14 @@ def test_save_competitor_summary_feeds_get_competitor_das(tmp_path):
     """Sweep Finding 1: the run-path DA persistence must actually populate the
     competitors table so BOTH positioning and C4 feasibility get competitor DA."""
     db = DatabaseManager(str(tmp_path / "da.db"))
+    run_id = db.create_run("c.com")
     db.save_competitor_summary("a.com", 42)
-    assert db.get_competitor_das() == {"a.com": 42}
+    # C-C-10: the read is run-scoped, so the domain must also be in THIS run's
+    # metrics — a DA stored by an earlier run is no longer borrowed.
+    db.save_competitor_metrics(
+        [{"domain": "a.com", "url": "u", "keyword": "kw", "position": 3, "traffic": 1}],
+        run_id)
+    assert db.get_competitor_das(run_id) == {"a.com": 42}
 
 
 def test_save_positioning_roundtrip(tmp_path):

@@ -120,6 +120,8 @@ class DatabaseManager:
                     keyword_source TEXT,
                     keyword_relevant BOOLEAN,
                     rank INTEGER,
+                    t2_count INTEGER,
+                    t3_count INTEGER,
                     FOREIGN KEY(run_id) REFERENCES runs(id)
                 )
             ''')
@@ -159,6 +161,8 @@ class DatabaseManager:
                     medical_score INTEGER,
                     systems_score INTEGER,
                     systemic_label TEXT,
+                    t2_count INTEGER,
+                    t3_count INTEGER,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -293,11 +297,36 @@ class DatabaseManager:
                 # C-M-03: the query strings whose volume became "branded demand",
                 # so the Excel sheet can show what was actually asked for.
                 ("brand_demand_bench", "queries", "TEXT"),
+                # C-C-08 / C-M-05: the real Tier-2 / Tier-3 counts, so a cache hit
+                # no longer has to GUESS them back out of the weighted score.
+                ("semantic_audits", "t2_count", "INTEGER"),
+                ("semantic_audits", "t3_count", "INTEGER"),
+                # The same counts on the per-run magnet row: a cache-served page
+                # writes no semantic_audits row for THIS run, so the run's own table
+                # has to carry them or the report cannot tell a real count from a
+                # missing one.
+                ("traffic_magnets", "t2_count", "INTEGER"),
+                ("traffic_magnets", "t3_count", "INTEGER"),
             ):
                 try:
                     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
                 except sqlite3.OperationalError:
                     pass  # Already exists
+
+            # C-M-20: `keyword_volume` was never a search volume — it is
+            # MAX(competitor_metrics.traffic), i.e. the best-ranking RIVAL's
+            # DataForSEO ETV for that keyword. Renamed in place (SQLite >= 3.25) so
+            # the column, the report and the Excel sheet all say the same thing. The
+            # PRAGMA check keeps this idempotent and safe on a DB that has either
+            # name, or both.
+            try:
+                overlap_columns = [row[1] for row in
+                                   cursor.execute("PRAGMA table_info(serp_overlap)").fetchall()]
+                if "keyword_volume" in overlap_columns and "best_rival_etv" not in overlap_columns:
+                    cursor.execute("ALTER TABLE serp_overlap "
+                                   "RENAME COLUMN keyword_volume TO best_rival_etv")
+            except sqlite3.OperationalError as exc:
+                logging.warning("serp_overlap column rename skipped: %s", exc)
 
             try:
                 # C1/SC-3: add cited_gap to an EXISTING sov_daily (the C1 commit created the
@@ -367,7 +396,7 @@ class DatabaseManager:
                     self_position INTEGER,
                     overlap_count INTEGER,
                     commodity_score REAL,
-                    keyword_volume REAL,
+                    best_rival_etv REAL,
                     cell TEXT,
                     all_competitor_gap BOOLEAN,
                     config_ref TEXT,
@@ -547,8 +576,14 @@ class DatabaseManager:
     def save_traffic_magnet(self, run_id: int, domain: str, url: str, keyword: str,
                             traffic: float, medical: int, systems: float,
                             label: str = "Standard", keyword_source: str = None,
-                            keyword_relevant: bool = None, rank: int = None):
+                            keyword_relevant: bool = None, rank: int = None,
+                            t2_count: int = None, t3_count: int = None):
         """Persist one audited page.
+
+        `t2_count` / `t3_count` are this page's real Tier-2 / Tier-3 term counts
+        (C-C-08), NULL when the page came from the semantic cache before they were
+        persisted — the report then reads `systemic_depth` as "Not recorded" rather
+        than inferring depth from a weighted score.
 
         `keyword_source` / `keyword_relevant` / `rank` come from
         src/audit_universe.py (C-M-01/C-M-02). They are nullable on purpose: a
@@ -560,12 +595,12 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO traffic_magnets (run_id, domain, url, primary_keyword, est_traffic, medical_score, systems_score, systemic_label, keyword_source, keyword_relevant, rank)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO traffic_magnets (run_id, domain, url, primary_keyword, est_traffic, medical_score, systems_score, systemic_label, keyword_source, keyword_relevant, rank, t2_count, t3_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (run_id, domain, url, keyword, traffic, medical, systems, label,
                   keyword_source,
                   (None if keyword_relevant is None else int(bool(keyword_relevant))),
-                  rank))
+                  rank, t2_count, t3_count))
             conn.commit()
 
     def save_geo_profile(self, run_id: int, profile: Any):
@@ -675,14 +710,14 @@ class DatabaseManager:
             cursor.executemany('''
                 INSERT INTO serp_overlap (
                     run_id, keyword, snapshot_date, competitors_ranking_json,
-                    self_position, overlap_count, commodity_score, keyword_volume,
+                    self_position, overlap_count, commodity_score, best_rival_etv,
                     cell, all_competitor_gap, config_ref, estimation_basis)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', [
                 (run_id, r["keyword"], r.get("snapshot_date"),
                  json.dumps(r.get("competitors_ranking", {})),
                  r.get("self_position"), r.get("overlap_count"),
-                 r.get("commodity_score"), r.get("keyword_volume"), r.get("cell"),
+                 r.get("commodity_score"), r.get("best_rival_etv"), r.get("cell"),
                  int(bool(r.get("all_competitor_gap"))), r.get("config_ref"),
                  r.get("estimation_basis"))
                 for r in rows
@@ -994,8 +1029,16 @@ class DatabaseManager:
                 positions.setdefault(keyword, {})[domain] = int(position)
         return positions
 
-    def get_keyword_volumes(self, run_id: int) -> Dict[str, float]:
-        """C4/SC-6: {keyword: max est-traffic} — per-keyword volume for cell rollups."""
+    def get_best_rival_etv(self, run_id: int) -> Dict[str, float]:
+        """C4/SC-6: {keyword: the best-ranking rival's DataForSEO ETV} for cell rollups.
+
+        C-M-20: this was called `get_keyword_volumes` and its output was rendered as
+        "Volume by cell (est. traffic)" and stored in a column called
+        `keyword_volume` — three names for a figure that is neither a search volume
+        nor the client's traffic. It is `MAX(competitor_metrics.traffic)`: the highest
+        DataForSEO estimated monthly visits any audited rival has for that keyword at
+        its position.
+        """
         volumes: Dict[str, float] = {}
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -1008,26 +1051,48 @@ class DatabaseManager:
                 volumes[keyword] = float(traffic or 0.0)
         return volumes
 
-    def get_competitor_das(self) -> Dict[str, int]:
-        """C4/SC-6: {domain: avg_da} from the competitors table (feasibility input).
+    def get_competitor_das(self, run_id: int) -> Dict[str, int]:
+        """C4/SC-6: {domain: avg_da} for the domains THIS RUN audited (feasibility input).
 
-        Returns {} when no DA data is stored — feasibility then degrades gracefully.
+        `run_id` is required (C-C-10). `competitors` is domain-keyed and overwritten in
+        place, so the unscoped read this replaces made the *Competitor Feasibility*
+        table list every domain ever stored — competitors that are not in this run's
+        handoff at all, with DA values of unknown age and no `last_crawled_at`
+        rendered — while `get_positioning_inputs` right beside it was already
+        run-scoped. The two read the same column and disagreed, so the parameter is
+        mandatory rather than optional: an unscoped caller is the bug (P22).
+
+        Returns {} when this run has no stored DA — feasibility then degrades
+        gracefully rather than borrowing another run's numbers.
         """
         das: Dict[str, int] = {}
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT domain, avg_da FROM competitors WHERE avg_da IS NOT NULL')
-            for domain, avg_da in cursor.fetchall():
+            rows = conn.execute(
+                'SELECT c.domain, c.avg_da FROM competitors c '
+                'WHERE c.avg_da IS NOT NULL AND c.domain IN '
+                '(SELECT DISTINCT domain FROM competitor_metrics WHERE run_id = ?)',
+                (run_id,)).fetchall()
+            for domain, avg_da in rows:
                 das[domain] = int(avg_da)
         return das
 
-    def save_semantic_audit(self, url: str, medical_score: int, systems_score: float, run_id: int, label: str = "Standard"):
+    def save_semantic_audit(self, url: str, medical_score: int, systems_score: float,
+                            run_id: int, label: str = "Standard",
+                            t2_count: int = None, t3_count: int = None):
+        """Persist one page's vocabulary scores AND the tier counts behind them.
+
+        C-C-08 / C-M-05: the counts were thrown away and the 7-day cache path then
+        reconstructed them from the weighted score — `t3 = systems_score / 2.0 if
+        systems_score >= 2.0`. So a page with four generic Tier-2 words (score 2.0)
+        came back from cache as "t3 = 1" and its domain was re-labelled *Direct
+        Systemic* on the re-run, overwriting the right label with the wrong one.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO semantic_audits (run_id, url, medical_score, systems_score, systemic_label)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (run_id, url, medical_score, systems_score, label))
+                INSERT INTO semantic_audits (run_id, url, medical_score, systems_score, systemic_label, t2_count, t3_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (run_id, url, medical_score, systems_score, label, t2_count, t3_count))
             conn.commit()
 
     def save_competitor_history(self, run_id: int, url: str, position: int,
@@ -1077,17 +1142,31 @@ class DatabaseManager:
                 (run_id,)).fetchone()
         return (int(row[0] or 0), int(row[1] or 0))
 
-    def tag_competitor_position(self, domain: str, medical_score: int, systems_t2: int, systems_t3: int, traffic: float):
+    def tag_competitor_position(self, domain: str, medical_score: int, systems_t2: int,
+                                systems_t3: int, traffic: float,
+                                tier_counts_complete: bool = True):
         """
         Revision 3: Categorize competitor for 'Battle Strategy'.
         Volume Scaler: High Traffic + High Medical Score.
         Generalist: High Tier 2 Score.
         Direct Systemic: Presence of Tier 3 terms.
+
+        `tier_counts_complete` is False when any of this domain's audited pages came
+        from the semantic cache without stored tier counts (C-C-08). The Tier-2 and
+        Tier-3 sums are then a partial count, and the two labels that rest on them —
+        *Direct Systemic* and *Generalist* — are withheld rather than decided on
+        whatever fraction of the domain happened to be re-scraped. They return on the
+        next run that scrapes the domain fresh. (The thresholds themselves are still
+        hard-coded here; that is C-C-15 / C-M-18, chunk C4.)
         """
         market_position = "Unknown"
         strategy = "General observation"
-        
-        if traffic > 1000 and medical_score > 15:
+
+        if not tier_counts_complete and not (traffic > 1000 and medical_score > 15):
+            market_position = "Not classified (incomplete tier counts)"
+            strategy = ("Some pages were served from the 7-day semantic cache without "
+                        "stored tier counts; re-run outside the cache window to classify.")
+        elif traffic > 1000 and medical_score > 15:
             market_position = "Volume Scaler"
             strategy = "Do not compete on volume; compete on clinical authority."
         elif systems_t3 > 0:
@@ -1250,11 +1329,17 @@ class DatabaseManager:
     def was_audited_recently(self, url: str, days: int = 7) -> Dict[str, Any]:
         """
         Optimization: Check if this URL has been audited in the last X days to avoid re-scraping.
+
+        Returns the tier counts too (C-C-08). `t2_count` / `t3_count` are None for a
+        row written before they were persisted: the caller must then treat the counts
+        as UNKNOWN rather than estimate them from the weighted score, which is the bug
+        this return shape exists to remove (P22 — the old shape lacked the fields its
+        caller needed, so the caller invented them).
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT medical_score, systems_score, systemic_label 
+                SELECT medical_score, systems_score, systemic_label, t2_count, t3_count
                 FROM semantic_audits 
                 WHERE url = ? AND timestamp > datetime('now', ?)
                 ORDER BY timestamp DESC LIMIT 1
@@ -1264,6 +1349,8 @@ class DatabaseManager:
                 return {
                     "medical_score": row[0],
                     "systems_score": row[1],
-                    "systemic_label": row[2]
+                    "systemic_label": row[2],
+                    "t2_count": row[3],
+                    "t3_count": row[4],
                 }
             return None

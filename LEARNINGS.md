@@ -49,6 +49,56 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The briefing's own numbers were artefacts of the queries that produced them (C-C-02, C-C-07, C-C-08, C-C-10, C-C-16, C-M-04, C-M-05, C-M-20).**
+- **Root cause (P2 / P7 / P8 / P22):** four separate shapes of the same mistake — a SQL or
+  display decision changing what a number MEANS, with nothing in the artefact to reveal it.
+  (1) `total_keywords` was `SUM(CASE WHEN m.keyword IS NOT NULL …)` across a LEFT JOIN to
+  `traffic_magnets` with no URL condition — a cross product, so the figure was keywords ×
+  audited pages: 30 for a domain with 10 keywords and 3 pages, and `competitor_mining` sorted
+  competitors by it. (2) `LIMIT 30` / `LIMIT 20` sat in the SQL, so the markdown and the Excel
+  sheet were truncated identically and neither said so — `ORDER BY url LIMIT 30` meant the EEAT
+  and GEO sections showed the alphabetically-first ten of fifteen competitors, and the vacuum
+  list was a subset of a 20-row magnet set chosen by an `est_traffic DESC` sort with heavy ties.
+  (3) `was_audited_recently` did not return the tier counts its caller needed, so the cache
+  path rebuilt them from the weighted score (`t3 = systems_score / 2.0 if >= 2.0`); a page with
+  four generic Tier-2 words came back as "one Tier-3 term" and its domain was re-labelled
+  *Direct Systemic* on a re-run of unchanged content, overwriting the right label. The same
+  column fed `systemic_depth`, whose "High" band was `systems_score > 0` — one occurrence of
+  "relationship" — and whose "Medical" band compared a RAW Tier-1 count with a ×2.0/×0.5
+  weighted score. (4) `get_competitor_das()` had no run scope while `get_positioning_inputs`
+  beside it did, so two adjacent sections reading the same column disagreed about which
+  competitors exist. Plus the labels: `keyword_volume` was `MAX(competitor_metrics.traffic)`,
+  rendered as "Volume by cell (est. traffic)"; the volatility `shift` had no stated sign
+  convention in a metric where bigger is worse; and the briefing never named the handoff it
+  read, while the GUI's selection only reached `main.py` when "Copy handoff to root" happened
+  to be ticked.
+- **What would have caught it:** a test that renders the real report from a seeded database and
+  reads the OUTPUT — the numbers, the sheets, the row counts — rather than asserting that a
+  function returned something. Every one of these passed a unit test of its own component.
+  Specifically: seed 10 keywords and 3 magnet rows and assert 10; seed 45 rows and assert 45
+  in the sheet; and the P8 test the finding asked for — run the audit twice and assert
+  `market_position` is identical when the second run is cache-served
+  (`test_cc08_market_position_is_stable_across_a_cached_rerun`).
+- **Fix:** magnet aggregates come from a per-domain subquery and the count is
+  `COUNT(DISTINCT m.keyword)`, renamed `sampled_keywords` (the sample, not the competitor's
+  keyword count) beside a `pages_audited` column. The `LIMIT`s are gone from the SQL: the Excel
+  sheets carry every row, the markdown caps for display via `reporting.*` and prints "Showing
+  the first N of M". `t2_count` / `t3_count` are persisted on both `semantic_audits` and the
+  per-run `traffic_magnets` row (a cache hit writes no new audit row, so the run's own table
+  has to carry them), the estimate is deleted, `systemic_depth` reads the counts, and a domain
+  whose counts are incomplete has its classification WITHHELD rather than guessed.
+  `get_competitor_das(run_id)` is run-scoped with `run_id` **required**, so no caller can
+  reintroduce the stale set. `best_rival_etv` replaces `keyword_volume` through the row, the
+  column, the report and the sheet; the sign convention is stated; `--handoff` carries the
+  selected file from the GUI and `run_audit.sh` into `main.py` and the briefing header names
+  it; `orchestrator.reports_dir` is honoured.
+- **Rule:** a number in a report is only as good as the query that made it — so test the
+  rendered artefact, not the function. Two specific smells to grep for: an aggregate over a
+  join whose ON clause does not match the aggregate's grain (that is a cross product wearing a
+  SUM), and a `LIMIT` inside a query whose output is also an export. And when a stored figure
+  is not what its name says, rename it everywhere in one commit; a column, a row key, a report
+  label and a doc that disagree are four chances to mislead.
+
 **Null was zero in every longitudinal path, so outages and sampling noise rendered as measured collapses (C-C-03, C-C-05, C-C-06, C-C-09, C-C-11, C-C-12, C-C-18, C-M-06, C-M-07).**
 - **Root cause (P1 / P2 / P5):** the same substitution in five places. A Moz failure or a URL
   Moz had no record for became `pa = 0` (`moz_metrics_map.get(url, 0)`), so every page of every
