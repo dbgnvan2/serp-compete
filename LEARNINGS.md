@@ -49,6 +49,39 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The axis the whole tool is built on counted the client's own vocabulary as the opposing model, and counted it badly (C-M-08, C-M-19, C-C-15).**
+- **Root cause (P4 / P7):** two independent faults in one number. (1) The editorial list: Tier 1
+  held "therapy", "patient", "patients", "condition" and "trauma", so a Bowen practice's own copy
+  scored as medical model and every "couples therapy" query was Tier 1 — of 374 real competitor
+  keywords in this repo, 68 read as Tier 1 and "therapy" alone accounted for 67. (2) The matching
+  mechanics: raw `token.text in set` with no lemmas (so "triangle" scored 0 while "triangles"
+  scored 3, and "treatments" scored 0 against the entry "treatment"); `str.count` for phrases but
+  only `if " " in phrase`, so the configured Tier-2 term `self-regulation` could **never** match;
+  nested phrases counted twice across tiers ("differentiation of self" scored Tier 3 **and** Tier
+  2); the scored text was the outline *prepended* to the body, counting every h1-h3 twice, with
+  `<header>` and div menus never stripped; and the score was an absolute count over a window of up
+  to 500 words, so five medical words meant the same thing in a five-word page and an 805-word one.
+- **What would have caught it:** adversarial vocabulary tests of the kind rule 6 asks for —
+  "looks-right-but-wrong scores lower". The suite had none for this module: three tests asserted
+  the happy path on a single sentence. A test that scored the CLIENT's own published copy and
+  asserted it was not medical model would have failed from the first day, and one that scored a
+  term the config itself contains (`self-regulation`) would have shown it was unreachable.
+- **Fix:** Tier 1 is diagnostic vocabulary only, in **both** vocabulary sources (`shared_config
+  → clinical` shadows `clinical_dictionary.json`, so changing only the file the decision named
+  would have done nothing), with the removed words recorded under `neutral_clinical` so they
+  cannot drift back silently. One spaCy `PhraseMatcher` over LEMMAS for all three tiers, longest
+  match first, each span counted once, with an exact-surface rule so a lemma collision
+  ("triangles" vs "triangling") cannot earn the stronger tier. `<header>` and menu/nav elements
+  stripped; the body counted once; every score carries `scoring_window_words` and the report shows
+  `medical_per_1000`; Surface-Level is a density with a minimum hit count under it. And the
+  thresholds moved with the vocabulary: `vacuum_min_medical` 10 → 6 and
+  `volume_scaler_min_medical` 15 → 9, set from measured before/after counts on the real corpora
+  in the repo and labelled editorial and uncalibrated.
+- **Rule:** when a scoring vocabulary changes, every threshold measured in its units changes
+  meaning — grep for the thresholds before shipping the list, or the detectors go quiet and look
+  like "nothing found". And a dictionary that exists in two places has one of them for show: find
+  which the code actually reads before editing either.
+
 **The briefing's own numbers were artefacts of the queries that produced them (C-C-02, C-C-07, C-C-08, C-C-10, C-C-16, C-M-04, C-M-05, C-M-20).**
 - **Root cause (P2 / P7 / P8 / P22):** four separate shapes of the same mistake — a SQL or
   display decision changing what a number MEANS, with nothing in the artefact to reveal it.

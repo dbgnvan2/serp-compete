@@ -127,15 +127,47 @@ pretends to be newer than it is.
 
 | Tier | Meaning | Example words |
 |---|---|---|
-| **Tier 1 — Medical** | symptom-focused, diagnostic | symptom, diagnosis, disorder, treatment |
-| **Tier 2 — Systems** | relational/process | differentiation, triangles, family process |
-| **Tier 3 — Bowen** | deep systemic | emotional fusion, pursuer-distancer, differentiation of self |
+| **Tier 1 — Medical** | **diagnostic and pathology vocabulary only** | symptom, diagnosis, disorder, medication, prognosis, syndrome |
+| **Tier 2 — Systems** | relational/process | differentiation, triangles, self-regulation, emotional process |
+| **Tier 3 — Bowen** | deep systemic | emotional fusion, pursuer-distancer reciprocity, differentiation of self |
 
 It produces a **Medical Score** and a weighted **Systems Score** (Tier 3 counts more
 than Tier 2), then assigns a **Systemic Label** of **Standard** or **Surface-Level**.
-A page is **Surface-Level** when it leans heavily on medical language but has no deep
-Bowen (Tier 3) content at all. (Exact weights/thresholds live in `shared_config.json`
-and `src/scoring_logic.py` — editable without code changes.)
+A page is **Surface-Level** when it leans heavily on medical language *for its length*
+and has no deep Bowen (Tier 3) content at all. (Exact weights/thresholds live in
+`shared_config.json` and `src/scoring_logic.py` — editable without code changes.)
+
+**What is counted, and how** (all of this changed on 2026-11-15):
+- **"therapy" is not medical-model vocabulary** (owner decision 3). Nor are
+  "patient", "patients", "condition" or "trauma". Tier 1 is diagnostic and pathology
+  vocabulary only; the five words are recorded in `clinical_dictionary.json` under
+  `neutral_clinical` so they do not drift back in. They were doing most of the work:
+  of the 374 real competitor keywords in `competitor_keyword_gap.md`, 68 read as
+  Tier 1 before and **2 after** — "therapy" alone accounted for 67 — and on the
+  client's own three drafts the Tier-1 hits fell from 38 to 23. The client's own
+  service term no longer scores as the opposing model (C-M-08).
+- **Dictionary entries are lemmas, and the page text is lemmatised.** "triangle"
+  used to score 0 while "triangles" scored 3; "treatments" scored 0 against the
+  entry "treatment" (C-M-19).
+- **Every multi-word and hyphenated entry is matched.** The configured Tier-2 term
+  `self-regulation` could never match at all — the phrase path only ran for entries
+  containing a space, and spaCy splits the hyphen. A competitor page built around it
+  scored 0 on systems language, which made it a Systemic Vacuum and a reframe target
+  (C-C-15).
+- **A nested phrase counts once, in the longest tier.** "differentiation of self"
+  scored Tier-3 1 *and* Tier-2 1 for "differentiation" — the same five words in two
+  tiers (C-M-19).
+- **Site furniture is excluded.** `<header>` and any element whose class or id looks
+  like a menu or nav are stripped before the text is read; a `<header>` menu listing
+  seven treatment services scored medical 9 on an about-page whose body was about
+  distance and pursuit. Headings are counted once, where they appear in the body —
+  the scored text used to be the outline *prepended* to the body (C-M-19).
+- **Scores carry the window they were counted over.** Every row records
+  `scoring_window_words` (`technical.scoring_window_words`, 500) and the report shows
+  `medical_per_1000` beside the raw count, because 5 medical words meant the same
+  thing in a 5-word page and an 805-word one. **Surface-Level is now a density**
+  trigger (`penalty_thresholds.tier_1_max_density_per_1000`, with
+  `tier_1_min_hits` under its numerator), not an absolute count.
 
 **What it lets you understand:** *how* a competitor is winning a keyword — by
 symptom-and-label framing, or by genuine relational depth. A high Medical Score with a
@@ -145,7 +177,20 @@ Surface-Level label means the page ranks despite saying nothing systemic.
 on demand you can serve better with a differentiation- and process-oriented page.
 
 **Where you see it:** the *Competitor Ranking Summary* ("systemic_depth" column) and
-every *Traffic Magnets* row (medical_score / systems_score / systemic_label).
+every *Traffic Magnets* row (medical_score / medical_per_1000 / words /
+systems_score / systemic_label).
+
+> **The thresholds moved with the vocabulary.** Shrinking Tier 1 lowers every page's
+> medical score, so a floor anchored to the old vocabulary would have silently stopped
+> the Traffic Magnet and Systemic Vacuum detectors firing at all.
+> `technical.vacuum_min_medical` went 10 → **6** and
+> `position_thresholds.volume_scaler_min_medical` 15 → **9**, chosen so they admit
+> roughly what they used to: across the 56 audited competitor pages printed in the
+> shipped briefings the old floor of 10 admitted 15 of 56 rows, and 6 admits the same
+> 15 under the measured 0.39 shrink. Those counts are the **basis** for the numbers,
+> recorded in each key's `_source` note — they are **not a calibration** (no outcome
+> data was used, and the competitor page text is not in the repo, so the after-side
+> for those rows is scaled rather than recomputed).
 
 ### 3.2 EEAT scoring — how credible the competitor page looks
 **What it does:** scores each page on four credibility dimensions Google is known to
@@ -645,8 +690,14 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
   carries no traffic figure, so one appears only where DataForSEO reported the same URL
   and keyword.
 - **Reframes never see the competitor's page** (§6.1), and the vocabulary scores behind
-  the floor are counts of configured terms on the first ~500 words plus headings, not a
-  judgement of what the page argues.
+  the floor are counts of configured terms over a ~500-word body window — lemmatised,
+  phrase-matched and length-normalised since 2026-11-15 (§3.1), but still a count of
+  words, not a judgement of what the page argues.
+- **Tier 1 is diagnostic vocabulary only** (owner decision 3, 2026-11-15). "therapy",
+  "patient", "condition" and "trauma" are treated as this market's neutral
+  vocabulary. If you disagree with that editorial call, it is one list in
+  `clinical_dictionary.json` — but note that the magnet / vacuum thresholds were
+  re-set to match it, so changing the list means re-setting them too.
 - **EEAT, cluster, and GEO tiers are heuristic proxies**, not ground truth or Google's
   real models. They're for *comparing* competitors and building a checklist — not for
   declaring anyone objectively good or bad.

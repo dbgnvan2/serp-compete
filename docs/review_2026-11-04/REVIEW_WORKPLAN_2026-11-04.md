@@ -471,7 +471,7 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 | C-C-12 | S2 | C2 | `get_relevant_pages` no retry; dropped domain untraced; abort after `create_run` | fixed `7a6405b` (C2) |
 | C-C-13 | S3 | C1 | `client_brand_names` dropped; config key doesn't exist | fixed `f7b09bf` (C1) |
 | C-C-14 | S3 | C4 | Documented config keys with no reader | open |
-| C-C-15 | S3 | C4 | `self-regulation` unmatchable; position thresholds hard-coded | open |
+| C-C-15 | S3 | C4 | `self-regulation` unmatchable; position thresholds hard-coded | fixed (C4a) |
 | C-C-16 | S3 | C3 | Orchestrator ignores selected handoff / reports dir | fixed `3d56e0a` (C3) |
 | C-C-17 | S3 | C4 | GSC 5000-row page; `rank_absolute` vs `position` | open |
 | C-C-18 | S3 | C2 | Homepage warm-up failure burns an audit slot | fixed `7a6405b` (C2) |
@@ -482,7 +482,7 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 | C-M-05 | Med | C3 | Depth "High" from one token; raw vs weighted; cache estimate | fixed `3d56e0a` (C3) |
 | C-M-06 | High | C2 | Fragile-Magnet / velocity fire on outages, 1-pt noise, forever | fixed `7a6405b` (C2) |
 | C-M-07 | High | C2 | `visibility_cliff` measures the tool's sampling | fixed `7a6405b` (C2) |
-| C-M-08 | Med | C4 | "therapy" is Tier-1 medical | open |
+| C-M-08 | Med | C4 | "therapy" is Tier-1 medical | fixed (C4a) |
 | C-M-09 | Med | C4 | Barbell authority: DA vs PA; client authoritative by construction | open |
 | C-M-10 | Med | C4 | Focus undefined at ≤3 pages | open |
 | C-M-11 | Med | C4 | Overlap cells are sampling artefacts; unlike position scales | open |
@@ -493,7 +493,7 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 | C-M-16 | Low–Med | C4 | YouTube `none_found` rendered as "no channel" | open |
 | C-M-17 | Low–Med | C4 | SoV drops mentioned-not-cited rivals; `presence_rate` unprinted | open |
 | C-M-18 | Med | C4 | Provenance; dead keys; hard-coded live thresholds | open |
-| C-M-19 | Med | C4 | Vocabulary counting mechanics | open |
+| C-M-19 | Med | C4 | Vocabulary counting mechanics | fixed (C4a) |
 | C-M-20 | Low | C3 | Smaller doc/label drifts | fixed `3d56e0a` (C3) |
 
 

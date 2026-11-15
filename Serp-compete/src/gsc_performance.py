@@ -304,10 +304,15 @@ class GSCManager:
         t2 = set(clinical.get("tier_2_systems", []))
 
         def get_tier(query):
-            query_words = set(query.lower().split())
-            if query_words.intersection(t1):
+            # C-M-08: the one canonical word-boundary matcher, so this agrees with
+            # positioning.classify_query_tiers and with the relevance test. The old
+            # `set(query.split()).intersection(...)` was whole-word but could not
+            # match a multi-word Tier-2 term ("chronic anxiety") and missed anything
+            # carrying punctuation ("anxiety?").
+            from src.audit_universe import contains_term
+            if any(contains_term(query, term) for term in t1):
                 return "Tier 1 (Medical)"
-            if query_words.intersection(t2):
+            if any(contains_term(query, term) for term in t2):
                 return "Tier 2 (Systems)"
             return "Other"
 

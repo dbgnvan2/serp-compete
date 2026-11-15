@@ -89,31 +89,39 @@ def test_analyze_gaps_logic(mock_gsc_manager):
                     assert "Bowen page attracting Medical Model audience" in mismatches[0]['reason']
 
 def test_get_striking_distance_keywords(mock_gsc_manager):
-    # Mock performance data with positions 12, 18, and 5
-    # 'anxiety therapy' contains 'therapy' (Tier 1)
-    # 'relationship help' contains 'relationship' (Tier 2)
+    # Mock performance data with positions 12, 18, and 5.
+    # 'anxiety disorder symptoms' is Tier 1 (diagnostic vocabulary).
+    # 'relationship help' contains 'relationship' (Tier 2).
+    # 'couples therapy' is Tier 1 NO LONGER — decision 3 (2026-11-15) made "therapy"
+    # neutral, so this client's own service term stops reading as the medical model.
     mock_data = [
-        {'keys': ['anxiety therapy', 'url1'], 'clicks': 5, 'impressions': 1000, 'ctr': 0.005, 'position': 12},
+        {'keys': ['anxiety disorder symptoms', 'url1'], 'clicks': 5, 'impressions': 1000, 'ctr': 0.005, 'position': 12},
         {'keys': ['relationship help', 'url2'], 'clicks': 2, 'impressions': 500, 'ctr': 0.004, 'position': 18},
+        {'keys': ['couples therapy', 'url4'], 'clicks': 1, 'impressions': 400, 'ctr': 0.003, 'position': 14},
         {'keys': ['family therapy', 'url3'], 'clicks': 20, 'impressions': 100, 'ctr': 0.2, 'position': 5}
     ]
-    
+
     with patch.object(mock_gsc_manager, 'fetch_performance_data', return_value=mock_data):
         striking = mock_gsc_manager.get_striking_distance_keywords()
-        
-        # Should only have positions 12 and 18
-        assert len(striking) == 2
-        assert 'anxiety therapy' in striking['query'].values
+
+        # Should only have positions 12, 18 and 14
+        assert len(striking) == 3
+        assert 'anxiety disorder symptoms' in striking['query'].values
         assert 'relationship help' in striking['query'].values
         assert 'family therapy' not in striking['query'].values
-        
-        # Check clinical pivot for 'anxiety therapy' (T1 medical)
-        row_anxiety = striking[striking['query'] == 'anxiety therapy'].iloc[0]
+
+        # Diagnostic vocabulary is still Tier 1 — and "symptoms" matches the LEMMA
+        # entry "symptom" (decision 3 de-duplicated the plural entries).
+        row_anxiety = striking[striking['query'] == 'anxiety disorder symptoms'].iloc[0]
         assert "Tier 1 (Medical)" in row_anxiety['clinical_pivot']
-        
+
         # Check clinical pivot for 'relationship help' (T2 systems)
         row_rel = striking[striking['query'] == 'relationship help'].iloc[0]
         assert "Tier 2 (Systems)" in row_rel['clinical_pivot']
+
+        # C-M-08 / decision 3: the client's own service term is NOT medical model.
+        row_therapy = striking[striking['query'] == 'couples therapy'].iloc[0]
+        assert "Tier 1 (Medical)" not in row_therapy['clinical_pivot']
 
 def test_suggest_systemic_title(mock_gsc_manager):
     # Test specific trigger

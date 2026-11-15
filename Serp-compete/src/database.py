@@ -25,8 +25,27 @@ def load_shared_config() -> Dict[str, Any]:
 # ceiling are editorial config, and both have a documented default. The fallbacks
 # here mirror shared_config.json so a missing config degrades to the documented
 # definition rather than to "no filter at all", which is the bug being fixed.
-DEFAULT_VACUUM_MIN_MEDICAL = 10
+DEFAULT_VACUUM_MIN_MEDICAL = 6
 DEFAULT_MAGNET_MAX_POSITION = 10
+
+
+# C-C-15: `tag_competitor_position`'s three thresholds, previously Python literals
+# (`traffic > 1000 and medical_score > 15`, `systems_t2 > 10`). The defaults mirror
+# shared_config `technical.position_thresholds`, whose `_source` note records that
+# they are editorial and what they were before decision 3 shrank the vocabulary.
+DEFAULT_POSITION_THRESHOLDS = {
+    "volume_scaler_min_traffic": 1000,
+    "volume_scaler_min_medical": 9,
+    "generalist_min_t2": 10,
+}
+
+
+def position_thresholds(config: Dict[str, Any] = None) -> Dict[str, float]:
+    """`technical.position_thresholds`, with the documented defaults."""
+    technical = (config if config is not None else load_shared_config()).get("technical", {}) or {}
+    configured = technical.get("position_thresholds", {}) or {}
+    return {key: configured.get(key, default)
+            for key, default in DEFAULT_POSITION_THRESHOLDS.items()}
 
 
 def magnet_thresholds(config: Dict[str, Any] = None) -> Tuple[int, int]:
@@ -54,7 +73,8 @@ _MAGNET_PREDICATE = (
 )
 _VACUUM_EXTRA = " AND (systems_score = 0 OR systemic_label = 'Surface-Level')"
 _MAGNET_COLUMNS = ("domain, url, primary_keyword, keyword_source, rank, est_traffic, "
-                   "medical_score, systems_score, systemic_label")
+                   "medical_score, systems_score, systemic_label, t2_count, t3_count, "
+                   "scoring_window_words")
 
 
 def magnet_sql(vacuum_only: bool = False, columns: str = _MAGNET_COLUMNS,
@@ -122,6 +142,7 @@ class DatabaseManager:
                     rank INTEGER,
                     t2_count INTEGER,
                     t3_count INTEGER,
+                    scoring_window_words INTEGER,
                     FOREIGN KEY(run_id) REFERENCES runs(id)
                 )
             ''')
@@ -163,6 +184,7 @@ class DatabaseManager:
                     systemic_label TEXT,
                     t2_count INTEGER,
                     t3_count INTEGER,
+                    scoring_window_words INTEGER,
                     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -307,6 +329,11 @@ class DatabaseManager:
                 # missing one.
                 ("traffic_magnets", "t2_count", "INTEGER"),
                 ("traffic_magnets", "t3_count", "INTEGER"),
+                # C-M-19: the window the score was counted over, so a density can be
+                # derived and checked. An absolute count over an unknown window is
+                # the figure the finding is about.
+                ("traffic_magnets", "scoring_window_words", "INTEGER"),
+                ("semantic_audits", "scoring_window_words", "INTEGER"),
             ):
                 try:
                     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
@@ -577,7 +604,8 @@ class DatabaseManager:
                             traffic: float, medical: int, systems: float,
                             label: str = "Standard", keyword_source: str = None,
                             keyword_relevant: bool = None, rank: int = None,
-                            t2_count: int = None, t3_count: int = None):
+                            t2_count: int = None, t3_count: int = None,
+                            scoring_window_words: int = None):
         """Persist one audited page.
 
         `t2_count` / `t3_count` are this page's real Tier-2 / Tier-3 term counts
@@ -595,12 +623,12 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO traffic_magnets (run_id, domain, url, primary_keyword, est_traffic, medical_score, systems_score, systemic_label, keyword_source, keyword_relevant, rank, t2_count, t3_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO traffic_magnets (run_id, domain, url, primary_keyword, est_traffic, medical_score, systems_score, systemic_label, keyword_source, keyword_relevant, rank, t2_count, t3_count, scoring_window_words)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (run_id, domain, url, keyword, traffic, medical, systems, label,
                   keyword_source,
                   (None if keyword_relevant is None else int(bool(keyword_relevant))),
-                  rank, t2_count, t3_count))
+                  rank, t2_count, t3_count, scoring_window_words))
             conn.commit()
 
     def save_geo_profile(self, run_id: int, profile: Any):
@@ -1078,7 +1106,8 @@ class DatabaseManager:
 
     def save_semantic_audit(self, url: str, medical_score: int, systems_score: float,
                             run_id: int, label: str = "Standard",
-                            t2_count: int = None, t3_count: int = None):
+                            t2_count: int = None, t3_count: int = None,
+                            scoring_window_words: int = None):
         """Persist one page's vocabulary scores AND the tier counts behind them.
 
         C-C-08 / C-M-05: the counts were thrown away and the 7-day cache path then
@@ -1090,9 +1119,10 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO semantic_audits (run_id, url, medical_score, systems_score, systemic_label, t2_count, t3_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (run_id, url, medical_score, systems_score, label, t2_count, t3_count))
+                INSERT INTO semantic_audits (run_id, url, medical_score, systems_score, systemic_label, t2_count, t3_count, scoring_window_words)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (run_id, url, medical_score, systems_score, label, t2_count, t3_count,
+                  scoring_window_words))
             conn.commit()
 
     def save_competitor_history(self, run_id: int, url: str, position: int,
@@ -1159,20 +1189,30 @@ class DatabaseManager:
         next run that scrapes the domain fresh. (The thresholds themselves are still
         hard-coded here; that is C-C-15 / C-M-18, chunk C4.)
         """
+        # C-C-15: the three thresholds are config, not Python literals. CLAUDE.md:
+        # "editorial content ... belongs in config". They also had to move because
+        # decision 3 shrank the Tier-1 vocabulary, which changes what `medical_score`
+        # of 15 means — a number buried in code cannot be re-set with the vocabulary.
+        thresholds = position_thresholds()
+        min_traffic = thresholds["volume_scaler_min_traffic"]
+        min_medical = thresholds["volume_scaler_min_medical"]
+        min_t2 = thresholds["generalist_min_t2"]
+
         market_position = "Unknown"
         strategy = "General observation"
+        is_volume_scaler = traffic > min_traffic and medical_score > min_medical
 
-        if not tier_counts_complete and not (traffic > 1000 and medical_score > 15):
+        if not tier_counts_complete and not is_volume_scaler:
             market_position = "Not classified (incomplete tier counts)"
             strategy = ("Some pages were served from the 7-day semantic cache without "
                         "stored tier counts; re-run outside the cache window to classify.")
-        elif traffic > 1000 and medical_score > 15:
+        elif is_volume_scaler:
             market_position = "Volume Scaler"
             strategy = "Do not compete on volume; compete on clinical authority."
         elif systems_t3 > 0:
             market_position = "Direct Systemic"
             strategy = "Use 'Functional Facts' to provide a more rigorous Bowen alternative."
-        elif systems_t2 > 10:
+        elif systems_t2 > min_t2:
             market_position = "Generalist"
             strategy = "Target their lack of Tier 3 depth."
 
@@ -1339,7 +1379,8 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT medical_score, systems_score, systemic_label, t2_count, t3_count
+                SELECT medical_score, systems_score, systemic_label, t2_count, t3_count,
+                       scoring_window_words
                 FROM semantic_audits 
                 WHERE url = ? AND timestamp > datetime('now', ?)
                 ORDER BY timestamp DESC LIMIT 1
@@ -1352,5 +1393,6 @@ class DatabaseManager:
                     "systemic_label": row[2],
                     "t2_count": row[3],
                     "t3_count": row[4],
+                    "scoring_window_words": row[5],
                 }
             return None

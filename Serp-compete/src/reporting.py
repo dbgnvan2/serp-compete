@@ -387,13 +387,25 @@ class ReportGenerator:
             # 0 is common) deciding arbitrarily which 20 survived.
             df_magnets = pd.read_sql_query(
                 magnet_sql(), conn, params=(run_id, floor, max_pos))
+            # C-M-19: length-normalise for display. Derived here rather than stored
+            # twice, from the count and the window that produced it.
+            if not df_magnets.empty:
+                df_magnets = df_magnets.rename(columns={"scoring_window_words": "words"})
+                df_magnets["medical_per_1000"] = [
+                    (round(1000.0 * float(med) / float(words), 1)
+                     if words else None)
+                    for med, words in zip(df_magnets["medical_score"], df_magnets["words"])]
             audited_pages = self.db.count_audited_pages(run_id)
             magnet_filter_note = (
                 f"_Filter: handoff rank ≤ {max_pos}, medical_score ≥ {floor} "
                 f"(`technical.vacuum_min_medical`, editorial and uncalibrated), and the "
                 f"keyword is in the handoff set or carries a clinical term and not the "
                 f"competitor's own brand token. `est_traffic` is DataForSEO's estimated "
-                f"monthly visits for that keyword×position, 0 when it was not measured._")
+                f"monthly visits for that keyword×position, 0 when it was not measured. "
+                f"`medical_score` is a COUNT of Tier-1 terms and `medical_per_1000` the "
+                f"same count per 1000 scored words (`words` is the window it was counted "
+                f"over) — the count alone meant different things in a short page and a "
+                f"long one._")
 
             if not df_magnets.empty:
                 disp_magnets, magnet_note = self._capped(

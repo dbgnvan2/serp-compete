@@ -143,7 +143,17 @@ All settings in `shared_config.json`:
 - `clinical_pivots` — Bowen concepts for reframing (non-code editable)
 - `technical.max_audit_pages_per_domain` — Pages scraped per competitor (default 3)
 - `technical.vacuum_min_medical` — Minimum medical score before a page can be a Traffic Magnet,
-  a Systemic Vacuum or a reframe target (default 10; **editorial, uncalibrated 2026-11-14**)
+  a Systemic Vacuum or a reframe target (**6** since 2026-11-15, was 10; editorial, uncalibrated —
+  re-set because owner decision 3 shrank the Tier-1 vocabulary, see its `_source` note)
+- `technical.scoring_window_words` — Body words vocabulary scoring reads, and the denominator of
+  every reported density (default 500)
+- `technical.position_thresholds` — `tag_competitor_position`'s Volume-Scaler / Generalist
+  thresholds, previously hard-coded in `database.py`
+- `technical.penalty_thresholds.tier_1_max_density_per_1000` — The Surface-Level trigger, a Tier-1
+  density per 1000 scored words (12) with `tier_1_min_hits` (3) under its numerator; the old
+  absolute-count `tier_1_max` remains only as the no-window fallback
+- `clinical.*` / `clinical_dictionary.json` — The vocabulary. Entries are **lemmas**; Tier 1 is
+  diagnostic vocabulary only, and `neutral_clinical` records the words owner decision 3 excluded
 - `technical.magnet_max_position` — The "ranks well" ceiling, read against the handoff rank
   (default 10; encodes the documented "top 10")
 - `branded_demand.ambiguous_brand_ratio` — Withhold a brand's share/growth when its bare stem

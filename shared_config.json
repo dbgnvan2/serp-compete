@@ -24,8 +24,8 @@
     "max_audit_pages_per_domain": 3,
     "moderate_feasibility_max_gap": 15,
     "score_normaliser": 30.0,
-    "_vacuum_min_medical_comment": "C-M-02 / owner decision 2 (2026-11-14): the MINIMUM medical score a page must reach before it can be a Traffic Magnet, a Systemic Vacuum or a gpt-4o reframe target. Editorial and UNCALIBRATED as of 2026-11-14; the starting value is anchored to penalty_thresholds.tier_1_max (10) so it is a real number rather than an invented one. Deliberately NOT the same key: tier_1_max means 'the highest Tier-1 count still counted as Tier 1', so reading it as a minimum inverts its sense.",
-    "vacuum_min_medical": 10,
+    "_vacuum_min_medical_comment": "C-M-02 / owner decision 2 (2026-11-14): the MINIMUM medical score a page must reach before it can be a Traffic Magnet, a Systemic Vacuum or a gpt-4o reframe target. Deliberately NOT penalty_thresholds.tier_1_max, which means 'the highest Tier-1 count still counted as Tier 1' — reading it as a minimum inverts its sense. Re-set 2026-11-15 by review chunk C4 because decision 3 shrank the Tier-1 vocabulary (20 entries -> 13 lemmas, dropping therapy/patient/patients/condition/trauma) and C-M-19 changed the counting mechanics, so the old number no longer meant what it did. Measured on the real corpora in this repo: on the client's own three drafts the total Tier-1 hits went 38 -> 20 on the vocabulary change alone and 38 -> 23 with the new mechanics (39% fewer); across the 56 audited competitor pages printed in the shipped briefings, the old floor of 10 admitted 15 of 56 rows (26.8%), and 6 is the value that admits the same 15 under the 0.39 shrink. EDITORIAL and UNCALIBRATED (decision 7): those counts show the number admits roughly what it used to, they are NOT a calibration — no outcome data was used, and the competitor page text is not in this repo, so the after-side for those 56 rows is scaled, not recomputed.",
+    "vacuum_min_medical": 6,
     "_magnet_max_position_comment": "The 'ranks well' half of the documented Traffic Magnet definition (README Key Concepts, USER_MANUAL 'Rank well (top 10)'), read against the HANDOFF rank Tool 1 measured. Editorial, uncalibrated as of 2026-11-14; 10 encodes the published 'top 10' wording.",
     "magnet_max_position": 10,
     "scoring_weights": {
@@ -36,7 +36,26 @@
     "penalty_thresholds": {
       "tier_1_max": 10,
       "tier_2_penalty_multiplier": 0.5,
-      "pseudo_systems_threshold": 1
+      "pseudo_systems_threshold": 1,
+      "_comment": "tier_1_max is the highest Tier-1 COUNT still treated as Tier 1 — the Surface-Level trigger is 'more than this, with no Tier-3 term'. It is kept only as the fallback for a caller that scores a bare string with no known window; the live trigger is tier_1_max_density_per_1000 (C-M-19), because the same absolute count meant different things in a 60-word page and an 800-word one.",
+      "_tier_1_max_density_per_1000_source": "editorial, uncalibrated, 2026-11-15",
+      "_tier_1_max_density_per_1000_basis": "The old trigger was a count above 10 over a window of up to 500 words, i.e. a density above ~20 per 1000 words under the OLD vocabulary. Under the new vocabulary and mechanics (0.39 fewer Tier-1 hits, measured on the client's own drafts) the equivalent is ~12 per 1000. Re-set 2026-11-15 by review chunk C4 because decision 3 shrank the Tier-1 vocabulary (20 entries -> 13 lemmas, dropping therapy/patient/patients/condition/trauma) and C-M-19 changed the counting mechanics, so the old number no longer meant what it did. Measured on the real corpora in this repo: on the client's own three drafts the total Tier-1 hits went 38 -> 20 on the vocabulary change alone and 38 -> 23 with the new mechanics (39% fewer); across the 56 audited competitor pages printed in the shipped briefings, the old floor of 10 admitted 15 of 56 rows (26.8%), and 6 is the value that admits the same 15 under the 0.39 shrink. EDITORIAL and UNCALIBRATED (decision 7): those counts show the number admits roughly what it used to, they are NOT a calibration — no outcome data was used, and the competitor page text is not in this repo, so the after-side for those 56 rows is scaled, not recomputed.",
+      "tier_1_max_density_per_1000": 12,
+      "_tier_1_min_hits_comment": "The minimum Tier-1 hit count the Surface-Level density trigger also requires. A density alone would label a 40-word page with one medical word (25 per 1000) as Surface-Level; the same reasoning as risk_signals.cliff_min_sample — a rate computed on a handful of hits is noise.",
+      "_tier_1_min_hits_source": "editorial, uncalibrated, 2026-11-15",
+      "tier_1_min_hits": 3
+    },
+    "_vacuum_min_medical_source": "editorial, uncalibrated, 2026-11-15 (was 10, set 2026-11-14)",
+    "_magnet_max_position_source": "editorial, uncalibrated, 2026-11-14",
+    "_scoring_window_words_comment": "C-M-19: how many words of the page BODY vocabulary scoring reads (the text the density is computed over, and the denominator that travels with every score). 500 preserves the historic window; the change is that the window is now body text once, with <header> and menu/nav elements stripped, instead of the outline text prepended to it — which counted every h1-h3 twice.",
+    "_scoring_window_words_source": "editorial, uncalibrated, 2026-11-15 (preserves the pre-existing 500)",
+    "scoring_window_words": 500,
+    "_position_thresholds_comment": "C-C-15: tag_competitor_position's three thresholds, previously Python literals in database.py (traffic > 1000 and medical_score > 15; systems_t2 > 10). volume_scaler_min_medical was 15 and is 9 for the same reason vacuum_min_medical moved: 15 x (1 - 0.39) = 9.2 under the new vocabulary and mechanics. The traffic and Tier-2 thresholds are unaffected by the vocabulary change and keep their original values.",
+    "_position_thresholds_source": "editorial, uncalibrated; traffic/t2 2026-03, medical re-set 2026-11-15",
+    "position_thresholds": {
+      "volume_scaler_min_traffic": 1000,
+      "volume_scaler_min_medical": 9,
+      "generalist_min_t2": 10
     }
   },
   "stop_words": [
@@ -103,25 +122,18 @@
   "clinical": {
     "tier_1_medical": [
       "symptom",
-      "symptoms",
       "treatment",
       "disorder",
-      "disorders",
       "diagnosis",
       "clinical",
-      "patient",
-      "patients",
-      "therapy",
       "medical",
       "disease",
       "medication",
       "prognosis",
       "pathology",
       "syndrome",
-      "condition",
       "healthcare",
-      "illness",
-      "trauma"
+      "illness"
     ],
     "tier_2_systems": [
       "differentiation",
@@ -156,6 +168,15 @@
       "emotional cutoff",
       "sibling position",
       "pursuer-distancer reciprocity"
+    ],
+    "_tier_1_medical_source": "editorial, uncalibrated, re-set 2026-11-15 (review decision 3 / C-M-08)",
+    "_neutral_clinical_comment": "DECIDED 2026-11-15 by the owner (review decision 3, finding C-M-08): Tier 1 is diagnostic and pathology vocabulary ONLY. 'therapy', 'patient', 'patients', 'condition' and 'trauma' were deliberately removed — they are this market's neutral vocabulary, so counting them made the client's own copy score as the medical model and made every 'couples therapy' query Tier 1 (67 of 374 real competitor keywords in competitor_keyword_gap.md are Tier 1 because of 'therapy' alone). Do not add them back without re-reading that decision. 'treatment', 'clinical' and 'healthcare' are arguable on the same test and were explicitly left in by that decision. Entries are LEMMAS: matching lemmatises the page text, so 'symptom' matches 'symptoms' and the plural entries were dropped.",
+    "neutral_clinical": [
+      "therapy",
+      "patient",
+      "patients",
+      "condition",
+      "trauma"
     ]
   },
   "filtering": {
@@ -257,14 +278,14 @@
     },
     "top10_saturation": 10,
     "min_signal_rankings": 2,
-    "framework_caption": "The barbell is a strategic framing \u2014 winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses \u2014 not a measured law. Authority = Moz DA + top-10 ranking count (the same formula for you and competitors); focus is tier-identity concentration (medical vs. systems language), not topic-count breadth. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist."
+    "framework_caption": "The barbell is a strategic framing — winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses — not a measured law. Authority = Moz DA + top-10 ranking count (the same formula for you and competitors); focus is tier-identity concentration (medical vs. systems language), not topic-count breadth. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist."
   },
   "sov": {
     "export_path": null,
-    "framework_caption": "AI Share-of-Voice is CONSUMED from serp-discover's AI-visibility probes (not re-probed here). Values are rolling snapshots \u2014 LLM answers vary between runs and model versions."
+    "framework_caption": "AI Share-of-Voice is CONSUMED from serp-discover's AI-visibility probes (not re-probed here). Values are rolling snapshots — LLM answers vary between runs and model versions."
   },
   "youtube_presence": {
-    "_comment": "SC-7-YT Phase 1 \u2014 YouTube Presence Check. Per competitor (and the client), the official YouTube Data API answers has-channel + subscribers/last-upload/activity/match-confidence. api_key_env is an ENV POINTER only \u2014 the key itself is read from env/.env, NEVER stored here or in code (the client_secret_* gitignore discipline). channel_map is seeded by owner-confirmed Phase-1 hits: {\"example.com\": [\"@examplecounselling\"]}.",
+    "_comment": "SC-7-YT Phase 1 — YouTube Presence Check. Per competitor (and the client), the official YouTube Data API answers has-channel + subscribers/last-upload/activity/match-confidence. api_key_env is an ENV POINTER only — the key itself is read from env/.env, NEVER stored here or in code (the client_secret_* gitignore discipline). channel_map is seeded by owner-confirmed Phase-1 hits: {\"example.com\": [\"@examplecounselling\"]}.",
     "api_key_env": "YOUTUBE_API_KEY",
     "channel_map": {},
     "max_candidates_per_competitor": 3,

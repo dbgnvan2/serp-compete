@@ -186,14 +186,30 @@ The system executes in 5 optional steps (configurable via `shared_config.json`):
    - Extracts the first 500 words for vocabulary analysis
 
 3. **Semantic Scoring**:
-   - Analyzes text for Tier 1/2/3 keyword mentions
+   - Analyzes the page BODY for Tier 1/2/3 term mentions — lemmatised, so "treatments"
+     matches the entry "treatment"; phrase-matched, so `self-regulation` and
+     `pursuer-distancer reciprocity` are reachable at all; longest-match-first, so
+     "differentiation of self" counts once as Tier 3 rather than also as Tier 2; and
+     with `<header>` and menu/nav elements stripped, so a template menu listing seven
+     treatment services no longer scores the page (all 2026-11-15, finding C-M-19).
+   - **Tier 1 is diagnostic and pathology vocabulary only.** "therapy", "patient",
+     "patients", "condition" and "trauma" were removed on 2026-11-15 (owner decision
+     3) and are recorded under `neutral_clinical` in `clinical_dictionary.json`. They
+     were doing most of the work: 68 of 374 real competitor keywords read as Tier 1
+     before and 2 after.
    - Calculates weighted score (Tier 3 weighted 2x, Tier 2 weighted 0.5x)
    - Assigns a "Systemic Label" of either **Standard** or **Surface-Level**. A page
-     is labelled **Surface-Level** when it uses a lot of medical language
-     (Tier 1 count above the `penalty_thresholds.tier_1_max` value, default 10)
-     but no deep Bowen (Tier 3) terms at all; in that case its Tier 2 score is
-     also penalised by 50%. Every other page is labelled **Standard**.
+     is labelled **Surface-Level** when it uses a lot of medical language **for its
+     length** — a Tier-1 density above `penalty_thresholds.tier_1_max_density_per_1000`
+     (12 per 1000 scored words), with at least `tier_1_min_hits` (3) hits under it —
+     and no deep Bowen (Tier 3) terms at all; in that case its Tier 2 score is also
+     penalised by 50%. Every other page is labelled **Standard**. The old rule was an
+     absolute count above 10, so the same five medical words meant one thing in a
+     60-word page and another in an 800-word one. `penalty_thresholds.tier_1_max`
+     remains only as the fallback when the window is unknown.
      (See `src/scoring_logic.py:calculate_weighted_score`.)
+   - Every score records `scoring_window_words`, the number of body words it was
+     counted over, and the briefing shows `medical_per_1000` beside the raw count.
 
 **Output:**
 - Database records for each audited URL
@@ -330,14 +346,34 @@ All behavior is controlled via `shared_config.json`:
 `vacuum_min_medical` is the **minimum** medical score a page must reach before it can be
 a Traffic Magnet, a Systemic Vacuum or a gpt-4o reframe target; `magnet_max_position` is
 the "ranks well" ceiling, read against the handoff rank. Both are **editorial and
-uncalibrated** as of 2026-11-14: `vacuum_min_medical` was started at 10 to match the
-`penalty_thresholds.tier_1_max` value then in use, and 10 for the position encodes the
-"top 10" wording in this manual. Raising either shortens the magnet, vacuum and reframe
-lists together — they are one query.
+uncalibrated**: 10 for the position encodes the "top 10" wording in this manual.
+Raising either shortens the magnet, vacuum and reframe lists together — they are one
+query.
+
+`vacuum_min_medical` was **re-set from 10 to 6 on 2026-11-15** because owner decision 3
+shrank the Tier-1 vocabulary and C-M-19 changed the counting: the old number no longer
+meant the same thing, and leaving it would have silently stopped the detectors firing.
+6 is the value that admits the same 15 of the 56 audited competitor pages in the
+shipped briefings that 10 used to, under the measured 0.39 shrink. Those counts are the
+**basis** for the number and are recorded in its `_source` note; they are **not a
+calibration**.
 
 Note that `vacuum_min_medical` is deliberately a separate key from
 `penalty_thresholds.tier_1_max`, which means "the highest Tier-1 count still counted as
 Tier 1". Reading that ceiling as a floor would invert its sense.
+
+### **clinical** / clinical_dictionary.json (the vocabulary)
+The live vocabulary is `shared_config.json → clinical`; `clinical_dictionary.json` is
+the fallback the scorer uses when that block is absent. **Both files are kept in step**
+— changing only the dictionary file has no effect on a normal run, which is worth
+knowing before editing it.
+
+Entries are **lemmas** (singular, uninflected): the page text is lemmatised before
+matching, so "symptom" matches "symptoms" and the plural entries were removed on
+2026-11-15. Multi-word and hyphenated entries are matched as phrases, longest first.
+`neutral_clinical` records the words deliberately excluded from Tier 1 by owner
+decision 3, with a comment saying why — do not move them back without re-reading it,
+and note that the magnet / vacuum thresholds were re-set to match the shorter list.
 
 ### **reporting** (display caps and depth bands)
 ```json

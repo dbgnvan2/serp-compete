@@ -35,6 +35,8 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.audit_universe import contains_term
+
 QUAD_AUTHORITATIVE = "authoritative"
 QUAD_NICHE_OWNER = "niche_owner"
 QUAD_MIDDLE = "middle"
@@ -105,7 +107,15 @@ def classify_quadrant(authority: float, focus: float, config: Dict[str, Any]) ->
 
 def classify_query_tiers(queries: List[str], clinical_vocab: Dict[str, Any]) -> Tuple[int, int]:
     """Classify the client's GSC queries into (medical, systems) tier counts using the
-    editorial `clinical` vocab — the client's focus input (it isn't page-audited)."""
+    editorial `clinical` vocab — the client's focus input (it isn't page-audited).
+
+    Matching is on WORD BOUNDARIES (C-M-08 / decision 3). `term in ql` made "air
+    conditioning" a medical query because of "condition" and "food processing jobs" a
+    systems query because of "process". Decision 3 removed "condition" and "trauma"
+    from Tier 1, but without boundaries the removal would have been only half
+    effective anyway: "conditioning" and "traumatic" would still have matched the
+    words that remain.
+    """
     t1 = [str(w).lower() for w in (clinical_vocab.get("tier_1_medical") or [])]
     systems_terms = [str(w).lower() for w in
                      ((clinical_vocab.get("tier_2_systems") or []) +
@@ -113,9 +123,9 @@ def classify_query_tiers(queries: List[str], clinical_vocab: Dict[str, Any]) -> 
     medical = systems = 0
     for q in queries or []:
         ql = str(q or "").lower()
-        if any(term in ql for term in t1):
+        if any(contains_term(ql, term) for term in t1):
             medical += 1
-        if any(term in ql for term in systems_terms):
+        if any(contains_term(ql, term) for term in systems_terms):
             systems += 1
     return medical, systems
 

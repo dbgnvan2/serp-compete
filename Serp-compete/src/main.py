@@ -613,7 +613,8 @@ def run_audit(handoff_path: str = None):
                         run_id=run_id, label=scores.get('systemic_label', 'Standard'),
                         # C-C-08: persist the real tier counts so a cache hit never
                         # has to guess them back out of the weighted score.
-                        t2_count=scores.get('t2_count'), t3_count=scores.get('t3_count'))
+                        t2_count=scores.get('t2_count'), t3_count=scores.get('t3_count'),
+                        scoring_window_words=scores.get('scoring_window_words'))
                     domain_scraped_pages.append(content)
                     # Wire-up fix + SC-1: score EEAT and profile GEO for the freshly-
                     # scraped page (both were built but never called). See enrichment.py.
@@ -628,7 +629,10 @@ def run_audit(handoff_path: str = None):
                                        # C-C-08: the real counts travel with the row;
                                        # None for a pre-C3 cached page, never guessed.
                                        t2_count=scores.get('t2_count'),
-                                       t3_count=scores.get('t3_count'))
+                                       t3_count=scores.get('t3_count'),
+                                       # C-M-19: the window the counts came from, so
+                                       # the report can show a density.
+                                       scoring_window_words=scores.get('scoring_window_words'))
                 print(f"  Audit {url}: Medical {scores['medical_score']}, Systems {scores['systems_score']} "
                       f"({scores.get('systemic_label')}) — keyword '{keyword}' "
                       f"[{keyword_source}, rank {pos}, "

@@ -76,13 +76,35 @@ def clinical_term_set(clinical_config: Optional[Dict[str, Any]]) -> List[str]:
     return terms
 
 
-def _contains(text: str, needle: str) -> bool:
-    """Word-boundary containment. '\\b' is unreliable next to non-word characters
-    (a hyphen in 'self-regulation'), so the boundary is asserted explicitly."""
+def contains_term(text: Any, needle: Any, allow_plural: bool = True) -> bool:
+    """Word-boundary containment — the ONE place this repo decides what "contains".
+
+    `\\b` is unreliable next to non-word characters (a hyphen in 'self-regulation'),
+    so the boundary is asserted explicitly. Used by the relevance test here, by
+    `positioning.classify_query_tiers` and by `gsc_performance`'s query tiering, so a
+    substring match cannot creep back into one of them: `term in query` made "air
+    conditioning" a medical query because of "condition", and "food processing jobs"
+    a systems query because of "process" (C-M-08).
+
+    `allow_plural` tolerates a trailing "s"/"es" and nothing else, because the
+    clinical dictionary now holds LEMMAS (decision 3): "symptom" has to match
+    "anxiety symptoms". It is deliberately not a stemmer — "condition" must NOT match
+    "conditioning" and "trauma" must NOT match "traumatic", which is the whole point
+    of the boundary. Irregular plurals ("diagnoses") are not matched here; the page
+    scorer lemmatises properly (semantic.count_terms) and this is the query path.
+    """
+    needle = str(needle or "").strip().lower()
     if not needle:
         return False
-    pattern = r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])"
-    return re.search(pattern, text) is not None
+    haystack = " ".join(str(text or "").lower().split())
+    suffix = r"(?:es|s)?" if allow_plural else ""
+    pattern = r"(?<![a-z0-9])" + re.escape(needle) + suffix + r"(?![a-z0-9])"
+    return re.search(pattern, haystack) is not None
+
+
+def _contains(text: str, needle: str) -> bool:
+    """Back-compat alias for the module-internal callers below."""
+    return contains_term(text, needle)
 
 
 def contains_clinical_term(keyword: Any, terms: Sequence[str]) -> bool:

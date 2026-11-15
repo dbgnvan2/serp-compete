@@ -409,3 +409,39 @@ def test_cm20_coverage_block_states_blocked_cached_and_incomplete(reporter):
     assert "cached.ca" in content
     assert "Tier counts incomplete" in content
     assert "audited 3 of 4 handoff domain(s)" in content
+
+
+# ── C-M-19: the score is reported with the window it was counted over ────────
+
+def test_cm19_the_magnet_table_shows_a_density_and_its_window(reporter):
+    """An absolute count over an unknown window is the finding: 5 medical words
+    scored 5 in a 5-word page and 5 in an 805-word page."""
+    db = reporter.db
+    run_id = db.create_run("client.ca")
+    db.save_competitor_metrics(
+        [{"domain": "comp.com", "url": "https://comp.com/a", "keyword": "kw",
+          "position": 2, "traffic": 1.0}], run_id=run_id)
+    db.save_traffic_magnet(run_id, "comp.com", "https://comp.com/a", "kw", 100.0, 10, 0.0,
+                           label="Standard", keyword_source="handoff",
+                           keyword_relevant=True, rank=3, t2_count=0, t3_count=0,
+                           scoring_window_words=500)
+    content = reporter.generate_summary("client.ca", run_id=run_id)
+    assert "medical_per_1000" in content
+    assert "per 1000 scored words" in content
+    sheet = pd.ExcelFile(f"audit_results_run_{run_id}.xlsx").parse("Traffic Magnets")
+    assert float(sheet.loc[0, "medical_per_1000"]) == 20.0      # 10 hits / 500 words
+    assert int(sheet.loc[0, "words"]) == 500
+
+
+def test_cm19_a_row_without_a_window_shows_no_density_rather_than_a_wrong_one(reporter):
+    db = reporter.db
+    run_id = db.create_run("client.ca")
+    db.save_competitor_metrics(
+        [{"domain": "comp.com", "url": "https://comp.com/a", "keyword": "kw",
+          "position": 2, "traffic": 1.0}], run_id=run_id)
+    db.save_traffic_magnet(run_id, "comp.com", "https://comp.com/a", "kw", 100.0, 10, 0.0,
+                           label="Standard", keyword_source="handoff",
+                           keyword_relevant=True, rank=3, t2_count=0, t3_count=0)
+    reporter.generate_summary("client.ca", run_id=run_id)
+    sheet = pd.ExcelFile(f"audit_results_run_{run_id}.xlsx").parse("Traffic Magnets")
+    assert pd.isna(sheet.loc[0, "medical_per_1000"])

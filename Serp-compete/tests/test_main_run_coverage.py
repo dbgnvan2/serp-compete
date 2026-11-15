@@ -354,3 +354,31 @@ def test_cc08_market_position_is_stable_across_a_cached_rerun(tmp_path, monkeypa
     assert counts == (4, 0)
     # …so nothing had to be withheld for want of counts.
     assert "Not classified (incomplete tier counts)" not in second[-1]
+
+
+# ── C-M-19 / C-C-08: the window and the tier counts reach the database ──────
+
+def test_cm19_the_scoring_window_is_persisted_with_the_scores(tmp_path, monkeypatch):
+    config, config_path, db_path, handoff_path = _prepare(tmp_path, monkeypatch)
+
+    class _WindowAuditor(_FakeAuditor):
+        def analyze_text(self, content):
+            return {"medical_score": 9, "systems_score": 0.0,
+                    "systemic_label": "Standard", "t2_count": 1, "t3_count": 0,
+                    "scoring_window_words": 480}
+
+    _run_audit_with_fakes(tmp_path, db_path, config, config_path, handoff_path,
+                          _WindowAuditor())
+    db = DatabaseManager(db_path)
+    run_id = db.get_latest_run_id()
+    with db._get_connection() as conn:
+        magnet = conn.execute(
+            "SELECT medical_score, t2_count, t3_count, scoring_window_words "
+            "FROM traffic_magnets WHERE run_id=? AND url=?",
+            (run_id, f"https://{ENRICHED}/couples")).fetchone()
+        audit = conn.execute(
+            "SELECT t2_count, t3_count, scoring_window_words FROM semantic_audits "
+            "WHERE url=? ORDER BY id DESC LIMIT 1",
+            (f"https://{ENRICHED}/couples",)).fetchone()
+    assert magnet == (9, 1, 0, 480)
+    assert audit == (1, 0, 480)

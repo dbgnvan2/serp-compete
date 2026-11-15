@@ -1,22 +1,60 @@
 {
   "tier_1_medical": [
-    "symptom", "symptoms", "treatment", "disorder", "disorders", "diagnosis", "clinical", 
-    "patient", "patients", "therapy", "medical", "disease", "medication", 
-    "prognosis", "pathology", "syndrome", "condition", "healthcare",
-    "illness", "trauma"
+    "symptom",
+    "treatment",
+    "disorder",
+    "diagnosis",
+    "clinical",
+    "medical",
+    "disease",
+    "medication",
+    "prognosis",
+    "pathology",
+    "syndrome",
+    "healthcare",
+    "illness"
   ],
   "tier_2_systems": [
-    "differentiation", "triangles", "chronic anxiety", "emotional system",
-    "family of origin", "nuclear family", "multigenerational", "process",
-    "relationship", "self-regulation", "emotional process", "functioning",
-    "connectedness", "systemic", "interdependence",
-    "internal family systems", "estrangement", "triangulation",
-    "attachment", "avoidant"
+    "differentiation",
+    "triangles",
+    "chronic anxiety",
+    "emotional system",
+    "family of origin",
+    "nuclear family",
+    "multigenerational",
+    "process",
+    "relationship",
+    "self-regulation",
+    "emotional process",
+    "functioning",
+    "connectedness",
+    "systemic",
+    "interdependence",
+    "internal family systems",
+    "estrangement",
+    "triangulation",
+    "attachment",
+    "avoidant"
   ],
   "tier_3_bowen": [
-    "defining self", "over-under functioning", "functional facts", 
-    "emotional distance", "emotional fusion", "differentiation of self",
-    "triangling", "emotional cutoff", "sibling position",
+    "defining self",
+    "over-under functioning",
+    "functional facts",
+    "emotional distance",
+    "emotional fusion",
+    "differentiation of self",
+    "triangling",
+    "emotional cutoff",
+    "sibling position",
     "pursuer-distancer reciprocity"
+  ],
+  "_tier_1_medical_source": "editorial, uncalibrated, re-set 2026-11-15 (review decision 3 / C-M-08)",
+  "_neutral_clinical_comment": "DECIDED 2026-11-15 by the owner (review decision 3, finding C-M-08): Tier 1 is diagnostic and pathology vocabulary ONLY. 'therapy', 'patient', 'patients', 'condition' and 'trauma' were deliberately removed — they are this market's neutral vocabulary, so counting them made the client's own copy score as the medical model and made every 'couples therapy' query Tier 1 (67 of 374 real competitor keywords in competitor_keyword_gap.md are Tier 1 because of 'therapy' alone). Do not add them back without re-reading that decision. 'treatment', 'clinical' and 'healthcare' are arguable on the same test and were explicitly left in by that decision. Entries are LEMMAS: matching lemmatises the page text, so 'symptom' matches 'symptoms' and the plural entries were dropped.",
+  "neutral_clinical": [
+    "therapy",
+    "patient",
+    "patients",
+    "condition",
+    "trauma"
   ]
 }
