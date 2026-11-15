@@ -331,3 +331,23 @@ class TestLegacyEdgeCases:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_moz_client_block_with_fetched_at_is_accepted(valid_handoff_data):
+    """Tool 1 stamps moz.client.fetched_at with the client's anchor text.
+
+    This schema did not allow it, so every handoff from a run with
+    client_anchor_texts on would have been rejected at ingestion (found 2026-11-14).
+    """
+    valid_handoff_data["schema_version"] = "1.1"
+    valid_handoff_data["moz"] = {
+        "generated_at": "2026-11-14T15:55:00+00:00",
+        "domains": {},
+        "client": {"domain": "livingsystems.ca", "anchor_texts": {"items": []},
+                   "fetched_at": "2026-11-14T15:53:04+00:00"},
+    }
+    jsonschema.validate(instance=valid_handoff_data, schema=HANDOFF_SCHEMA)
+
+    valid_handoff_data["moz"]["client"]["unknown_field"] = 1     # still strict
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=valid_handoff_data, schema=HANDOFF_SCHEMA)
