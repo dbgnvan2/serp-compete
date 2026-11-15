@@ -49,6 +49,43 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**Every composite score flattered the client or the template, and said so with unearned precision (C-M-09, C-M-10, C-M-12, C-M-13, C-M-14).**
+- **Root cause (P6 / P7 / P2):** five separate scores, one habit — comparing numbers that were
+  not comparable, then presenting the result with more confidence than the inputs carry. The
+  barbell's authority axis said "the same formula for you and competitors" while the competitor
+  value was the average Moz **Page** Authority of its sampled URLs and the client's was a Domain
+  Authority; the client's top-10 count came from every GSC query it ranked for (saturating the
+  component at 240 queries) against a rival's ≤10-keyword sample, so the client landed
+  `authoritative` by construction. Focus was an entropy over a raw Tier-1 count against a
+  ×2.0/×0.5-weighted systems score, computed on ≤3 pages, so one occurrence of "relationship"
+  moved a domain across a quadrant boundary. EEAT's `score_confidence` was a count of null
+  dimensions, which made it `high` for every page that loaded — a constant column labelled
+  confidence — beside composites of booleans rendered to 2 dp, and its authoritativeness
+  component was fed the URL's PA where it expected a DA. The cluster key kept scheme and host
+  verbatim, so a www/non-www mismatch produced `isolated`, which the manual told the owner to
+  read as "easier to overtake". And the extractability section was headed "Why Competitors Get
+  Cited" and asserted that the structures it found were *why* rivals were cited, while a stock
+  WordPress post (Yoast schema, byline "admin", a date) out-scored a real FAQ page and nothing in
+  the section measured a citation at all.
+- **What would have caught it:** a test that asserts the CLIENT is not automatically the best
+  thing on the plot, and one that feeds each composite the shape its own documentation claims to
+  reward (an FAQ page vs a stock WP post; a www-mismatched link graph; a page with one tier
+  token). The suite tested each formula's arithmetic on inputs chosen to make it work.
+- **Fix:** Moz `domain_authority` is read from the url_metrics call already being made and stored
+  beside `avg_da` (never backfilled from it); both sides of the top-10 count use the handoff's
+  keyword universe; focus is withheld below `positioning.min_focus_tokens` and the counts behind
+  it are printed; EEAT confidence is weighted signal coverage, capped when a composite is
+  withheld, at 1 dp with the value set stated; the cluster key is host-normalised and the
+  "prefer isolated" advice is gone; the extractability tier is weighted toward FAQ schema and
+  question headings, generic bylines do not count as authorship, the section is renamed
+  "Extractability signals (structural, unvalidated)", and when an AI-visibility export exists the
+  Strong tiers are checked against the real citations in it.
+- **Rule:** before comparing two numbers, say out loud what each one measures — "average page
+  authority of three sampled URLs" and "domain authority" are not the same quantity, and a label
+  like `avg_da` will hide that for months. And a confidence that cannot come out low is not a
+  confidence: if a column has one value in practice, delete it or compute it from something that
+  varies.
+
 **The axis the whole tool is built on counted the client's own vocabulary as the opposing model, and counted it badly (C-M-08, C-M-19, C-C-15).**
 - **Root cause (P4 / P7):** two independent faults in one number. (1) The editorial list: Tier 1
   held "therapy", "patient", "patients", "condition" and "trauma", so a Bowen practice's own copy

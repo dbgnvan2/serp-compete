@@ -124,7 +124,10 @@ class GeoProfiler:
         # ── credentialed authorship ───────────────────────────────────────────
         byline = metadata.get("author_byline") or ""
         matched_credentials = self._match_credentials(byline)
-        has_author_byline = bool(byline)
+        # C-M-14: a GENERIC byline is not credentialed authorship. "admin",
+        # "editor", the site's own name — WordPress and Yoast emit these by
+        # default, and counting them let a stock WP post out-score an FAQ page.
+        has_author_byline = bool(byline) and not self._is_generic_byline(byline)
         credentialed_author = len(matched_credentials) > 0
 
         # ── question-shaped headings (from the h2/h3 outline) ──────────────────
@@ -168,7 +171,19 @@ class GeoProfiler:
         if is_fresh:
             present.append("dated / fresh content")
 
-        tier = self._tier(len(present))
+        # C-M-14: the tier is WEIGHTED, not a count of present signals. A stock
+        # WordPress post (Organization + Person schema from Yoast, a byline of
+        # "admin", a published_time, zero question headings) scored three signals and
+        # read as Strong, while an FAQ page with FAQPage schema and two genuine
+        # question headings but no byline or date read as Moderate. What an answer
+        # engine quotes is a question-shaped, answer-first structure — so FAQPage
+        # schema and question headings weigh more than an Organization stamp.
+        tier = self._tier(self._signal_weight(
+            has_faq=has_faq, has_question_headings=has_question_headings,
+            q_headings=q_headings, has_article=has_article,
+            has_localbusiness=has_localbusiness, has_person=has_person,
+            has_org=has_org, credentialed_author=credentialed_author,
+            has_author_byline=has_author_byline, is_fresh=is_fresh))
         why_cited = self._why_cited(present, tier)
 
         return GeoProfile(
@@ -229,12 +244,61 @@ class GeoProfiler:
             types.append("LocalBusiness")
         return "schema markup (" + ", ".join(types) + ")"
 
-    def _tier(self, n_present: int) -> str:
-        if n_present >= self.strong_tier_min:
+    def _tier(self, weight: float) -> str:
+        if weight >= self.strong_tier_min:
             return "Strong"
-        if n_present >= self.moderate_tier_min:
+        if weight >= self.moderate_tier_min:
             return "Moderate"
         return "Weak"
+
+    # C-M-14: the weights. FAQPage schema and question-shaped headings are what make
+    # a passage quotable; an Organization or Person stamp and a publish date are
+    # ambient WordPress output. Editorial and uncalibrated, 2026-11-15 — these are a
+    # judgement about what AI answer engines quote, not a measurement of citations
+    # (the section header no longer claims otherwise, and `ai_citations` from the
+    # serp-discover export is the only thing that could check it).
+    _SIGNAL_WEIGHTS = {
+        "faq_schema": 2.0,
+        "question_headings": 1.5,
+        "extra_question_headings": 0.5,   # a second and third question heading
+        "credentialed_author": 1.0,
+        "article_or_localbusiness_schema": 0.5,
+        "org_or_person_schema": 0.25,
+        "named_byline": 0.25,
+        "fresh": 0.25,
+    }
+
+    def _signal_weight(self, has_faq: bool, has_question_headings: bool,
+                       q_headings: int, has_article: bool, has_localbusiness: bool,
+                       has_person: bool, has_org: bool, credentialed_author: bool,
+                       has_author_byline: bool, is_fresh: bool) -> float:
+        w = self._SIGNAL_WEIGHTS
+        weight = 0.0
+        if has_faq:
+            weight += w["faq_schema"]
+        if has_question_headings:
+            weight += w["question_headings"]
+            weight += min(max(q_headings - 1, 0), 2) * w["extra_question_headings"]
+        if credentialed_author:
+            weight += w["credentialed_author"]
+        elif has_author_byline:
+            weight += w["named_byline"]
+        if has_article or has_localbusiness:
+            weight += w["article_or_localbusiness_schema"]
+        if has_org or has_person:
+            weight += w["org_or_person_schema"]
+        if is_fresh:
+            weight += w["fresh"]
+        return round(weight, 2)
+
+    # Bylines that identify nobody (C-M-14).
+    _GENERIC_BYLINES = ("admin", "administrator", "editor", "staff", "team",
+                        "support", "webmaster", "author", "info", "office")
+
+    def _is_generic_byline(self, byline: str) -> bool:
+        text = " ".join(str(byline or "").lower().split())
+        text = text.removeprefix("by ").strip(" -–—:")
+        return text in self._GENERIC_BYLINES or not text
 
     def _why_cited(self, present: List[str], tier: str) -> str:
         if not present:
@@ -244,10 +308,15 @@ class GeoProfiler:
                 "systemic alternative can compete on citability."
             )
         joined = "; ".join(present)
+        # C-M-14: this sentence used to assert causation — "These structures make the
+        # page easy for AI answer engines to quote" — under a section header reading
+        # "Why Competitors Get Cited", while nothing here checks whether the page is
+        # cited by anything. It states what was found and what it is believed to
+        # support.
         return (
-            f"{tier} extractability: {joined}. These structures make the page "
-            f"easy for AI answer engines to quote — match or exceed them on the "
-            f"client's equivalent page."
+            f"{tier} extractability signals: {joined}. Structures of this kind are "
+            f"believed to help an answer engine quote a passage; whether this page is "
+            f"actually cited is not measured here."
         )
 
     def _empty_signals(self) -> Dict[str, Any]:

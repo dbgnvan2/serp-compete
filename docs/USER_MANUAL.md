@@ -114,7 +114,7 @@ Scores four dimensions:
 | **Experience** | Author byline, publish date, original images, case studies | Shows real expertise and recent updates |
 | **Expertise** | Author credentials (MD, LCSW, etc.), schema markup, Bowen terminology | Validates professional authority |
 | **Authoritativeness** | Domain authority, external links, organizational schema | Shows how established the site is |
-| **Trustworthiness** | HTTPS, contact page, privacy policy, HTTPS | Indicates basic security and transparency |
+| **Trustworthiness** | HTTPS (0.4), contact page (0.3), privacy policy (0.3) | Indicates basic security and transparency. Weighted booleans, so the score can only be 0, 0.3, 0.4, 0.6, 0.7 or 1.0 — reported to 1 dp for that reason |
 
 **Why:** High EEAT scores don't make competitors unbeatable—they just mean you need stronger credentials/signals in your counter-content.
 
@@ -483,7 +483,12 @@ For each competitor URL audited:
 - Experience score (author, dates, images)
 - Expertise score (credentials, schema, Bowen terminology)
 - Authoritativeness score (domain authority, links)
-- Trustworthiness score (HTTPS, contact info)
+- Trustworthiness score (HTTPS, contact page, privacy policy)
+- `score_confidence` — **signal coverage** (the share of the weighted signals that
+  could be read), capped below `high` when any of the four composites was withheld.
+  It used to read `high` for every page that loaded (C-M-12, fixed 2026-11-15).
+- Authoritativeness uses the domain's Moz **Domain** Authority; it was being handed
+  the individual URL's **Page** Authority (C-M-09/C-M-12).
 
 **How to use:** Low EEAT scores on competitor pages = opportunity for you to build stronger signals.
 

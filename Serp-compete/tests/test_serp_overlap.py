@@ -180,16 +180,22 @@ def test_get_competitor_das_from_competitors_table(tmp_path):
     db = DatabaseManager(str(tmp_path / "d.db"))
     run_id = db.create_run("c.com")
     with db._get_connection() as conn:
-        conn.execute("INSERT INTO competitors (domain, avg_da) VALUES ('a.com', 42)")
-        conn.execute("INSERT INTO competitors (domain, avg_da) VALUES ('b.com', NULL)")
-        conn.execute("INSERT INTO competitors (domain, avg_da) VALUES ('old.com', 60)")
+        # C-M-09: the feasibility input is `domain_authority`. `avg_da` is the average
+        # PAGE authority of the sampled URLs and must not stand in for it, so b.com
+        # (a PA but no DA) is excluded exactly as a domain with nothing stored is.
+        conn.execute("INSERT INTO competitors (domain, avg_da, domain_authority) "
+                     "VALUES ('a.com', 45, 42)")
+        conn.execute("INSERT INTO competitors (domain, avg_da, domain_authority) "
+                     "VALUES ('b.com', 50, NULL)")
+        conn.execute("INSERT INTO competitors (domain, avg_da, domain_authority) "
+                     "VALUES ('old.com', 60, 58)")
         conn.commit()
     db.save_competitor_metrics([
         {"domain": "a.com", "url": "u", "keyword": "kw", "position": 3, "traffic": 1},
         {"domain": "b.com", "url": "u2", "keyword": "kw", "position": 4, "traffic": 1},
     ], run_id)
     das = db.get_competitor_das(run_id)
-    assert das == {"a.com": 42}   # NULL avg_da excluded; old.com not in this run
+    assert das == {"a.com": 42}   # NULL DA excluded; old.com not in this run
     with pytest.raises(TypeError):
         db.get_competitor_das()   # the unscoped call cannot be made at all
 

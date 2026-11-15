@@ -181,12 +181,30 @@ class TestPartialSignalPage:
         result = scorer.score_page(make_page(metadata=metadata), domain_authority=None)
         assert result.scores["authoritativeness"] == pytest.approx(0.0)
 
-    def test_confidence_high_when_all_signals_have_defaults(self, scorer):
-        # All signal extractors produce non-None defaults for complete pages,
-        # so confidence is always high for extraction_status="complete".
+    def test_confidence_reflects_coverage_not_whether_the_page_loaded(self, scorer):
+        # C-M-12: confidence is weighted SIGNAL COVERAGE now, as the config has always
+        # described it ("Comprehensive signals detected" / "Moderate signal coverage"
+        # / "Limited signals") — not a count of null dimensions, which made every page
+        # that loaded read "high" and only a blocked one "low".
         metadata = make_metadata(external_link_count=0, schema_types=[])
-        result = scorer.score_page(make_page(metadata=metadata), domain_authority=None)
-        assert result.score_confidence == "high"
+        # No Moz DA: half of the authoritativeness input is unreadable, so the honest
+        # word is "indicative", not "reliable".
+        no_da = scorer.score_page(make_page(metadata=metadata), domain_authority=None)
+        assert no_da.score_confidence == "medium"
+        # With the DA read, every weighted signal is evaluable.
+        with_da = scorer.score_page(make_page(metadata=metadata), domain_authority=40)
+        assert with_da.score_confidence == "high"
+
+    def test_cm12_a_dimension_that_cannot_be_scored_caps_the_confidence(self, scorer,
+                                                                        sample_config):
+        """Reporting "high" while one of the four composites is withheld overstates
+        it, whatever the coverage of the rest."""
+        import copy
+        cfg = copy.deepcopy(sample_config)
+        del cfg["eeat_weights"]["experience"]
+        partial = EEATScorer(cfg).score_page(make_page(), domain_authority=50)
+        assert partial.scores["experience"] is None
+        assert partial.score_confidence != "high"
 
     def test_confidence_medium_when_weights_dimension_missing(self, scorer, sample_config):
         # Medium confidence occurs when a dimension has no weights configured.

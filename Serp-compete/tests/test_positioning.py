@@ -20,6 +20,9 @@ CONFIG = {
     "authority_threshold": 50, "focus_threshold": 50,
     "authority_weights": {"moz_da": 0.7, "top10": 0.3},
     "top10_saturation": 10, "min_signal_rankings": 2,
+    # C-M-10: these cases exercise the axis MATH with deliberately small inputs, so
+    # the focus floor is disabled here and tested on its own below.
+    "min_focus_tokens": 0,
 }
 
 
@@ -149,14 +152,100 @@ def test_get_positioning_inputs(tmp_path):
         {"domain": "a.com", "url": "https://a.com/1", "keyword": "kw1", "position": 3, "traffic": 100},
         {"domain": "a.com", "url": "https://a.com/2", "keyword": "kw2", "position": 15, "traffic": 50},
     ], run_id)
-    db.save_competitor_summary("a.com", 42)        # the run-path DA persistence
-    db.save_competitor_summary("other.com", 60)    # a domain NOT audited this run
+    db.save_competitor_summary("a.com", 42, domain_authority=37)   # PA avg, real DA
+    db.save_competitor_summary("other.com", 60, domain_authority=55)  # NOT this run
     inputs = db.get_positioning_inputs(run_id)
     assert inputs["a.com"]["medical_total"] == 15.0   # 10 + 5
-    assert inputs["a.com"]["systems_total"] == 10.0   # 2 + 8
-    assert inputs["a.com"]["top10_count"] == 1        # only kw1 (pos 3 ≤ 10)
-    assert inputs["a.com"]["moz_da"] == 42            # DA merged from the competitors table
+    # C-M-09: UNWEIGHTED tier counts. These rows were saved without t2/t3 counts, so
+    # the systems total is 0 and `tier_counts_known` says why — it is not the x2/x0.5
+    # weighted score the entropy used to be computed against.
+    assert inputs["a.com"]["systems_total"] == 0.0
+    assert inputs["a.com"]["tier_counts_known"] is False
+    # C-M-09: these metric rows carry no `keyword_source`, so they are not in the
+    # shared handoff universe and the count is 0 — compute_authority then excludes
+    # the component and renormalises over the DA rather than scoring it as zero.
+    assert inputs["a.com"]["top10_count"] == 0
+    # C-M-09: the DOMAIN authority, not avg_da (the average PAGE authority).
+    assert inputs["a.com"]["moz_da"] == 37
+    assert inputs["a.com"]["authority_basis"] == "moz_domain_authority"
     assert "other.com" not in inputs                 # not audited this run → excluded
+
+
+def test_cm09_unweighted_tier_counts_drive_focus(tmp_path):
+    """C-M-09/C-M-10: the entropy was computed over a RAW medical count against a
+    x2.0/x0.5 WEIGHTED systems score, so two medical words outweighed three Tier-2
+    words. Both sides are plain counts now."""
+    db = DatabaseManager(str(tmp_path / "unweighted.db"))
+    run_id = db.create_run("c.com")
+    db.save_traffic_magnet(run_id, "a.com", "https://a.com/1", "kw1", 100, 4, 6.0,
+                           label="Standard", t2_count=2, t3_count=2,
+                           keyword_source="handoff", keyword_relevant=True, rank=3)
+    inputs = db.get_positioning_inputs(run_id)
+    assert inputs["a.com"]["medical_total"] == 4.0
+    assert inputs["a.com"]["systems_total"] == 4.0      # 2 + 2, not the 6.0 weighted
+    assert inputs["a.com"]["tier_counts_known"] is True
+
+
+def test_cm09_top10_count_uses_the_handoff_universe(tmp_path):
+    """C-M-09: a competitor's top-10 count came from its <=10-keyword DataForSEO
+    sample while the client's came from every GSC query it ranked for. Both sides are
+    now restricted to the keywords Tool 1 handed over."""
+    db = DatabaseManager(str(tmp_path / "universe.db"))
+    run_id = db.create_run("c.com")
+    db.save_traffic_magnet(run_id, "a.com", "https://a.com/1", "kw1", 1, 5, 0.0,
+                           label="Standard", t2_count=1, t3_count=0,
+                           keyword_source="handoff", keyword_relevant=True, rank=3)
+    db.save_competitor_metrics([
+        {"domain": "a.com", "url": "https://a.com/1", "keyword": "handed over",
+         "position": 3, "traffic": 1, "keyword_source": "handoff"},
+        {"domain": "a.com", "url": "https://a.com/2", "keyword": "enrichment only",
+         "position": 2, "traffic": 1, "keyword_source": "ranked_keywords"},
+    ], run_id)
+    inputs = db.get_positioning_inputs(run_id)
+    assert inputs["a.com"]["top10_count"] == 1       # the enrichment keyword is excluded
+    assert inputs["a.com"]["top10_universe"] == "handoff keywords"
+
+
+def test_cm09_a_competitor_without_a_measured_domain_authority_has_no_da(tmp_path):
+    """Unknown is unknown: the page figure must not stand in for a domain figure."""
+    db = DatabaseManager(str(tmp_path / "noda.db"))
+    run_id = db.create_run("c.com")
+    db.save_traffic_magnet(run_id, "a.com", "https://a.com/1", "kw1", 1, 5, 0.0,
+                           label="Standard", t2_count=1, t3_count=0,
+                           keyword_source="handoff", keyword_relevant=True, rank=3)
+    db.save_competitor_summary("a.com", 45)          # PA only, Moz gave no DA
+    inputs = db.get_positioning_inputs(run_id)
+    assert "moz_da" not in inputs["a.com"]
+    assert inputs["a.com"]["authority_basis"] == "unmeasured"
+    assert db.get_competitor_das(run_id) == {}       # feasibility withholds a verdict
+
+
+# ── C-M-10: focus needs a minimum tier-token total ───────────────────────────
+
+def test_cm10_focus_is_withheld_below_the_token_floor():
+    """With <=3 audited pages, focus was decided by a handful of generic tokens:
+    {medical 3, systems 0} gave focus 100 and `niche_owner`; one occurrence of the
+    word "relationship" moved a domain across the quadrant boundary."""
+    config = {**CONFIG, "min_focus_tokens": 12}
+    assert compute_focus(3, 0, 12) is None
+    assert compute_focus(3, 0.5, 12) is None
+    row = positioning_row("thin.com", {"moz_da": 20, "top10_count": 2,
+                                       "medical_total": 3, "systems_total": 0},
+                          False, config)
+    assert row["focus_score"] is None
+    assert row["quadrant"] == QUAD_INSUFFICIENT
+    assert row["rationale"]["min_focus_tokens"] == 12
+    assert row["rationale"]["tier_tokens_total"] == 3.0
+
+
+def test_cm10_focus_is_computed_once_there_are_enough_tokens():
+    config = {**CONFIG, "min_focus_tokens": 12}
+    assert compute_focus(14, 0, 12) == 100.0
+    row = positioning_row("solid.com", {"moz_da": 20, "top10_count": 3,
+                                        "medical_total": 14, "systems_total": 0},
+                          False, config)
+    assert row["focus_score"] == 100.0
+    assert row["quadrant"] == QUAD_NICHE_OWNER
 
 
 def test_high_authority_thin_domain_is_not_emerging():
@@ -172,13 +261,14 @@ def test_save_competitor_summary_feeds_get_competitor_das(tmp_path):
     competitors table so BOTH positioning and C4 feasibility get competitor DA."""
     db = DatabaseManager(str(tmp_path / "da.db"))
     run_id = db.create_run("c.com")
-    db.save_competitor_summary("a.com", 42)
+    # C-M-09: feasibility reads the DOMAIN authority, so that is what must be stored.
+    db.save_competitor_summary("a.com", 42, domain_authority=37)
     # C-C-10: the read is run-scoped, so the domain must also be in THIS run's
     # metrics — a DA stored by an earlier run is no longer borrowed.
     db.save_competitor_metrics(
         [{"domain": "a.com", "url": "u", "keyword": "kw", "position": 3, "traffic": 1}],
         run_id)
-    assert db.get_competitor_das(run_id) == {"a.com": 42}
+    assert db.get_competitor_das(run_id) == {"a.com": 37}
 
 
 def test_save_positioning_roundtrip(tmp_path):

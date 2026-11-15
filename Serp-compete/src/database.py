@@ -121,6 +121,7 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS competitors (
                     domain TEXT PRIMARY KEY,
                     avg_da INTEGER,
+                    domain_authority INTEGER,
                     last_crawled_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -334,6 +335,10 @@ class DatabaseManager:
                 # the figure the finding is about.
                 ("traffic_magnets", "scoring_window_words", "INTEGER"),
                 ("semantic_audits", "scoring_window_words", "INTEGER"),
+                # C-M-09: the competitor's DOMAIN authority, kept apart from
+                # `avg_da`, which is (and always was) the average PAGE authority of
+                # its sampled URLs. Conflating the two is the finding.
+                ("competitors", "domain_authority", "INTEGER"),
             ):
                 try:
                     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
@@ -588,16 +593,27 @@ class DatabaseManager:
             conn.commit()
             return cursor.lastrowid
 
-    def save_competitor_summary(self, domain: str, avg_da: int):
+    def save_competitor_summary(self, domain: str, avg_da: int,
+                                domain_authority: int = None):
+        """Persist a competitor's authority figures.
+
+        `avg_da` is the average Moz PAGE authority of the URLs sampled this run — the
+        name is historic and misleading, which is half of C-M-09. `domain_authority`
+        is the real Moz Domain Authority of the domain root, read from the same
+        url_metrics response, and is None when Moz did not return one: unknown, never
+        the page figure wearing a domain label.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO competitors (domain, avg_da, last_crawled_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO competitors (domain, avg_da, domain_authority, last_crawled_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(domain) DO UPDATE SET
                     avg_da = excluded.avg_da,
+                    domain_authority = COALESCE(excluded.domain_authority,
+                                                competitors.domain_authority),
                     last_crawled_at = CURRENT_TIMESTAMP
-            ''', (domain, avg_da))
+            ''', (domain, avg_da, domain_authority))
             conn.commit()
 
     def save_traffic_magnet(self, run_id: int, domain: str, url: str, keyword: str,
@@ -1010,37 +1026,76 @@ class DatabaseManager:
     def get_positioning_inputs(self, run_id: int) -> Dict[str, Dict[str, Any]]:
         """C2/SC-4: per-competitor {moz_da, top10_count, medical_total, systems_total}.
 
-        Focus/tier signal from traffic_magnets; top-10 count from competitor_metrics;
-        Moz DA from the competitors table (populated per run by save_competitor_summary,
-        so competitors use the SAME authority formula as the client). Only domains
-        audited this run are included.
+        C-M-09, 2026-11-15 — three changes to make the two sides of the plot
+        comparable:
+
+        * `moz_da` is the competitor's **Domain** Authority
+          (`competitors.domain_authority`), not `avg_da`, which is the average PAGE
+          authority of the URLs sampled this run. The client's figure was always a
+          Domain Authority, so "the same formula for you and competitors" was
+          comparing a DA with a PA — and the client landed `authoritative` by
+          construction. A domain with no stored DA gets None (excluded and
+          renormalised by compute_authority), never the page figure.
+        * `top10_count` counts only keywords the HANDOFF handed over
+          (`keyword_source = 'handoff'`), which is the universe the client's own
+          count can be restricted to as well. Before, the client's count came from
+          every GSC query it ranked for (saturating the component) while a
+          competitor's came from a <=10-keyword DataForSEO sample.
+        * the focus totals are UNWEIGHTED counts: Tier-1 hits against Tier-2 plus
+          Tier-3 hits. `SUM(systems_score)` was the x2.0/x0.5 weighted score, so the
+          entropy was computed over a raw count and a weighted one (C-M-10).
+          `t2_count`/`t3_count` exist per row since C3; a row without them
+          contributes nothing rather than a wrong number, and `tier_counts_known`
+          records that.
         """
         inputs: Dict[str, Dict[str, Any]] = {}
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # tier totals (the focus axis)
-            cursor.execute('''SELECT domain, SUM(medical_score), SUM(systems_score)
+            # Every domain this run audited, so this reader and
+            # `get_competitor_das(run_id)` agree by construction about which
+            # competitors exist (C-C-10). A domain with no tier signal lands as
+            # `insufficient_data` rather than vanishing from the plot.
+            for (domain,) in cursor.execute(
+                    'SELECT DISTINCT domain FROM competitor_metrics WHERE run_id = ?',
+                    (run_id,)).fetchall():
+                inputs.setdefault(domain, {})
+            # tier totals (the focus axis) — unweighted counts
+            cursor.execute('''SELECT domain, SUM(medical_score),
+                                     SUM(COALESCE(t2_count, 0) + COALESCE(t3_count, 0)),
+                                     MIN(CASE WHEN t2_count IS NULL OR t3_count IS NULL
+                                              THEN 0 ELSE 1 END)
                               FROM traffic_magnets WHERE run_id = ? GROUP BY domain''',
                            (run_id,))
-            for domain, medical, systems in cursor.fetchall():
+            for domain, medical, systems, counts_known in cursor.fetchall():
                 d = inputs.setdefault(domain, {})
                 d["medical_total"] = float(medical or 0)
                 d["systems_total"] = float(systems or 0)
-            # top-10 ranking count (an authority component)
+                d["tier_counts_known"] = bool(counts_known)
+            # top-10 ranking count over the SHARED (handoff) keyword universe
             cursor.execute('''SELECT domain, COUNT(*) FROM (
                                 SELECT domain, keyword, MIN(position) AS mp
                                 FROM competitor_metrics
-                                WHERE run_id = ? AND keyword IS NOT NULL AND position IS NOT NULL
+                                WHERE run_id = ? AND keyword IS NOT NULL
+                                  AND position IS NOT NULL
+                                  AND keyword_source = 'handoff'
                                 GROUP BY domain, keyword)
                               WHERE mp <= 10 GROUP BY domain''', (run_id,))
             for domain, count in cursor.fetchall():
                 inputs.setdefault(domain, {})["top10_count"] = int(count)
-            # Moz DA per domain (the authority axis, shared with the client). Only
-            # attach it to domains actually audited this run.
-            cursor.execute('SELECT domain, avg_da FROM competitors WHERE avg_da IS NOT NULL')
-            for domain, avg_da in cursor.fetchall():
+            # Moz DOMAIN authority per domain (the authority axis, shared with the
+            # client). Only attach it to domains actually audited this run.
+            cursor.execute('SELECT domain, domain_authority FROM competitors '
+                           'WHERE domain_authority IS NOT NULL')
+            for domain, domain_authority in cursor.fetchall():
                 if domain in inputs:
-                    inputs[domain]["moz_da"] = int(avg_da)
+                    inputs[domain]["moz_da"] = int(domain_authority)
+                    inputs[domain]["authority_basis"] = "moz_domain_authority"
+            for domain, values in inputs.items():
+                values.setdefault("authority_basis", "unmeasured")
+                values.setdefault("top10_universe", "handoff keywords")
+                # A stable shape: 0 means "no handoff keyword in the top 10", which
+                # compute_authority excludes and renormalises over the DA alone.
+                values.setdefault("top10_count", 0)
         return inputs
 
     def get_competitor_positions(self, run_id: int) -> Dict[str, Dict[str, int]]:
@@ -1095,13 +1150,18 @@ class DatabaseManager:
         """
         das: Dict[str, int] = {}
         with self._get_connection() as conn:
+            # C-M-09: the DOMAIN authority. The feasibility table compares "your DA"
+            # with "each competitor's DA" and the competitor side was the average
+            # PAGE authority of its sampled URLs. A competitor with no measured DA is
+            # ABSENT from the map, so feasibility withholds a verdict for it rather
+            # than comparing against a page figure.
             rows = conn.execute(
-                'SELECT c.domain, c.avg_da FROM competitors c '
-                'WHERE c.avg_da IS NOT NULL AND c.domain IN '
+                'SELECT c.domain, c.domain_authority FROM competitors c '
+                'WHERE c.domain_authority IS NOT NULL AND c.domain IN '
                 '(SELECT DISTINCT domain FROM competitor_metrics WHERE run_id = ?)',
                 (run_id,)).fetchall()
-            for domain, avg_da in rows:
-                das[domain] = int(avg_da)
+            for domain, domain_authority in rows:
+                das[domain] = int(domain_authority)
         return das
 
     def save_semantic_audit(self, url: str, medical_score: int, systems_score: float,

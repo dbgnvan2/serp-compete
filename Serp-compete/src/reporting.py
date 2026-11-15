@@ -33,6 +33,45 @@ class ReportGenerator:
         self.magnet_row_cap = int(reporting_cfg.get("magnet_markdown_row_cap", 20))
         self.t2_depth_min = int(reporting_cfg.get("systems_depth_min_t2", 3))
 
+    def _geo_citation_check(self, conn, run_id: int, df_geo) -> str:
+        """Do the Strong-tier domains actually get cited? (C-M-14)
+
+        The serp-discover AI-visibility export is the ONE thing in this system that
+        records real citations, and the extractability section never looked at it. When
+        this run consumed an export (`sov_daily` carries citation_share per entity),
+        the tiers are checked against it: a Strong-tier page on a domain no engine
+        cited is the honest counter-evidence to a structural heuristic, and it is
+        better for the owner to see that than to be told the structure is "why"
+        anything happens.
+        """
+        try:
+            cited = {row[0] for row in conn.execute(
+                "SELECT DISTINCT entity FROM sov_daily "
+                "WHERE run_id = ? AND citation_share IS NOT NULL AND citation_share > 0",
+                (run_id,)).fetchall() if row[0]}
+        except Exception:  # noqa: BLE001 - an optional cross-check, never fatal
+            cited = set()
+        if not cited:
+            return ("_No AI-visibility export was consumed this run, so no page here "
+                    "can be checked against a real citation._")
+        strong = df_geo[df_geo["extractability_tier"] == "Strong"]
+        if strong.empty:
+            return ("_No Strong-tier pages this run, so there is nothing to check "
+                    "against the citation data._")
+        from src.brand_utils import normalise_domain
+        cited_norm = {normalise_domain(entity) for entity in cited}
+        strong_domains = {normalise_domain(str(url).split("/")[2])
+                          for url in strong["url"] if str(url).count("/") >= 2}
+        confirmed = sorted(strong_domains & cited_norm)
+        unconfirmed = sorted(strong_domains - cited_norm)
+        return (f"_Checked against the AI-visibility export: of the Strong-tier "
+                f"domains, {len(confirmed)} of {len(strong_domains)} were actually "
+                f"cited by an engine"
+                + (f" ({', '.join(confirmed)})" if confirmed else "")
+                + (f"; not cited: {', '.join(unconfirmed)}" if unconfirmed else "")
+                + ". A Strong tier with no citation is evidence against the "
+                  "heuristic, not against the page._")
+
     def _capped(self, df, cap: int, label: str):
         """(display frame, "showing N of M" note) — C-C-07.
 
@@ -349,9 +388,23 @@ class ReportGenerator:
             if not df_eeat.empty:
                 report.append("\n## EEAT Competitive Analysis (Heuristic)")
                 report.append("Experience, Expertise, Authoritativeness, and Trustworthiness heuristic scores.")
-                # Format numeric columns to 2 decimals
+                # C-M-12: 1 dp, not 2. These composites are weighted sums of
+                # BOOLEANS — trustworthiness can only take the values
+                # {0, .3, .4, .6, .7, 1.0}, and 0.4 of it is the scheme of the URL
+                # DataForSEO returned — so a second decimal place implies a
+                # resolution the inputs do not have.
                 for col in ['experience_score', 'expertise_score', 'authoritativeness_score', 'trustworthiness_score']:
-                    df_eeat[col] = df_eeat[col].apply(lambda x: f"{x:.2f}" if x is not None else "—")
+                    df_eeat[col] = df_eeat[col].apply(lambda x: f"{x:.1f}" if x is not None else "—")
+                report.append(
+                    "_Each score is a weighted sum of BOOLEAN signals, so it moves in "
+                    "steps, not continuously — trustworthiness, for example, can only "
+                    "be 0, 0.3, 0.4, 0.6, 0.7 or 1.0, and 0.4 of it is simply whether "
+                    "the URL is https. `score_confidence` is now **signal coverage** "
+                    "(the share of weighted signals that could be read at all), and it "
+                    "is capped below `high` whenever one of the four composites could "
+                    "not be computed — it used to read `high` for every page that "
+                    "loaded. Authoritativeness uses the domain's Moz Domain Authority; "
+                    "it was being given the individual URL's Page Authority._")
                 disp_eeat, eeat_note = self._capped(df_eeat, self.markdown_row_cap,
                                                     "scored page(s)")
                 report.append(eeat_note)
@@ -453,11 +506,16 @@ class ReportGenerator:
             ''', conn, params=(run_id,))
 
             if not df_geo.empty:
-                report.append("\n## GEO / Extractability — Why Competitors Get Cited")
-                report.append("Structural signals AI answer engines use to decide whether to quote a "
-                              "competitor page (schema markup, credentialed authorship, question-shaped "
-                              "headings, freshness). These explain *why* a page is citable — match or "
-                              "exceed them on the client's equivalent page.")
+                # C-M-14: the section used to be headed "Why Competitors Get Cited"
+                # and told the owner these structures are *why* rivals get cited,
+                # while nothing here checks whether any page is cited by anything.
+                report.append("\n## Extractability signals (structural, unvalidated)")
+                report.append("Structural features associated with being quoted by AI answer engines "
+                              "(FAQ schema, question-shaped headings, credentialed authorship, "
+                              "freshness). **Nothing in this section measures citations** — it reads "
+                              "page structure and nothing else. Treat it as a build checklist, not as "
+                              "an explanation of why a rival is cited.")
+                report.append(self._geo_citation_check(conn, run_id, df_geo))
                 # C-C-07: capped for display only (tier order, then url); the sheet
                 # carries all of them.
                 disp_geo, geo_note = self._capped(df_geo, self.markdown_row_cap,
@@ -541,7 +599,8 @@ class ReportGenerator:
 
             # 3e. Barbell Positioning Diagnostic (C2 / SC-4)
             df_positioning = pd.read_sql_query('''
-                SELECT domain, is_client, authority_score, focus_score, quadrant
+                SELECT domain, is_client, authority_score, focus_score, quadrant,
+                       rationale_json
                 FROM positioning WHERE run_id = ?
                 ORDER BY is_client DESC,
                     CASE quadrant WHEN 'authoritative' THEN 0 WHEN 'niche_owner' THEN 1
@@ -565,8 +624,36 @@ class ReportGenerator:
                 disp = df_positioning.copy()
                 disp['domain'] = disp.apply(
                     lambda r: f"⭐ {r['domain']} (you)" if r['is_client'] else r['domain'], axis=1)
-                report.append(disp[['domain', 'authority_score', 'focus_score', 'quadrant']]
-                              .to_markdown(index=False))
+                # C-M-10: print the counts the focus figure came from, and the floor
+                # it had to clear, so a quadrant can be checked rather than trusted.
+                import json as _json
+
+                def _rationale(row, key, default=""):
+                    try:
+                        return _json.loads(row['rationale_json'] or "{}").get(key, default)
+                    except (TypeError, ValueError):
+                        return default
+
+                disp['tier_tokens'] = df_positioning.apply(
+                    lambda r: _rationale(r, 'tier_tokens_total'), axis=1)
+                disp['top10_count'] = df_positioning.apply(
+                    lambda r: _rationale(r, 'top10_count'), axis=1)
+                disp['authority_basis'] = df_positioning.apply(
+                    lambda r: _rationale(r, 'authority_basis', 'unknown'), axis=1)
+                report.append(disp[['domain', 'authority_score', 'focus_score',
+                                    'quadrant', 'top10_count', 'tier_tokens',
+                                    'authority_basis']].to_markdown(index=False))
+                floors = {str(_rationale(r, 'min_focus_tokens', '')) for _, r in
+                          df_positioning.iterrows()} - {''}
+                if floors:
+                    report.append(
+                        f"\n_`tier_tokens` is the unweighted Tier-1 + Tier-2/3 term "
+                        f"count the focus figure was computed from; below "
+                        f"{sorted(floors)[0]} (`positioning.min_focus_tokens`) focus is "
+                        f"withheld and the domain reads `insufficient_data` rather than "
+                        f"being placed on a handful of generic tokens. `top10_count` is "
+                        f"over the handoff's keywords — the same universe for you and "
+                        f"for competitors._")
                 mid = df_positioning[df_positioning['quadrant'] == 'middle']
                 if not mid.empty:
                     report.append("\n⚠️ **Danger zone (undifferentiated middle):** "

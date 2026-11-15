@@ -258,7 +258,9 @@
       "will"
     ],
     "strong_tier_min_signals": 3,
-    "moderate_tier_min_signals": 1
+    "moderate_tier_min_signals": 1,
+    "_tier_comment": "C-M-14 (2026-11-15): the tier is a WEIGHTED total, not a count of present signals. A stock WordPress post (Organization + Person schema from Yoast, a byline of 'admin', a published_time, zero question headings) scored 3 signals and read Strong, while an FAQPage with two genuine question headings read Moderate. The weights live in geo_profiler._SIGNAL_WEIGHTS: FAQPage schema 2.0, question headings 1.5 (+0.5 each for a second and third), credentialed author 1.0, Article/LocalBusiness schema 0.5, Organization/Person 0.25, a named non-generic byline 0.25, freshness 0.25. The thresholds below are read against that total, so 3.0 now means 'FAQ schema plus question headings', not 'any three stamps'.",
+    "_tier_source": "editorial, uncalibrated, 2026-11-15 (thresholds 2026-05, re-read as weights)"
   },
   "cluster_thresholds": {
     "hub_in_degree_threshold": 2,
@@ -278,7 +280,10 @@
     },
     "top10_saturation": 10,
     "min_signal_rankings": 2,
-    "framework_caption": "The barbell is a strategic framing — winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses — not a measured law. Authority = Moz DA + top-10 ranking count (the same formula for you and competitors); focus is tier-identity concentration (medical vs. systems language), not topic-count breadth. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist."
+    "framework_caption": "The barbell is a strategic framing — winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses — not a measured law. Authority = Moz DOMAIN Authority + how many of the handoff's keywords the domain ranks top-10 for, the same formula and the same keyword universe for you and competitors (fixed 2026-11-15: the competitor figure used to be the average PAGE authority of its sampled URLs and the client's top-10 count came from every GSC query it ranked for, so the client was authoritative by construction). Focus is tier-identity concentration (medical vs. systems language) over unweighted term counts, withheld as insufficient_data below positioning.min_focus_tokens. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist.",
+    "_min_focus_tokens_comment": "C-M-10: the smallest tier-token total (Tier-1 hits + Tier-2/3 hits across the domain's audited pages) a focus figure may be computed from; below it the domain is `insufficient_data` rather than placed. With technical.max_audit_pages_per_domain at 3, focus was decided by a handful of generic tokens — {medical 3, systems 0} gave focus 100 and `niche_owner`, and one occurrence of 'relationship' moved a domain across the quadrant boundary. 12 is 20 (the review's suggested floor) scaled by the same 0.39 vocabulary shrink as technical.vacuum_min_medical; see that key's basis note.",
+    "_min_focus_tokens_source": "editorial, uncalibrated, 2026-11-15",
+    "min_focus_tokens": 12
   },
   "sov": {
     "export_path": null,

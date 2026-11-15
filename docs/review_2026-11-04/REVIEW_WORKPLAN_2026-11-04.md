@@ -483,12 +483,12 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 | C-M-06 | High | C2 | Fragile-Magnet / velocity fire on outages, 1-pt noise, forever | fixed `7a6405b` (C2) |
 | C-M-07 | High | C2 | `visibility_cliff` measures the tool's sampling | fixed `7a6405b` (C2) |
 | C-M-08 | Med | C4 | "therapy" is Tier-1 medical | fixed (C4a) |
-| C-M-09 | Med | C4 | Barbell authority: DA vs PA; client authoritative by construction | open |
-| C-M-10 | Med | C4 | Focus undefined at ≤3 pages | open |
+| C-M-09 | Med | C4 | Barbell authority: DA vs PA; client authoritative by construction | fixed (C4b) |
+| C-M-10 | Med | C4 | Focus undefined at ≤3 pages | fixed (C4b) |
 | C-M-11 | Med | C4 | Overlap cells are sampling artefacts; unlike position scales | open |
-| C-M-12 | Med | C4 | EEAT composites of near-constant booleans, always "high" confidence | open |
-| C-M-13 | Med | C4 | Cluster label from 3 pages; www mismatch → isolated | open |
-| C-M-14 | Med | C4 | GEO tier rewards WP defaults; section asserts causation | open |
+| C-M-12 | Med | C4 | EEAT composites of near-constant booleans, always "high" confidence | fixed (C4b) |
+| C-M-13 | Med | C4 | Cluster label from 3 pages; www mismatch → isolated | fixed (C4b) |
+| C-M-14 | Med | C4 | GEO tier rewards WP defaults; section asserts causation | fixed (C4b) |
 | C-M-15 | Med | C1 | Reframe prompt asserts Medical Model at medical 0; PAA never present | fixed `f7b09bf` (C1) |
 | C-M-16 | Low–Med | C4 | YouTube `none_found` rendered as "no channel" | open |
 | C-M-17 | Low–Med | C4 | SoV drops mentioned-not-cited rivals; `presence_rate` unprinted | open |

@@ -31,15 +31,22 @@ def new_enrichment_stats() -> Dict[str, int]:
 
 def enrich_scraped_page(db: Any, run_id: int, page: Any, page_authority: Any,
                         eeat_scorer: Any, geo_profiler: Any,
-                        stats: Dict[str, int]) -> None:
+                        stats: Dict[str, int],
+                        domain_authority: Any = None) -> None:
     """Fresh-scrape path: score EEAT + profile GEO for a freshly-scraped page.
 
     A failure in either engine is counted and surfaced (never silently swallowed,
     P2) so a *systematic* fault is provable rather than an empty report section.
+
+    C-M-12: `domain_authority` is the DOMAIN's Moz DA. EEAT's authoritativeness
+    component normalises `min(da / 60, 1.0)`, and it was being handed the individual
+    URL's PAGE authority — a different measurement on a different scale. When no DA
+    was measured the component is None, which `_compute_weighted_score` excludes and
+    renormalises; it is never backfilled from the page figure.
     """
     url = getattr(page, "url", "?")
     try:
-        eeat_score = eeat_scorer.score_page(page, domain_authority=(page_authority or None))
+        eeat_score = eeat_scorer.score_page(page, domain_authority=domain_authority)
         eeat_scorer.save_to_database(db, run_id, eeat_score)
         stats["eeat_fresh"] += 1
     except Exception as eeat_err:  # noqa: BLE001 - counted + surfaced below

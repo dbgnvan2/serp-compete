@@ -286,6 +286,21 @@ def _strip_scheme(url: Any) -> str:
     return text.rstrip("/")
 
 
+def domain_authority_map(results: List[Dict[str, Any]],
+                         requested_urls: List[str]) -> Dict[str, float]:
+    """{requested url: DOMAIN authority} from the same url_metrics response.
+
+    C-M-09: the barbell's authority axis and the feasibility table both called their
+    competitor figure "DA" while it was the average Moz PAGE Authority of the sampled
+    URLs, compared against a real Domain Authority for the client. Moz's url_metrics
+    returns both per target, so the domain figure is available from the call already
+    being made — it just has to be read. Absent is ABSENT (C-C-03): a missing
+    `domain_authority` is never backfilled from `page_authority`, because conflating
+    the two is the finding.
+    """
+    return _metric_map(results, requested_urls, ("domain_authority", "da"))
+
+
 def page_authority_map(results: List[Dict[str, Any]],
                        requested_urls: List[str]) -> Dict[str, float]:
     """{requested url: page authority} for the results Moz actually returned.
@@ -295,20 +310,25 @@ def page_authority_map(results: List[Dict[str, Any]],
     map — not present with 0 — so the caller cannot mistake "no record" for "authority
     zero" and report a -35 authority drop (C-C-03).
     """
+    return _metric_map(results, requested_urls, ("page_authority", "pa"))
+
+
+def _metric_map(results: List[Dict[str, Any]], requested_urls: List[str],
+                keys: Tuple[str, ...]) -> Dict[str, float]:
+    """{requested url: the first of `keys` the result carries}, matched on target."""
     by_target = {}
     for result in results or []:
         target = identify_target(result)
         if not target:
             continue
-        pa = result.get('page_authority')
-        if pa is None:
-            pa = result.get('pa')
-        if pa is None:
+        value = next((result.get(key) for key in keys
+                      if result.get(key) is not None), None)
+        if value is None:
             continue
-        by_target[_strip_scheme(target)] = float(pa)
+        by_target[_strip_scheme(target)] = float(value)
     out: Dict[str, float] = {}
     for requested in requested_urls or []:
-        pa = by_target.get(_strip_scheme(requested))
-        if pa is not None:
-            out[requested] = pa
+        value = by_target.get(_strip_scheme(requested))
+        if value is not None:
+            out[requested] = value
     return out

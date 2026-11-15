@@ -110,13 +110,36 @@ class EEATScorer:
             "trustworthiness": trustworthiness_score
         }
 
-        # Determine confidence level
-        null_count = sum(1 for s in scores.values() if s is None)
-        if null_count == 0:
+        # Determine confidence level — from SIGNAL COVERAGE, which is what the
+        # config has always described (`eeat_client_messaging.confidence_levels`:
+        # "0.8-1.0: Comprehensive signals detected", "0.5-0.8: Moderate signal
+        # coverage", "0.0-0.5: Limited signals").
+        #
+        # C-M-12: it used to be the count of null DIMENSIONS, and a dimension is only
+        # null when fewer than half its signals are evaluable. So every page that
+        # loaded scored "high" and only a blocked page scored "low" — the column was
+        # a constant, presented beside composites rendered to 2 dp. Coverage is the
+        # share of individual weighted signals that were actually evaluable.
+        coverage = self._signal_coverage(
+            experience_signals, expertise_signals,
+            authoritativeness_signals, trustworthiness_signals)
+        # "high" means every weighted signal was readable — the config's wording is
+        # "Comprehensive signals detected. Scores are reliable." A page whose Moz DA
+        # could not be read is missing half of its authoritativeness input, and
+        # "indicative" (medium) is the honest word for that.
+        if coverage >= 0.95:
             confidence = "high"
-        elif null_count == 4:
-            confidence = "low"
+        elif coverage >= 0.5:
+            confidence = "medium"
         else:
+            confidence = "low"
+        # A withheld DIMENSION caps the claim: reporting "high" confidence while one
+        # of the four composites could not be computed at all overstates it, whatever
+        # the coverage of the rest.
+        null_dimensions = sum(1 for score in scores.values() if score is None)
+        if null_dimensions == len(scores):
+            confidence = "low"
+        elif null_dimensions and confidence == "high":
             confidence = "medium"
 
         return EEATScore(
@@ -129,6 +152,28 @@ class EEATScorer:
             scores=scores,
             score_confidence=confidence
         )
+
+    def _signal_coverage(self, *signal_dicts: Dict[str, Any]) -> float:
+        """The share of the WEIGHT that could be evaluated (0.0-1.0).
+
+        Weighted, not counted: a signal carrying half of a dimension matters more to
+        the composite than one carrying a tenth, so it should matter more to the
+        confidence in it. Only signals the weights actually reference count at all —
+        a signal the config does not weight contributes nothing to the score, so it
+        must not flatter the coverage either (C-M-12).
+        """
+        evaluable = total = 0.0
+        for dimension, signals in zip(
+                ("experience", "expertise", "authoritativeness", "trustworthiness"),
+                signal_dicts):
+            for signal_name, weight in (self.weights.get(dimension, {}) or {}).items():
+                weight = abs(float(weight or 0))
+                total += weight
+                if signals.get(signal_name) is not None:
+                    evaluable += weight
+        if not total:
+            return 0.0
+        return evaluable / total
 
     def _extract_experience_signals(self, page: ScrapedPage) -> Dict[str, Any]:
         """Extract experience signals from page."""

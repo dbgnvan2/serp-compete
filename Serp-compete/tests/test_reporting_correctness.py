@@ -266,14 +266,16 @@ def test_cc10_feasibility_excludes_domains_this_run_did_not_audit(tmp_path):
     listed competitors that are not in this run's handoff at all, with DA values of
     unknown age — while `get_positioning_inputs` beside it was already run-scoped."""
     db = DatabaseManager(str(tmp_path / "feas.db"))
-    db.save_competitor_summary("old-run-only.com", 60)
-    db.save_competitor_summary("current.com", 30)
+    # C-M-09: feasibility reads `domain_authority`, not `avg_da` (the average PAGE
+    # authority of the sampled URLs), so that is what these rows store.
+    db.save_competitor_summary("old-run-only.com", 60, domain_authority=58)
+    db.save_competitor_summary("current.com", 30, domain_authority=28)
     run_id = db.create_run("client.ca")
     db.save_competitor_metrics(
         [{"domain": "current.com", "url": "https://current.com/a", "keyword": "kw",
           "position": 3, "traffic": 1.0}], run_id=run_id)
 
-    assert db.get_competitor_das(run_id) == {"current.com": 30}
+    assert db.get_competitor_das(run_id) == {"current.com": 28}
     # The unscoped read is gone: `run_id` is required, so no caller can reintroduce
     # the stale set (P22).
     with pytest.raises(TypeError):
@@ -285,8 +287,8 @@ def test_cc10_the_feasibility_table_matches_positioning(tmp_path):
     competitors exist."""
     from src.serp_overlap import analyze_serp_overlap
     db = DatabaseManager(str(tmp_path / "feas2.db"))
-    db.save_competitor_summary("old-run-only.com", 60)
-    db.save_competitor_summary("current.com", 30)
+    db.save_competitor_summary("old-run-only.com", 60, domain_authority=58)
+    db.save_competitor_summary("current.com", 30, domain_authority=28)
     run_id = db.create_run("client.ca")
     db.save_competitor_metrics(
         [{"domain": "current.com", "url": "https://current.com/a", "keyword": "kw",

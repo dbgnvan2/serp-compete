@@ -321,8 +321,33 @@ class TestURLNormalisation:
         assert detector._normalise("https://example.com/page#section") == detector._normalise("https://example.com/page")
 
     def test_root_path_preserved(self, detector):
+        # C-M-13: the key is host-normalised and scheme-INSENSITIVE now (the scheme is
+        # dropped and `www.` stripped), because three pages linking to each other as
+        # `https://c.ca/...` while being scraped as `https://www.c.ca/...` had no
+        # edges at all and the domain was labelled `isolated`.
         norm = detector._normalise("https://example.com/")
-        assert norm == "https://example.com/"
+        assert norm == "//example.com/"
+        assert norm.endswith("/")
+
+    def test_cm13_host_and_scheme_variants_are_one_node(self, detector):
+        """The www/non-www mismatch that produced a spurious `isolated` label."""
+        assert (detector._normalise("https://www.example.com/page")
+                == detector._normalise("http://example.com/page"))
+
+    def test_cm13_absolute_links_in_the_other_host_form_create_edges(self, detector):
+        """Three pages scraped as www.*, linking to each other without the www."""
+        pages = [
+            make_page("https://www.example.com/a",
+                      internal_links=["https://example.com/b"]),
+            make_page("https://www.example.com/b",
+                      internal_links=["https://example.com/a"]),
+            make_page("https://www.example.com/c",
+                      internal_links=["https://example.com/b"]),
+        ]
+        result = detector.analyze_domain("example.com", pages)
+        assert result.cluster_signal != "isolated"
+        norm_b = detector._normalise("https://www.example.com/b")
+        assert result.internal_link_graph[norm_b]["in_degree"] == 2
 
     def test_relative_links_resolved(self, detector):
         # A relative internal link should be resolved against the page URL and matched

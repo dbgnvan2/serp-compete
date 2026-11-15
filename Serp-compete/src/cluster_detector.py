@@ -122,20 +122,44 @@ class ClusterDetector:
         else:
             signal = "linked"
 
+        # C-M-13: `hub_is_homepage` is the one robust reading at this sample size —
+        # "the other pages link to the home page", which is what a logo or a menu
+        # does on most sites. The isolated/clustered label is reported with
+        # `pages_analysed` beside it and without the "easier to overtake" advice the
+        # guide used to draw from it.
+        homepage_keys = {self._normalise(f"https://{domain}/"),
+                         self._normalise(f"https://www.{domain}/")}
+        hub_is_homepage = any(hub in homepage_keys for hub in hub_candidates)
+
         return ClusterResult(
             domain=domain,
             pages_analyzed=n,
             internal_link_graph=graph,
             hub_candidates=hub_candidates,
             cluster_signal=signal,
-            resolution_caveat=f"Based on N={n} scraped pages. Low resolution.",
+            resolution_caveat=(
+                f"Based on N={n} scraped pages. Low resolution: at this sample size "
+                f"`isolated` cannot distinguish 'no internal hub' from 'not enough "
+                f"pages sampled to see one'. hub_is_homepage="
+                f"{'yes' if hub_is_homepage else 'no'}."),
         )
 
     def _normalise(self, url: str) -> str:
-        """Strip fragment, normalise trailing slash for URL comparison."""
+        """Canonical comparison key: host-normalised, scheme-insensitive, no fragment.
+
+        C-M-13: the key used to keep the scheme and host verbatim, so three pages
+        carrying absolute `https://c.ca/...` links while being scraped as
+        `https://www.c.ca/...` had NO edges between them and the domain was labelled
+        `isolated` — which the manual reads as "easier to overtake". `http` vs
+        `https` did the same. The host is lower-cased and `www.`-stripped with the
+        same `brand_utils.normalise_domain` the omit list and the brand derivation
+        use, and the scheme is dropped from the key entirely.
+        """
+        from src.brand_utils import normalise_domain
         p = urlparse(url)
         path = p.path.rstrip("/") or "/"
-        return urlunparse((p.scheme, p.netloc, path, p.params, p.query, ""))
+        host = normalise_domain(p.netloc)
+        return urlunparse(("", host, path, p.params, p.query, ""))
 
     def save_to_database(self, db_manager: Any, run_id: int, result: ClusterResult) -> None:
         """

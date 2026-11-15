@@ -26,7 +26,8 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
                             anchor_texts_by_domain: Optional[Dict[str, Any]] = None,
                             anchor_coverage: Optional[Dict[str, int]] = None,
                             run_domains: Optional[list] = None,
-                            client_brand_names: Optional[list] = None
+                            client_brand_names: Optional[list] = None,
+                            handoff_keywords: Optional[set] = None
                             ) -> Dict[str, Any]:
     """Run C4/C2/C1/C3/C6 and persist their outputs. Never raises — each feature (including
     its own module import) is guarded, so any one failure degrades to an empty section rather
@@ -88,12 +89,29 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         comp_inputs = db.get_positioning_inputs(run_id)
         client_med, client_sys = classify_query_tiers(
             list(client_positions.keys()), shared_config.get("clinical", {}))
+        # C-M-09: the client's top-10 count over the SAME keyword universe as the
+        # competitors' — the handoff keywords. It used to count every GSC query the
+        # client ranked top-10 for, which saturates the component (240 queries -> the
+        # full 100 of it) while a competitor's came from a <=10-keyword sample. With
+        # no handoff keyword set the count is withheld rather than computed over a
+        # different universe: compute_authority then renormalises over the DA alone.
+        normalised_handoff = {str(k).strip().lower() for k in (handoff_keywords or set())}
+        if normalised_handoff:
+            client_top10 = sum(1 for kw, p in client_positions.items()
+                               if p <= 10 and str(kw).strip().lower() in normalised_handoff)
+            top10_universe = f"handoff keywords ({len(normalised_handoff)})"
+        else:
+            client_top10 = None
+            top10_universe = "not comparable — no handoff keyword set"
         client_inputs = {
             # None (not client_da's 0 default) when client.da is absent — compute_authority
             # EXCLUDES a missing DA and renormalizes, never counts it as a zero score.
             "moz_da": shared_config.get("client", {}).get("da"),
-            "top10_count": sum(1 for p in client_positions.values() if p <= 10),
-            "medical_total": client_med, "systems_total": client_sys}
+            "top10_count": client_top10,
+            "medical_total": client_med, "systems_total": client_sys,
+            "authority_basis": ("config client.da (override; decision 6 asks for a live "
+                                "provider lookup)"),
+            "top10_universe": top10_universe}
         pos_rows = compute_positioning(comp_inputs, client_domain, client_inputs,
                                        shared_config.get("positioning", {}))
         db.save_positioning(run_id, pos_rows, computed_at=today)

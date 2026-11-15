@@ -5,7 +5,8 @@ import json
 import glob
 import warnings
 import jsonschema
-from src.api_clients import DataForSEOClient, MozClient, page_authority_map
+from src.api_clients import (DataForSEOClient, MozClient, domain_authority_map,
+                              page_authority_map)
 from src.semantic import SemanticAuditor
 from src.geo_profiler import GeoProfiler
 from src.eeat_scorer import EEATScorer
@@ -437,6 +438,7 @@ def run_audit(handoff_path: str = None):
     skipped_domains: List[Tuple[str, str]] = []
     enrichment_failures: List[Tuple[str, str]] = []
     unmeasured_pa_domains: List[str] = []
+    unmeasured_da_domains: List[str] = []
     # C-M-20: the Executive Summary must state run coverage, which until now reached
     # only the console — so a reader of the .md could not tell fresh from cached, nor
     # a blocked domain from one with nothing to report.
@@ -502,10 +504,21 @@ def run_audit(handoff_path: str = None):
         # one arbitrary URL.
         moz_metrics_map = {}
         moz_error = None
+        domain_root = f"https://{normalise_domain(domain)}/"
+        competitor_domain_authority = None
         try:
-            moz_results = moz_client.get_url_metrics(urls)
+            # C-M-09: ask for the domain ROOT as well, so the barbell's authority
+            # axis and the feasibility table can use a real Moz Domain Authority
+            # instead of the average PAGE authority of the sampled URLs. It is the
+            # same call and the same response — the domain figure was simply never
+            # read.
+            moz_results = moz_client.get_url_metrics(urls + [domain_root])
             moz_metrics_map = page_authority_map(moz_results, urls)
-            print(f"  Moz returned {len(moz_metrics_map)} metrics for {len(urls)} URL(s).")
+            root_da = domain_authority_map(moz_results, [domain_root])
+            competitor_domain_authority = root_da.get(domain_root)
+            print(f"  Moz returned {len(moz_metrics_map)} metrics for {len(urls)} URL(s)"
+                  f"; domain authority "
+                  f"{competitor_domain_authority if competitor_domain_authority is not None else 'unmeasured'}.")
         except Exception as e:
             moz_error = str(e)
             print(f"  Warning: Moz metrics failed: {e} — Page Authority is UNKNOWN for "
@@ -520,10 +533,17 @@ def run_audit(handoff_path: str = None):
                 print(f"  Skipping high-authority domain (Avg PA {avg_pa:.1f} > 50): {domain}")
                 skipped_domains.append((domain, f"PA filter (avg PA {avg_pa:.1f} > 50)"))
                 continue
-            # C2/C4: persist this competitor's Domain Authority (avg Moz PA) so positioning
-            # (authority axis) and feasibility use the same DA basis as the client. Without
-            # this the competitors table stays empty and both features degrade silently.
-            db.save_competitor_summary(domain, int(round(avg_pa)))
+            # C2/C4: persist this competitor's authority figures. `avg_da` is the
+            # average PAGE authority of the sampled URLs (the historic column);
+            # `domain_authority` is the domain root's real Moz DA, or None when Moz
+            # did not return one — positioning and feasibility read the latter
+            # (C-M-09) and withhold a verdict rather than compare a DA with a PA.
+            db.save_competitor_summary(
+                domain, int(round(avg_pa)),
+                domain_authority=(None if competitor_domain_authority is None
+                                  else int(round(competitor_domain_authority))))
+            if competitor_domain_authority is None:
+                unmeasured_da_domains.append(domain)
         else:
             avg_pa = None
             unmeasured_pa_domains.append(domain)
@@ -618,7 +638,12 @@ def run_audit(handoff_path: str = None):
                     domain_scraped_pages.append(content)
                     # Wire-up fix + SC-1: score EEAT and profile GEO for the freshly-
                     # scraped page (both were built but never called). See enrichment.py.
-                    enrich_scraped_page(db, run_id, content, pa, eeat_scorer, geo_profiler, enrich)
+                    enrich_scraped_page(db, run_id, content, pa, eeat_scorer,
+                                        geo_profiler, enrich,
+                                        # C-M-12: the DOMAIN's authority for the
+                                        # authoritativeness component, not this URL's
+                                        # page authority.
+                                        domain_authority=competitor_domain_authority)
 
                 db.save_traffic_magnet(run_id, domain, url, keyword, traffic,
                                        scores['medical_score'], scores['systems_score'],
@@ -722,6 +747,7 @@ def run_audit(handoff_path: str = None):
         "skipped_domains": skipped_domains,
         "enrichment_failures": enrichment_failures,
         "unmeasured_pa_domains": unmeasured_pa_domains,
+        "unmeasured_da_domains": unmeasured_da_domains,
         "blocked_domains": blocked_domains,
         "cached_domains": cached_domains,
         "incomplete_tier_domains": incomplete_tier_domains,
@@ -753,7 +779,11 @@ def run_audit(handoff_path: str = None):
                             anchor_texts_by_domain=_moz_anchors,
                             anchor_coverage=_moz_coverage,
                             run_domains=audited_domains,
-                            client_brand_names=client_brand_names)
+                            client_brand_names=client_brand_names,
+                            # C-M-09/C-M-11: the shared keyword universe, so the
+                            # client's top-10 count and the overlap matrix are
+                            # restricted to what Tool 1 handed over.
+                            handoff_keywords=handoff_keywords)
 
     # Strategic Logic with PAA context from Handover.
     # C-M-02 (owner decision 2, 2026-11-14): a page is a reframe target only when it

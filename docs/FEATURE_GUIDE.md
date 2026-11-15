@@ -212,6 +212,23 @@ Scores* Excel sheet.
 > **Read it honestly:** these are heuristic proxies built from SEO conventions, **not**
 > Google's private EEAT model. Use them to *compare* competitors, not as an absolute
 > verdict.
+>
+> **Each score is a weighted sum of BOOLEANS**, so it moves in steps rather than
+> continuously: trustworthiness can only be 0, 0.3, 0.4, 0.6, 0.7 or 1.0, and 0.4 of
+> it is simply whether the URL is `https`. The report shows **1 dp** for that reason —
+> two decimal places implied a resolution the inputs do not have (C-M-12).
+>
+> **`score_confidence` is signal coverage** — the share of the weighted signals that
+> could be read at all — and it is capped below `high` whenever one of the four
+> composites could not be computed. It used to be a count of null dimensions, so every
+> page that loaded read `high` and only a blocked page read `low`: a constant column
+> presented as a confidence. A page whose Moz Domain Authority could not be read is
+> missing half its authoritativeness input and now reads `medium`.
+>
+> **Authoritativeness uses the domain's Moz Domain Authority.** It was being handed the
+> individual URL's *Page* Authority — a different measurement on a different scale —
+> and when Moz failed the component was excluded and the score renormalised, so an
+> outage *raised* it (C-M-12, C-M-09).
 
 ### 3.3 Internal-linking cluster detection — how well-defended a competitor is
 **What it does:** looks at how a competitor's scraped pages link to each other and
@@ -223,40 +240,80 @@ defaults 2 and 3).
 **What it lets you understand:** whether a competitor has built a mutually-reinforcing
 topic cluster (hard to displace) or a set of orphan pages (easier to overtake).
 
-**What you can then do:** prioritise **isolated**/**linked** competitors as easier
-wins; for **clustered** ones, plan to build your own supporting cluster, not a single
-page. Treat **insufficient_data** as "not enough evidence," not "no cluster."
+**What you can then do:** for **clustered** competitors, plan to build your own
+supporting cluster rather than a single page. Treat **insufficient_data** as "not
+enough evidence," not "no cluster" — and do not read `isolated` as "easy to overtake"
+(see below).
 
 **Where you see it:** *Internal Linking Cluster Analysis* section and the *Cluster
 Analysis* Excel sheet.
 
 > **Read it honestly:** the tool samples only up to **3 pages** per competitor, so
 > `insufficient_data` is common and the view is a keyhole, not the whole site.
+>
+> **`isolated` does not mean "orphan pages".** At three sampled pages it cannot
+> distinguish "this domain has no internal hub" from "we did not sample enough pages
+> to see one" — a site with hundreds of interlinked pages reads `isolated` if the
+> three we happened to audit do not link to each other. The guidance to prioritise
+> isolated competitors as easier wins was removed on 2026-11-15 for that reason
+> (C-M-13); the one robust reading at this sample size is `hub_is_homepage`, which the
+> caveat on every row now carries.
+>
+> **Fixed 2026-11-15:** the comparison key kept the scheme and host verbatim, so three
+> pages linking to each other as `https://c.ca/...` while being scraped as
+> `https://www.c.ca/...` had no edges at all and the domain was labelled `isolated`.
+> Hosts are now normalised (`www.` stripped, scheme ignored) before matching.
+>
+> Whether to raise `technical.max_audit_pages_per_domain` so this section can say
+> more, or to demote it to a boolean evidence table, is an open decision for the owner
+> (review decision 8).
 
-### 3.4 GEO / Extractability — *why* an AI answer engine would cite the page  ⭐ newest
-**What it does:** profiles each competitor page for the *structural* signals that make
-AI answer engines (and featured snippets) likely to **quote** it: schema markup
+### 3.4 Extractability signals (structural, unvalidated)  ⭐ newest
+**What it does:** profiles each competitor page for the *structural* features
+associated with AI answer engines (and featured snippets) **quoting** it: schema markup
 (FAQPage, Article, Organization, Person, LocalBusiness), a **credentialed** author
 byline, **question-shaped headings** (a heading that is genuinely a question — ends in
 "?" and opens with how/what/why/etc.), and **freshness** (publish/update dates). It
 rolls these into a tier — **Strong / Moderate / Weak** (or **Unknown** if the page
-couldn't be fetched) — and writes a plain-language **"why cited"** sentence.
+couldn't be fetched) — and writes a plain-language sentence naming what it found.
 
-**What it lets you understand:** not just whether a competitor ranks, but the concrete
-reasons an AI engine finds their page *easy to extract and quote* — the mechanics
-behind "why do they keep getting cited?"
+**What it lets you understand:** which structural features each competitor page has,
+and which yours lacks. **Not** why anyone is cited: nothing in this section measures a
+citation.
 
-**What you can then do:** match or exceed those exact structures on your equivalent
-page. If the competitor's "why cited" says *"FAQPage schema + credentialed author +
-2 question-shaped headings,"* that's your build checklist.
+**What you can then do:** use it as a build checklist. If a competitor's row says
+*"FAQPage schema + credentialed author + 2 question-shaped headings,"* those are
+features you can add to your equivalent page.
 
-**Where you see it:** *GEO / Extractability — Why Competitors Get Cited* (sorted
+**Where you see it:** *Extractability signals (structural, unvalidated)* (sorted
 Strong→Weak) and the *GEO Extractability* Excel sheet.
 
 > **Read it honestly:** these are heuristic proxies for citability, **not** measured
 > citations. Two signals from the design (answer-first placement, and FAQ answers
 > embedded in raw HTML) need rendering analysis the scraper doesn't do yet, so they're
 > declared "not measured" rather than guessed.
+>
+> **Fixed 2026-11-15 (C-M-14).** The section was headed *"Why Competitors Get Cited"*
+> and each row asserted that "these structures make the page easy for AI answer
+> engines to quote" — causation, from a scan of page structure, with nothing checking
+> whether any page was ever cited. The header and the sentence now say what was found
+> and no more.
+>
+> **The tier is weighted, not counted.** A stock WordPress post (Organization + Person
+> schema from Yoast, a byline of "admin", a publish date, zero question headings)
+> scored three signals and read **Strong**, while an FAQ page with FAQPage schema and
+> two genuine question headings but no byline or date read **Moderate**. FAQPage schema
+> (2.0) and question headings (1.5, +0.5 each for a second and third) now weigh above
+> an Organization/Person stamp (0.25) and freshness (0.25), and a generic byline
+> ("admin", "editor", "staff") is not counted as authorship at all. The weights are
+> editorial and uncalibrated (2026-11-15) — they are a judgement about what gets
+> quoted, not a measurement.
+>
+> **When an AI-visibility export is present, the tiers are checked against it.** The
+> serp-discover export is the one real citation record in this system, and this section
+> never looked at it. The briefing now states how many Strong-tier domains were
+> actually cited by an engine — and names the ones that were not. A Strong tier with no
+> citation is evidence against the heuristic, which is the point of showing it.
 
 ---
 
@@ -619,7 +676,7 @@ and `audit_results_run_12.xlsx`).
 | Competitor Ranking Summary | Each competitor's `sampled_keywords` (distinct keywords THIS run audited, not keywords it ranks for), `pages_audited`, avg position, `systemic_depth` from the Tier-2/3 counts, recommended strategy, and the **Keyword provenance** line | Pick who to target |
 | EEAT Competitive Analysis | How credible each page *looks* | Out-signal the weak, match the strong |
 | Internal Linking Cluster Analysis | How defended each competitor is | Prefer isolated targets |
-| GEO / Extractability | *Why* AI engines cite each page | Copy the structure that earns citations |
+| Extractability signals (structural, unvalidated) | Which structural features each page has — **not** why anyone is cited; checked against the AI-visibility export when one exists | Use as a build checklist |
 | Identified 'Traffic Magnets' | Pages ranking top-10 on one of your keywords with medical-model language (§4.1 states the filter and how many of the audited pages met it) | Your content backlog |
 | ⚡ Systemic Vacuums | Those same pages with no systemic answer — the reframe targets | Write these first |
 | SERP Overlap & Differentiation Gap | Where you collide (commodity) vs. are exclusive | Fill exclusive-competitor gaps; differentiate/skip commodity |
@@ -702,9 +759,26 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
   real models. They're for *comparing* competitors and building a checklist — not for
   declaring anyone objectively good or bad.
 - **Only up to 3 pages per competitor are sampled.** Cluster analysis especially is a
-  keyhole view; `insufficient_data` means "not enough sampled," not "no structure."
-- **GEO leaves two signals unmeasured** (answer-first placement, FAQ-answers-in-raw-HTML)
-  and says so, rather than approximating them.
+  keyhole view; `insufficient_data` means "not enough sampled," not "no structure," and
+  `isolated` cannot be read as "orphan pages" at this sample size (§3.3). Whether to
+  raise the page cap or demote these sections to boolean evidence tables is an open
+  decision for the owner (review decision 8).
+- **Extractability leaves two signals unmeasured** (answer-first placement,
+  FAQ-answers-in-raw-HTML) and says so, rather than approximating them — and it
+  measures no citations at all, which the section header now states (§3.4).
+- **Barbell authority compares like with like since 2026-11-15.** The competitor
+  figure is the domain's Moz **Domain** Authority (it was the average **Page**
+  Authority of its sampled URLs), and both sides count top-10 rankings over the same
+  keyword universe — the handoff's. Before that the client's count came from every GSC
+  query it ranked for, which saturated the component and made the client
+  `authoritative` by construction (C-M-09).
+- **Focus is withheld on a thin sample.** Below `positioning.min_focus_tokens` (12
+  unweighted tier terms across the domain's audited pages) the domain reads
+  `insufficient_data` rather than being placed: at three pages, `{medical 3,
+  systems 0}` used to give focus 100 and the `niche_owner` quadrant, and one
+  occurrence of the word "relationship" moved a domain across the boundary (C-M-10).
+  The entropy is over unweighted counts now; it used to compare a raw Tier-1 count
+  with a ×2.0/×0.5-weighted systems score.
 - **Cache vs. fresh:** on a re-run within 7 days, EEAT/GEO/cluster figures may be
   *carried forward* from the last real scrape (timestamps show their true age). A
   competitor that stays cached every run won't get its cluster recomputed until it's
@@ -718,7 +792,10 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
 - **Barbell positioning axes are heuristic**, not a measured market model. "Focus" is
   language-tier concentration (medical vs. systems), not topic breadth; and because
   your own axes come from GSC (not a page audit), a run without GSC marks you
-  `insufficient_data` rather than mis-plotting you.
+  `insufficient_data` rather than mis-plotting you. Your own authority still rests on
+  `client.da` in config — review decision 6 asks for a live provider lookup, which is
+  a serp-discover-side change and is not in this repo yet; the briefing names the
+  basis per row (`authority_basis`).
 - **Alert thresholds are editorial and uncalibrated too**: `risk_signals.pa_drop_min`
   (3) for Fragile Magnets and `risk_signals.cliff_min_sample` (10) for visibility
   cliffs, both dated 2026-11-15. The cliff floor is high relative to what one run

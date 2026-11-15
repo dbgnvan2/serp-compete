@@ -48,6 +48,9 @@ DEFAULT_FOCUS_THRESHOLD = 50
 DEFAULT_AUTHORITY_WEIGHTS = {"moz_da": 0.7, "top10": 0.3}
 DEFAULT_TOP10_SATURATION = 10
 DEFAULT_MIN_SIGNAL_RANKINGS = 2
+# C-M-10: the smallest tier-token total a focus figure may be computed from. Mirrors
+# shared_config `positioning.min_focus_tokens`; see that key's `_source` note.
+DEFAULT_MIN_FOCUS_TOKENS = 12
 
 
 def normalized_entropy(counts: List[float]) -> float:
@@ -84,12 +87,23 @@ def compute_authority(moz_da: Optional[float], top10_count: Optional[int],
     return round(sum(v * w for v, w in comps) / wsum, 1)
 
 
-def compute_focus(medical_total: float, systems_total: float) -> Optional[float]:
+def compute_focus(medical_total: float, systems_total: float,
+                  min_tokens: Optional[float] = None) -> Optional[float]:
     """0-100 focus = tier-identity concentration = (1 - normalized_entropy) * 100.
-    Returns None when there is no tier signal at all (can't place the domain)."""
+
+    Returns None when the tier signal is too thin to place the domain — either no
+    signal at all, or fewer than `min_tokens` tier terms in total (C-M-10). With
+    `technical.max_audit_pages_per_domain` at 3, focus was decided by a handful of
+    generic tokens: {medical 3, systems 0} gave focus 100 and the `niche_owner`
+    quadrant, {3, 0.5} gave 40.8 and `middle`, {3, 1.5} gave 8.2 — one occurrence of
+    the word "relationship" moved a domain across a quadrant boundary, and the manual
+    tells the owner that middle-quadrant competitors are the softest targets.
+    """
     medical = float(medical_total or 0)
     systems = float(systems_total or 0)
     if medical + systems <= 0:
+        return None
+    if min_tokens and (medical + systems) < float(min_tokens):
         return None
     return round((1.0 - normalized_entropy([medical, systems])) * 100.0, 1)
 
@@ -139,12 +153,18 @@ def positioning_row(domain: str, inputs: Dict[str, Any], is_client: bool,
     authority threshold — an established, high-DA rival that simply doesn't rank for
     the tracked keywords is still authoritative, not "emerging". Never silently middle.
     """
+    # C-M-09: `moz_da` must be a DOMAIN authority on both sides of the plot. The
+    # competitor value used to be the average Moz PAGE Authority of its sampled URLs
+    # while the client's was a Domain Authority, so "the same formula for you and
+    # competitors" compared two different measurements — and the client landed
+    # `authoritative` by construction.
     moz = inputs.get("moz_da")
     top10 = int(inputs.get("top10_count") or 0)
     medical = inputs.get("medical_total") or 0
     systems = inputs.get("systems_total") or 0
+    min_tokens = config.get("min_focus_tokens", DEFAULT_MIN_FOCUS_TOKENS)
     authority = compute_authority(moz, top10, config)
-    focus = compute_focus(medical, systems)
+    focus = compute_focus(medical, systems, min_tokens)
     min_signal = config.get("min_signal_rankings", DEFAULT_MIN_SIGNAL_RANKINGS)
     auth_threshold = config.get("authority_threshold", DEFAULT_AUTHORITY_THRESHOLD)
 
@@ -161,6 +181,13 @@ def positioning_row(domain: str, inputs: Dict[str, Any], is_client: bool,
         "authority_score": authority, "focus_score": focus,
         "authority_threshold": auth_threshold,
         "focus_threshold": config.get("focus_threshold", DEFAULT_FOCUS_THRESHOLD),
+        # C-M-10: the counts the focus figure was computed from, and the floor it had
+        # to clear, so a quadrant can be checked instead of taken on trust.
+        "min_focus_tokens": min_tokens,
+        "tier_tokens_total": float(medical) + float(systems),
+        "authority_basis": inputs.get("authority_basis",
+                                      "domain_authority" if moz is not None else "unmeasured"),
+        "top10_universe": inputs.get("top10_universe", "handoff keywords"),
     }
     return {
         "domain": domain,
