@@ -1,0 +1,33 @@
+== A. Surface-Level threshold edge (tier_1_max=10, tier3=0, t2=4)
+  medical= 9 t2=4 t3=0 -> (2.0, 'Standard')
+  medical=10 t2=4 t3=0 -> (2.0, 'Standard')
+  medical=11 t2=4 t3=0 -> (1.0, 'Surface-Level')
+  medical=100 t2=4 t3=1 -> (4.0, 'Standard')   (one Tier-3 hit cancels the penalty)
+  medical=0 t2=0 t3=0  -> (0.0, 'Standard')   (empty page = 'Standard', systems 0 -> vacuum)
+
+== B. Hyphenated single-token dictionary entries are unreachable by token match
+  'self-regulation' x3 -> t2=0 t3=0
+
+== C. Double counting: 'differentiation of self' (T3 phrase) also fires 'differentiation' (T2 token)
+  text='differentiation of self' -> {'medical_score': 0, 'systems_score': 2.5, 'systemic_label': 'Standard', 't2_count': 1, 't3_count': 1}
+  text='emotional process' -> {'medical_score': 0, 'systems_score': 1.0, 'systemic_label': 'Standard', 't2_count': 2, 't3_count': 0}  ('process' token + 'emotional process' phrase)
+
+== D. Generic words: a Bowen practice's own copy scores 'medical'
+  client-like copy -> {'medical_score': 6, 'systems_score': 0.0, 'systemic_label': 'Standard', 't2_count': 0, 't3_count': 0}
+  'therapy' in TIER_1_MEDICAL: True | 'therapy' is also in shared_config.stop_words
+
+== E. Generic Tier-2 words
+  non-systemic copy -> {'medical_score': 0, 'systems_score': 3.0, 'systemic_label': 'Standard', 't2_count': 6, 't3_count': 0}
+
+== F. No length normalisation
+  5 medical words in 5-word text  -> 5
+  5 medical words in 805-word text -> 5  (same score, 160x the dilution)
+
+== G. Plural/singular: 'triangles' is T2, 'triangle' is not; 'treatments' not T1
+  'triangle' x3 -> 0 | 'triangles' x3 -> 3
+  'treatments' x3 -> 0 | 'treatment' x3 -> 3
+
+== H. Navigation menus in <header>/<div> survive decompose() and feed the 500-word window
+  first_500_words = 'About us Clinic Anxiety Treatment Depression Treatment Trauma Therapy ADHD Diagnosis OCD Treatment PTSD Treatment Eating Disorder Treatment Contact About us We work with families on patterns of distan'
+  score -> {'medical_score': 9, 'systems_score': 0.0, 'systemic_label': 'Standard', 't2_count': 0, 't3_count': 0}
+  (menu text in <header><div> is counted; only <nav>/<footer>/<aside> are stripped)

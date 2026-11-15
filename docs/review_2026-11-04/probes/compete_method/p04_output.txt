@@ -1,0 +1,48 @@
+== A. SERP overlap cells
+   bowen family systems north vancouver     cell=exclusive_self         self_pos=1.0 rivals=0 commodity=0.0
+   counselling north vancouver              cell=shared_commodity       self_pos=2.0 rivals=3 commodity=3.0
+   couples therapy vancouver                cell=exclusive_competitor   self_pos=11.4 rivals=1 commodity=1.0
+   jericho counselling                      cell=exclusive_competitor   self_pos=None rivals=1 commodity=1.0
+   -> a competitor's own brand name ('jericho counselling') lands in the exclusive-competitor action queue
+   -> client at GSC avg position 11.4 (90-day, global) vs rival snapshot rank 4 (Canada) = 'rivals rank, you're absent'
+   -> 'commoditized' = >= 3 of the tracked rivals' 10 sampled keywords coincide (commodity_high_overlap=3)
+   GSC map empty -> cells: ['self_unknown'] (withheld: good)
+   feasibility: client DA 35 vs competitor avg PA 45 -> {'feasible': False, 'suggestion': 'Hyper-Local Pivot', 'competitor_da': 45}
+
+== B. Barbell positioning
+   mixed.ca           authority=20.0 focus=8.2 quadrant=middle
+   tiny.ca            authority=20.0 focus=100.0 quadrant=niche_owner
+   livingsystems.ca   authority=54.5 focus=1.5 quadrant=authoritative
+   -> 3 mentions of 'therapy' on <=3 pages and nothing else = focus 100 = 'niche_owner'; one 'relationship' word -> focus 40.8
+   -> client top10_count comes from ALL GSC queries (saturates at 10); competitor from 10 sampled keywords
+   -> competitor 'moz_da' is avg Moz *Page* Authority of 10 URLs (main.py:418); client's is config Domain Authority 35
+   client focus from GSC query text via classify_query_tiers (substring match): (2, 2) (medical, systems)
+
+== C. derive_brand_name on the run_11 competitor set -> the string whose Google Ads search volume becomes 'branded demand'
+   jerichocounselling.com       -> 'jericho'
+   lavendercounselling.com      -> 'lavender'
+   hollyburn.ca                 -> 'hollyburn'
+   clearcounselling.ca          -> 'clear'
+   bachcounselling.com          -> 'bach'
+   goodlifetherapy.ca           -> 'goodlife'
+   lonsdalepsychology.ca        -> 'lonsdale'
+   wongcounselling.com          -> 'wong'
+   coastcounselling.ca          -> 'coast'
+   urbanbalance.ca              -> 'urbanbalance'
+   nightingalecounselling.com   -> 'nightingale'
+   wellspringcounselling.ca     -> 'wellspring'
+   boomerangcc.ca               -> 'boomerangcc'
+   mapquest.com                 -> 'mapquest'
+   m.yelp.com                   -> 'm'
+   livingsystems.ca             -> 'livingsystems'
+   queries sent for volume: ['lavender', 'lavender reviews', 'lavender pricing', 'lavender login', 'lavender cost', 'lavender vs']
+
+== D. SoV: competitor mentioned by display name but never cited -> 'other'
+    {'entity': 'Living Systems', 'category': 'client', 'mention_share': 25.0, 'presence_rate': 0.4}
+    {'entity': 'Jericho Counselling', 'category': 'other', 'mention_share': 75.0, 'presence_rate': 1.2}
+   report prints only category != 'other' -> 'Mention share: Living Systems (you) 25%' with no visible 75%
+
+== E. YouTube _score: a handle equal to the derived brand token is 'confirmed' / 'high'
+   bachcounselling.com vs channel @bach   -> (2, 'high', 'handle')
+   clearcounselling.ca vs 'Clear Vision Films' -> (1, 'medium', 'name_exact')
+   channel titled 'Dr Jane Smith' for janesmithcounselling.ca -> (1, 'medium', 'name_exact') -> none_found = 'no channel' in report

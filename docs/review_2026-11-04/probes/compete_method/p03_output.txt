@@ -1,0 +1,21 @@
+== A. EEAT on a bare https page with a 'Contact us' link, text 'our relationship with you' (no author, no dates, no schema)
+   scores: {'experience': 0.26, 'expertise': 0.4, 'authoritativeness': 0.0, 'trustworthiness': 0.7} | confidence: high
+   trust = 0.4 (https) + 0.3 (contact) = 0.7 ; expertise = 0.4 from the word 'relationship'/'process' ; experience: images(0.2) + first-person 'our'+'us' (2/10*0.2)
+   DA passed from main.py is the URL's Moz PA (main.py:453 pa = moz_metrics_map.get(url, 0)); 0 -> `or None` -> excluded
+
+== B. score_confidence is a null-count, not a signal-coverage measure
+   blocked page -> low | any successfully scraped page -> high
+   config eeat_client_messaging.confidence_levels describes 0.0-0.5 / 0.5-0.8 / 0.8-1.0 bands — never computed
+
+== C. Trustworthiness value set (3 booleans, weights .4/.3/.3) rendered to 2 dp
+   possible trust scores: [0.0, 0.3, 0.4, 0.6, 0.7, 1.0]
+
+== D. Cluster detection with N=3 where two pages link to the homepage (logo/menu link)
+   signal: clustered | hubs: ['https://c.ca/'] | max in-degree possible with N=3 is 2 = hub threshold
+   three pages, no links among the three -> isolated (site may have 500 interlinked pages)
+   two pages -> insufficient_data
+   same site, absolute links without www -> isolated (host string compared verbatim)
+
+== E. GEO tier on a stock WordPress+Yoast post: Organization+Person schema, 'admin' byline, published_time, 0 question headings
+   tier: Strong | why_cited: Strong extractability: schema markup (Organization, Person); named author byline; dated / fresh content. These structures make the page easy for AI answer engines to quote — match or exceed them on the client's equivalent page.
+   FAQ page w/ FAQPage schema + 2 question headings, no byline, no date -> Moderate

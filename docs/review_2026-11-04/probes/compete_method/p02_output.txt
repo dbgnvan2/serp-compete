@@ -1,0 +1,30 @@
+== A. Competitor Ranking Summary query (reporting.py:107-123) vs ground truth
+  domain  top_pages  total_keywords  avg_pos  real_keywords
+bcacc.ca          4              30      5.5             10
+  one.ca          1              10      3.0             10
+   -> total_keywords = (#keyword rows) x (#traffic_magnet rows for the domain). run_11 shows 30 for nearly every domain.
+
+== B. identify_strategic_openings(run) — ordered by est_traffic, no medical floor, no keyword relevance check
+   {'url': 'https://rcav.org/', 'keyword': 'archdiocese of vancouver', 'traffic': 1094.4, 'medical_score': 0, 'systemic_label': 'Standard'}
+   {'url': 'https://bowen.ca/fusion', 'keyword': 'emotional fusion', 'traffic': 900.0, 'medical_score': 25, 'systemic_label': 'Surface-Level'}
+   {'url': 'https://bcacc.ca/p0', 'keyword': 'kw0', 'traffic': 10.0, 'medical_score': 18, 'systemic_label': 'Surface-Level'}
+   {'url': 'https://bcacc.ca/p1', 'keyword': 'kw1', 'traffic': 10.0, 'medical_score': 18, 'systemic_label': 'Surface-Level'}
+   {'url': 'https://bcacc.ca/p2', 'keyword': 'kw2', 'traffic': 10.0, 'medical_score': 18, 'systemic_label': 'Surface-Level'}
+
+== C. get_systemic_depth: 'Medical' iff max_med > max_sys (raw count vs weighted score)
+   page with medical=2, t2=3 (systems 1.5): 2 > 1.5 -> 'Medical' although 3 systems words vs 2 medical words
+
+== D. get_feasibility_drift after a Moz failure (main.py:404 `or 0`, :453 `.get(url, 0)`)
+   [{'url': 'https://bcacc.ca/', 'pa': 0.0, 'drift': -38.0, 'traffic': 500.0, 'alert': 'Fragile Magnet'}]  -> report prints 'losing authority ... publish now'
+
+== E. VelocityTracker.get_market_alerts with PA 38 -> 37, rank unchanged
+   [{'type': 'Fragile Magnet', 'domain': 'bcacc.ca', 'url': 'https://bcacc.ca/', 'keyword': 'bc association', 'rank_drift': 0, 'da_drift': -1, 'advice': 'Strike this page now.'}]
+   rank 3 -> 5, DA flat: [{'type': 'Fragile Magnet', 'domain': 'x.ca', 'url': 'https://x.ca/', 'keyword': 'kw', 'rank_drift': -2, 'da_drift': 0, 'advice': 'Strike this page now.'}]
+   (two independent 'Fragile Magnet' detectors: drift < -2 in competitor_history vs da_drift < 0 here)
+
+== F. get_volatility_alerts(run2): single keyword moved 4 -> 7
+   [{'domain': 'v.ca', 'shift': 3.0, 'type': 'Volatility Alert'}]
+
+== G. get_visibility_series('d.ca') with 4 runs on one day: [3.0, 12.0, 3.0]
+   detect_visibility_cliff -> {'signal_type': 'visibility_cliff', 'severity': 'high', 'evidence': {'peak': 12.0, 'latest': 3.0, 'drop_pct': 75.0}}
+   3 audited pages, one 429-blocked next run -> series [3,2]: {'signal_type': 'visibility_cliff', 'severity': 'medium', 'evidence': {'peak': 3.0, 'latest': 2.0, 'drop_pct': 33.3}} | [3,1]: {'signal_type': 'visibility_cliff', 'severity': 'high', 'evidence': {'peak': 3.0, 'latest': 1.0, 'drop_pct': 66.7}}
