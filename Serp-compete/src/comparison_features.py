@@ -156,7 +156,7 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
     except Exception as cov_err:  # noqa: BLE001
         print(f"⚠️ Anchor coverage not recorded: {cov_err}")
     try:
-        from src.risk_radar import compute_risk_signals
+        from src.risk_radar import compute_risk_signals, cliff_sample_shortfall
         series_by_domain = {d: db.get_visibility_series(d) for d in domains}
         series_by_domain[client_domain] = db.get_visibility_series(client_domain)
         # Scope to the domains this run INGESTED, not to `domains`
@@ -191,6 +191,15 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         anchor_risks = sum(1 for r in risk_rows if r["signal_type"] == "anchor_text_spam")
         print(f"   🚨 Reputation risk: {len(risk_rows)} signals ({own_risks} own-site, "
               f"{anchor_risks} anchor-text).")
+        # C-C-06 / C-M-07 (P2): "no visibility cliffs" must not be able to mean "the
+        # sample was never large enough to look".
+        cliff_withheld, cliff_total = cliff_sample_shortfall(
+            series_by_domain, shared_config.get("risk_signals", {}))
+        if cliff_withheld:
+            floor = (shared_config.get("risk_signals", {}) or {}).get("cliff_min_sample")
+            print(f"      Visibility cliff: not measured for {cliff_withheld} of "
+                  f"{cliff_total} domain(s) with history — fewer than {floor} measured "
+                  f"keywords in two or more runs (risk_signals.cliff_min_sample).")
         if anchor_coverage:
             # "No anchor risks" must never be able to mean "every anchor fetch
             # failed" — say how many domains were actually readable (P1/P2).

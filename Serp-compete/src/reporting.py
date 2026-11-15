@@ -20,9 +20,15 @@ class ReportGenerator:
         self.config = load_shared_config()
         self.vacuum_min_medical, self.magnet_max_position = magnet_thresholds(self.config)
 
-    def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None):
+    def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None, run_coverage: dict = None):
         """
         Generate a Markdown report summarizing the audit findings for a specific run.
+
+        `run_coverage` (C-C-03 / C-C-12) carries what the console used to keep to
+        itself: how many handoff domains were audited, which were skipped and why,
+        which had no Moz authority figure, and how the keyword universe was
+        assembled. Optional, so an old caller still works — but then the briefing
+        says the coverage was not recorded rather than implying full coverage.
         """
         if run_id is None:
             run_id = self.db.get_latest_run_id()
@@ -39,6 +45,45 @@ class ReportGenerator:
             "\n## Executive Summary",
             "This report identifies strategic openings where competitors rely on the 'Medical Model' and provides automated Bowen-based reframes."
         ]
+
+        # Run coverage, in the artefact rather than only in the console (P2).
+        if run_coverage:
+            skipped = run_coverage.get("skipped_domains") or []
+            report.append(
+                f"\n**Run coverage:** audited "
+                f"{run_coverage.get('domains_audited', 0)} of "
+                f"{run_coverage.get('domains_in_handoff', 0)} handoff domain(s); "
+                f"Page Authority measured for {run_coverage.get('pa_measured', 0)} of "
+                f"{run_coverage.get('pa_total', 0)} audited URL(s).")
+            if skipped:
+                report.append("**Skipped domains:** "
+                              + "; ".join(f"{d} — {r}" for d, r in skipped) + ".")
+            unmeasured = run_coverage.get("unmeasured_pa_domains") or []
+            if unmeasured:
+                report.append(
+                    "> ⚠️ **Page Authority was unmeasured** for "
+                    + ", ".join(unmeasured)
+                    + ". The `avg PA > 50` high-authority filter could not be applied "
+                      "to them, and their authority figures are NULL (unknown), not 0.")
+            enrichment_failures = run_coverage.get("enrichment_failures") or []
+            if enrichment_failures:
+                report.append(
+                    "> ℹ️ **Keyword enrichment was unavailable** for "
+                    + "; ".join(f"{d} ({r})" for d, r in enrichment_failures)
+                    + ". Those domains were audited on their handoff targets only.")
+            universe = run_coverage.get("universe") or {}
+            if universe:
+                report.append(
+                    f"**Keyword universe:** {universe.get('handoff', 0)} handoff "
+                    f"target(s); {universe.get('enrichment_kept', 0)} enrichment "
+                    f"keyword(s) kept, "
+                    f"{universe.get('enrichment_dropped_brand', 0)} dropped as the "
+                    f"competitor's own brand and "
+                    f"{universe.get('enrichment_dropped_irrelevant', 0)} as off-topic.")
+        else:
+            report.append("\n_Run coverage was not recorded for this run — how many "
+                          "handoff domains were audited, skipped or unmeasured is "
+                          "unknown here, not zero._")
 
         # Initialize dataframes for later use in Excel export
         df_eeat = pd.DataFrame()
@@ -89,22 +134,33 @@ class ReportGenerator:
                 df_vol = pd.DataFrame(volatility)
                 report.append(df_vol.to_markdown(index=False))
 
-            # Revision 4: Feasibility Drift Alerts
-            drift_alerts = self.db.get_feasibility_drift(run_id)
-            if drift_alerts:
-                report.append("\n## 🚩 Expert Alerts: Fragile Magnets")
-                for alert in drift_alerts:
-                    report.append(f"- **{alert['url']}**: Page Authority drifted by {alert['drift']:.2f}. "
-                                  f"**Strategic Advice:** The competitor is losing authority on this page. "
-                                  f"Now is the time to publish your 'Systems Approach' page to overtake them.")
-
-            # Spec 4: Market Velocity Alerts (New Longitudinal Memory)
+            # Spec 4: Fragile Magnets — ONE authority-drift detector (C-C-05 / C-M-06).
+            # There used to be two, under two headings, for the same event:
+            # `database.get_feasibility_drift` (drift < -2, per URL) and
+            # `VelocityTracker.get_market_alerts` (da_drift < 0, unscoped). The first
+            # is gone; this is the survivor, run-scoped and thresholded.
             if market_alerts:
-                report.append("\n## ⚡ Market Velocity Alerts")
+                report.append("\n## 🚩 Expert Alerts: Fragile Magnets (authority drift)")
+                threshold = next((a.get('pa_drop_min') for a in market_alerts
+                                  if a.get('pa_drop_min') is not None), None)
+                report.append(
+                    "Competitor pages whose Moz Page Authority fell measurably between "
+                    "this run and the previous run that saw the same page"
+                    + (f", by at least {threshold:g} point(s) "
+                       f"(`risk_signals.pa_drop_min`, editorial and uncalibrated)"
+                       if threshold is not None else "")
+                    + ". _A page whose authority was not measured in both runs is "
+                      "absent from this list — unknown, not unchanged._")
                 for alert in market_alerts:
                     if alert['type'] == 'Fragile Magnet':
-                        report.append(f"- **{alert['domain']}** ({alert['keyword']}): Rank Drift {alert['rank_drift']}, DA Drift {alert['da_drift']}. "
-                                      f"**Strategic Advice:** {alert['advice']}")
+                        rank_drift = alert.get('rank_drift')
+                        rank_note = ("rank unchanged" if rank_drift == 0
+                                     else (f"rank drift {rank_drift}" if rank_drift is not None
+                                           else "rank not measured in both runs"))
+                        report.append(
+                            f"- **{alert['domain']}** ({alert['keyword']}): Page Authority "
+                            f"drift {alert['da_drift']:g}, {rank_note}. "
+                            f"**Strategic Advice:** {alert['advice']}")
                     else:
                         report.append(f"- **{alert['type']}**: {alert['domain']} ({alert['keyword']})")
 
@@ -419,10 +475,16 @@ class ReportGenerator:
                               "_Competitor figures are volume-estimated (not click-measured); "
                               "the exact query strings are in the `queries` column of the "
                               "Branded Demand Excel sheet — see `estimation_basis`._")
-                if (df_brand['estimation_basis'] == 'volume_unavailable').any():
-                    report.append("\n> ⚠️ **Search-volume source returned nothing this run** — the "
-                                  "figures below are unavailable (likely a DataForSEO outage), not "
-                                  "zero demand.")
+                n_unavailable = int((df_brand['estimation_basis'] == 'volume_unavailable').sum())
+                if n_unavailable:
+                    # C-C-11: this used to be an all-or-nothing caveat, because a
+                    # per-brand provider failure was stored as 0 volume and a 0.00%
+                    # share. Now each unmeasured brand is NULL and says so.
+                    report.append(f"\n> ⚠️ **{n_unavailable} of {len(df_brand)} brand(s) could not "
+                                  f"be measured this run** — the search-volume source did not "
+                                  f"answer for them (likely a DataForSEO outage). Their volume is "
+                                  f"unknown, not zero, and they are excluded from the share "
+                                  f"denominator.")
                 n_ambiguous = int((df_brand['estimation_basis'] == 'ambiguous_brand').sum())
                 if n_ambiguous:
                     report.append(f"\n> ⚠️ **{n_ambiguous} brand name(s) are ambiguous** — the bare "
@@ -462,6 +524,19 @@ class ReportGenerator:
                               "commercial subfolders (site-reputation abuse), ranking volatility, "
                               "and paid-link/PBN footprints in inbound anchor text. "
                               "_**Pattern detections, not confirmed Google penalties.**_")
+                # C-C-06 / C-M-07: say why a cliff may be absent. The series is now
+                # per RUN (not per calendar day) and normalised by how many keywords
+                # were measured, and it is withheld entirely below
+                # `risk_signals.cliff_min_sample` — so "no visibility cliff" must not
+                # be readable as "we looked and the visibility held".
+                cliff_floor = (self.config.get("risk_signals", {}) or {}).get("cliff_min_sample")
+                if cliff_floor:
+                    report.append(
+                        f"\n_`visibility_cliff` is computed per RUN from every ranked "
+                        f"keyword of that run, as the share in the top 10, and only for "
+                        f"domains with at least {cliff_floor} measured keywords in two or "
+                        f"more runs (`risk_signals.cliff_min_sample`). Below that the "
+                        f"signal is withheld, not reported as stable._")
                 report.extend(anchor_caveat_lines(
                     df_risk['signal_type'].tolist() if not df_risk.empty else [],
                     risk_coverage))

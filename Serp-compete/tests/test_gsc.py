@@ -6,13 +6,31 @@ from unittest.mock import MagicMock, patch
 from src.gsc_performance import GSCManager
 
 @pytest.fixture
-def mock_gsc_manager():
+def mock_gsc_manager(tmp_path):
+    # An ISOLATED database. GSCManager() otherwise opens the one shared_config.json
+    # points at — the repo's own file — so this suite wrote semantic_audits rows with
+    # run_id 0 into it and then passed off its own 7-day cache on the next run. The
+    # mismatch assertion below therefore depended on residue from an earlier run and
+    # would fail on a blank machine, which is exactly what CI is (P8).
+    from src.database import DatabaseManager
     with patch('src.gsc_performance.GSCManager._authenticate') as mock_auth:
         mock_auth.return_value = MagicMock()
         with patch('src.gsc_performance.build') as mock_build:
             manager = GSCManager()
             manager.service = MagicMock()
+            manager.db = DatabaseManager(str(tmp_path / "gsc.db"))
             yield manager
+
+
+def _scraped(url="https://livingsystems.ca/x", status="complete"):
+    """A ScrapedPage-shaped stand-in: `analyze_gaps` branches on extraction_status
+    (C-C-09), so a bare string is not a valid scrape result."""
+    from src.semantic import ScrapedPage
+    return ScrapedPage(url=url, fetched_at="2026-11-15T00:00:00Z",
+                       http_status=200 if status == "complete" else 429,
+                       extraction_status=status,
+                       extraction_errors=[], outline=[], first_500_words="text",
+                       full_text_word_count=1, metadata={})
 
 def test_analyze_gaps_logic(mock_gsc_manager):
     # Mock list_sites
@@ -30,7 +48,7 @@ def test_analyze_gaps_logic(mock_gsc_manager):
     
     with patch.object(mock_gsc_manager, 'fetch_performance_data', return_value=mock_data):
         # Mock SemanticAuditor.scrape_content and analyze_text
-        with patch.object(mock_gsc_manager.auditor, 'scrape_content', return_value="some content"):
+        with patch.object(mock_gsc_manager.auditor, 'scrape_content', return_value=_scraped()):
             with patch.object(mock_gsc_manager.auditor, 'analyze_text') as mock_analyze:
                 # Page 1: /anxiety (Tier 1 Medical)
                 # Page 2: /family (Other)
@@ -169,3 +187,47 @@ def test_generate_report(mock_gsc_manager, tmpdir):
         # Ensure it tried to write to gsc_strategic_gap.md
         # (It defaults to "gsc_strategic_gap.md" in current dir, let's just check it was called)
         mock_open.assert_called()
+
+
+# ── C-C-09: a blocked scrape of the client's OWN page is not a 0/0 audit ──────
+# Promotes docs/review_2026-11-04/probes/compete/probe_gsc_block_sentinel.py. The
+# dead `content != "BLOCK"` test was always true after the ScrapedPage refactor, so a
+# 429 on the client's own site wrote medical 0 / systems 0 with run_id 0 — and the
+# 7-day cache then served that for a week, suppressing the Clinical Mismatch check as
+# a confident "no mismatches".
+
+def test_cc09_blocked_own_page_is_not_persisted_as_a_zero_audit(mock_gsc_manager):
+    mock_gsc_manager.service.sites().list().execute.return_value = {
+        'siteEntry': [{'siteUrl': 'https://livingsystems.ca/', 'permissionLevel': 'siteOwner'}]
+    }
+    data = [{'keys': ['anxiety counselling', 'https://livingsystems.ca/anxiety'],
+             'clicks': 50, 'impressions': 5000, 'ctr': 0.01, 'position': 3.0}]
+    blocked = _scraped("https://livingsystems.ca/anxiety", status="blocked")
+
+    with patch.object(mock_gsc_manager, 'fetch_performance_data', return_value=data), \
+         patch.object(mock_gsc_manager.auditor, 'scrape_content', return_value=blocked), \
+         patch.object(mock_gsc_manager.auditor, 'analyze_text') as mock_analyze:
+        mock_gsc_manager.analyze_gaps()
+
+    mock_analyze.assert_not_called()          # an unreadable page is not scored
+    with mock_gsc_manager.db._get_connection() as conn:
+        rows = conn.execute("SELECT url, medical_score, systems_score FROM semantic_audits").fetchall()
+    assert rows == []                          # nothing cached for the next 7 days
+    assert mock_gsc_manager.db.was_audited_recently("https://livingsystems.ca/anxiety") is None
+
+
+def test_cc09_an_errored_own_page_is_also_not_persisted(mock_gsc_manager):
+    mock_gsc_manager.service.sites().list().execute.return_value = {
+        'siteEntry': [{'siteUrl': 'https://livingsystems.ca/', 'permissionLevel': 'siteOwner'}]
+    }
+    data = [{'keys': ['anxiety counselling', 'https://livingsystems.ca/anxiety'],
+             'clicks': 50, 'impressions': 5000, 'ctr': 0.01, 'position': 3.0}]
+    errored = _scraped("https://livingsystems.ca/anxiety", status="error")
+
+    with patch.object(mock_gsc_manager, 'fetch_performance_data', return_value=data), \
+         patch.object(mock_gsc_manager.auditor, 'scrape_content', return_value=errored):
+        _gaps, _low, mismatches = mock_gsc_manager.analyze_gaps()
+
+    with mock_gsc_manager.db._get_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM semantic_audits").fetchone()[0] == 0
+    assert mismatches == []       # no mismatch CLAIMED either way — the page is unknown

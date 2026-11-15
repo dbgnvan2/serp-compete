@@ -16,12 +16,19 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CLIFF_DROP_PCT = 0.3
 DEFAULT_CLIFF_LOOKBACK = 6
+# C-C-06 / C-M-07: the smallest per-run sample a step-change test may be computed on.
+# With `technical.max_audit_pages_per_domain` = 3 the old series could not support a
+# 30% drop test at all — one page slipping from rank 10 to 11 was a "cliff". Editorial
+# default, uncalibrated, 2026-11-15 (shared_config `risk_signals.cliff_min_sample`);
+# 10 is the "≥10 ranked keywords per snapshot" figure C-M-07 asks for. Whether the
+# signal should exist at all until such a data source does is the owner's decision 5.
+DEFAULT_CLIFF_MIN_SAMPLE = 10
 DEFAULT_VOLATILITY_HIGH_SHIFT = 6
 DEFAULT_COMMERCIAL_TERMS = [
     "casino", "loan", "loans", "cheap", "deal", "deals", "coupon", "promo", "betting",
@@ -29,19 +36,55 @@ DEFAULT_COMMERCIAL_TERMS = [
 ]
 
 
-def detect_visibility_cliff(series: List[float], config: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+def _cliff_values_and_samples(series: Any) -> Tuple[List[float], Optional[List[int]]]:
+    """Accept either a bare value series or `database.get_visibility_series` snapshots.
+
+    Snapshots (`{rate, attempted, …}`) carry their own sample size, which is what the
+    `cliff_min_sample` floor needs. A bare float series carries no sample size, so it
+    returns `None` for samples and the floor cannot be verified — see
+    `detect_visibility_cliff`.
+    """
+    items = [item for item in (series or []) if item is not None]
+    if items and isinstance(items[0], dict):
+        return ([float(item.get("rate") or 0.0) for item in items],
+                [int(item.get("attempted") or 0) for item in items])
+    return ([float(item) for item in items], None)
+
+
+def detect_visibility_cliff(series: Any, config: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """A step-change collapse: the latest visibility dropped >= cliff_drop_pct below the
     RECENT peak (SC-8.1). Severity scales with the drop; the drop % is in the evidence.
 
     The peak is taken from the last `cliff_lookback` snapshots only — a collapse that
     happened long ago and has since been flat-low scrolls out of the window and stops
-    re-flagging every run (a full-history max would flag it forever)."""
+    re-flagging every run (a full-history max would flag it forever).
+
+    `series` is either `database.get_visibility_series`' per-run snapshots (preferred —
+    each carries its sample size) or a bare value series. A snapshot whose sample is
+    below `cliff_min_sample` is NOT compared: with three audited pages per domain, one
+    page slipping out of the top 10 is a 33% "cliff" and a re-run on the same day was a
+    50% one (C-C-06 / C-M-07). When the caller passes bare values a configured floor
+    cannot be checked at all, so nothing is emitted rather than a drop whose sample is
+    unknown (P1) — pass snapshots to get the signal.
+    """
     config = config or {}
     drop_pct = config.get("cliff_drop_pct", DEFAULT_CLIFF_DROP_PCT)
     lookback = config.get("cliff_lookback", DEFAULT_CLIFF_LOOKBACK)
-    values = [float(v) for v in (series or []) if v is not None]
+    min_sample = int(config.get("cliff_min_sample", 0) or 0)
+    values, samples = _cliff_values_and_samples(series)
+    if min_sample > 0:
+        if samples is None:
+            logger.debug("visibility cliff withheld: sample size unknown "
+                         "(bare value series) while cliff_min_sample=%s", min_sample)
+            return None
+        kept = [(v, s) for v, s in zip(values, samples) if s >= min_sample]
+        if len(kept) < 2:
+            return None
+        values = [v for v, _s in kept]
+        samples = [s for _v, s in kept]
     if lookback and len(values) > lookback:
         values = values[-lookback:]
+        samples = samples[-lookback:] if samples is not None else None
     if len(values) < 2:
         return None
     peak = max(values[:-1])
@@ -51,9 +94,36 @@ def detect_visibility_cliff(series: List[float], config: Optional[Dict[str, Any]
     drop = (peak - latest) / peak
     if drop >= drop_pct:
         severity = "high" if drop >= 0.5 else ("medium" if drop >= 0.3 else "low")
+        evidence = {"peak": peak, "latest": latest,
+                    "drop_pct": round(drop * 100.0, 1)}
+        if samples is not None:
+            evidence["sample_latest"] = samples[-1]
+            evidence["sample_min"] = min(samples)
         return {"signal_type": "visibility_cliff", "severity": severity,
-                "evidence": {"peak": peak, "latest": latest, "drop_pct": round(drop * 100.0, 1)}}
+                "evidence": evidence}
     return None
+
+
+def cliff_sample_shortfall(series_by_domain: Optional[Dict[str, Any]],
+                           config: Optional[Dict[str, Any]] = None) -> Tuple[int, int]:
+    """(domains whose sample is too small to test, domains with any series) — P2.
+
+    "No visibility cliffs" must not be able to mean "the sample was never big enough
+    to look", so the caller prints this rather than leaving the silence unexplained.
+    """
+    config = config or {}
+    min_sample = int(config.get("cliff_min_sample", 0) or 0)
+    withheld = total = 0
+    for _domain, series in (series_by_domain or {}).items():
+        values, samples = _cliff_values_and_samples(series)
+        if not values:
+            continue
+        total += 1
+        if min_sample <= 0:
+            continue
+        if samples is None or len([s for s in samples if s >= min_sample]) < 2:
+            withheld += 1
+    return withheld, total
 
 
 def _words(items: List[Any]) -> set:

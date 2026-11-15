@@ -323,7 +323,9 @@ class GSCManager:
         
         print("🔍 Scanning local pages for clinical alignment...")
         page_scores = {}
-        for page in unique_pages[:20]: # Limit to top 20 pages for speed
+        pages_considered = list(unique_pages[:20])  # Limit to top 20 pages for speed
+        unreadable_pages = []
+        for page in pages_considered:
             cached_audit = self.db.was_audited_recently(page)
             if cached_audit:
                 page_scores[page] = cached_audit
@@ -331,11 +333,30 @@ class GSCManager:
                 continue
                 
             content = self.auditor.scrape_content(page)
-            if content and content != "BLOCK":
+            # C-C-09: branch on `extraction_status`, exactly as main.py does.
+            # `scrape_content` returns a ScrapedPage and has not returned the string
+            # "BLOCK" since the ScrapedPage refactor, so the old `content != "BLOCK"`
+            # test was always true: a 429 or a timeout on the client's OWN page was
+            # scored 0/0 and written to `semantic_audits` with run_id 0, where the
+            # 7-day cache then served it for a week — suppressing the Clinical
+            # Mismatch check (`systems_score > 5`) as a confident "no mismatches".
+            status = getattr(content, "extraction_status", "error")
+            if status in ("blocked", "error"):
+                unreadable_pages.append(page)
+                print(f"  ⚠️ Skipping unreadable own page ({status}): {page}")
+                continue
+            if content:
                 scores = self.auditor.analyze_text(content)
                 page_scores[page] = scores
                 # Save to audit table for future GSC caching
                 self.db.save_semantic_audit(page, scores['medical_score'], scores['systems_score'], run_id=0)
+
+        # P2: a suppressed mismatch check must say so. "No mismatches" and "we could
+        # not read 4 of your 20 pages" are different findings.
+        if unreadable_pages:
+            print(f"  ⚠️ Clinical alignment scanned {len(page_scores)} of "
+                  f"{len(pages_considered)} pages — {len(unreadable_pages)} unreadable "
+                  f"this run (retryable, NOT recorded as 'no systems language').")
 
         for _, row in df.head(100).iterrows():
             page = row['page']

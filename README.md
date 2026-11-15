@@ -141,6 +141,11 @@ All settings in `shared_config.json`:
   (default 10; encodes the documented "top 10")
 - `branded_demand.ambiguous_brand_ratio` — Withhold a brand's share/growth when its bare stem
   pulls this many times the practice name's search volume (default 10; editorial, uncalibrated)
+- `risk_signals.pa_drop_min` — Smallest Moz Page-Authority drop between consecutive runs
+  reported as a Fragile Magnet (default 3; **editorial, uncalibrated 2026-11-15**)
+- `risk_signals.cliff_min_sample` — Smallest per-run keyword sample a `visibility_cliff` may be
+  computed on; below it the signal is withheld and the briefing says so (default 10; editorial,
+  uncalibrated 2026-11-15)
 - `handoff.supported_versions` — Tool 1 handoff formats accepted (e.g. `2.0`, `2.1`)
 - `eeat_weights`, `cluster_thresholds`, `scoring_weights` — tuning for the scoring engines
 

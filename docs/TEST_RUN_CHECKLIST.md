@@ -15,14 +15,39 @@ Outputs: `strategic_briefing_run_N.md` + `audit_results_run_N.xlsx`.
   repo root or `../serp-discover/output/`. If absent, AI Share-of-Voice will *skip* (expected,
   not an error) — to test it, run serp-discover's `export_ai_visibility.py` first.
 
+## 1b. Moz — CONFIRM THE ENDPOINT AND THE RESPONSE KEY (C-C-04, still open)
+- [ ] Watch the per-domain line `Moz returned N metrics for M URL(s).` **N must not be 0
+  while M is non-zero.** 0-of-M on every domain means the response shape or the endpoint
+  is not what this tool assumes, and every Page Authority will be NULL (unknown) — the
+  report will say so under *Run coverage* rather than reporting authority 0.
+- [ ] Why this needs a live run: Moz's url-metrics objects identify the target as `page`
+  (scheme-less), not `url`, and serp-discover has already migrated to JSON-RPC
+  `api.moz.com/jsonrpc` while this tool still calls `api.moz.com/v2/url_metrics`.
+  `api_clients.page_authority_map` accepts either key and matches scheme-insensitively,
+  but only a real call can confirm which endpoint answers and in what shape. Record the
+  answer here, then align the client with serp-discover's.
+- [ ] If the call fails outright, expect `⚠️ Moz metrics failed: … — Page Authority is
+  UNKNOWN for <domain> this run (stored NULL, not 0)` and no `competitors` row for that
+  domain. A *Fragile Magnet* alert must NOT appear for it.
+
 ## 2. Console output — watch the coverage lines
+- [ ] `🎯 Audit universe: N keyword(s) handed over by Tool 1 across M target URL(s)` — the
+  audit works from the handoff (C-M-01). N of 0 means the handoff was empty.
+- [ ] `🎯 Keyword universe: handoff targets N (…); enrichment keywords kept N, dropped N
+  brand-token + N off-topic` — a large off-topic drop count is the fix working, not an
+  error.
+- [ ] `📋 Run coverage: audited N of M handoff domain(s); … Page Authority measured for N
+  of M audited URL(s)` — compare with the *Run coverage* block in the briefing; they
+  should agree.
 - [ ] `📊 Enrichment coverage (fresh / carried-forward / cache-hit-no-prior / failed)` — a
   non-zero **failed** count means a systematic EEAT/GEO/cluster problem, investigate.
 - [ ] `🗺️ SERP overlap: N keywords classified …`
 - [ ] `🧭 Positioning: <quadrant counts>`
 - [ ] `📣 AI Share-of-Voice: …`  **or**  `ℹ️ … no export found — skipped`
 - [ ] `💷 Branded demand: N brands benchmarked.`
-- [ ] `🚨 Reputation risk: N signals (M own-site).`
+- [ ] `🚨 Reputation risk: N signals (M own-site).` — and, when it appears,
+  `Visibility cliff: not measured for N of M domain(s) …`, which is the expected answer
+  while a run samples fewer than `risk_signals.cliff_min_sample` keywords per domain.
 - [ ] `▶️ YouTube presence: checked N, confirmed C, candidates K, none D, errors E, skipped S,
   quota units U`  **or**  `ℹ️ … no API key in env — skipped`. If it shows `⚠️ quota budget hit`,
   the run stopped early on purpose (the skipped domains are retryable `error`, not "no channel").

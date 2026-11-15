@@ -94,6 +94,13 @@ absence is a design choice, not missing data.
 reframing target. If you specifically want to study an excluded heavyweight, note that
 Serp-Compete is not the tool for it (that's a backlink/authority job — see §7).
 
+> **When Moz does not answer, the filter cannot be applied** — and the briefing says so
+> under *Run coverage* rather than letting it pass silently. Before 2026-11-15 a Moz
+> failure made the average Page Authority 0, which disabled this filter without a word
+> and wrote 0 into the competitor's authority figure as though it had been measured
+> (C-C-03). Unknown authority is now NULL, no `competitors` row is written, and the
+> domain is named in the report.
+
 ### 2.3 The 7-day audit cache (and carry-forward)
 **What it does:** a URL that was already audited in the last 7 days is reused from the
 database instead of being re-scraped. When that happens, the page's EEAT and GEO
@@ -423,9 +430,9 @@ confidence, status.
 
 Each run records a snapshot, so later runs can compare against earlier ones.
 
-### 5.1 Market Velocity & Volatility alerts
-**What it does:** flags competitors whose rank or authority has shifted meaningfully
-between runs (*Market Velocity Alerts*, *Volatility Alerts*).
+### 5.1 Volatility alerts
+**What it does:** flags competitors whose *average position* moved by 3 places or more
+between this run and the previous one (*Volatility Alerts*).
 
 **What it lets you understand:** direction of travel — who's rising, who's slipping —
 which a single snapshot can't show.
@@ -433,9 +440,13 @@ which a single snapshot can't show.
 **What you can then do:** re-prioritise. A competitor gaining fast may be worth
 answering now; one falling may be about to open a gap.
 
-### 5.2 Fragile-Magnet / Feasibility-Drift alerts
-**What it does:** highlights high-value competitor pages that are *losing* Page
-Authority between runs.
+**Where you see it:** *📉 Volatility Alerts*.
+
+### 5.2 Fragile-Magnet alerts (authority drift)
+**What it does:** highlights competitor pages that are *losing* Moz Page Authority —
+a drop of at least `risk_signals.pa_drop_min` (3) between this run and the previous run
+that saw the same page. The rank move is reported beside it as evidence; it does not
+trigger the alert on its own.
 
 **What it lets you understand:** timing — a lucrative competitor page that's weakening
 is the moment to strike.
@@ -443,8 +454,21 @@ is the moment to strike.
 **What you can then do:** publish your competing "systems approach" page while their
 authority is dropping, to overtake them on the way down.
 
-**Where you see it:** *⚡ Market Velocity Alerts*, *📉 Volatility Alerts*, and *🚩 Expert
-Alerts: Fragile Magnets*.
+**Where you see it:** *🚩 Expert Alerts: Fragile Magnets (authority drift)*.
+
+> **Read it honestly.** A page whose authority was not measured in **both** runs is
+> absent from this list: unknown, not unchanged. The threshold is editorial and
+> uncalibrated (2026-11-15).
+>
+> **Fixed 2026-11-15 (C-C-03, C-C-05, C-M-06).** There were two independent
+> Fragile-Magnet detectors with different thresholds, rendering under two headings for
+> the same event, and all three of their inputs were wrong: a Moz outage arrived as
+> Page Authority **0**, so every page of every affected domain showed a ~-35 authority
+> collapse (and the next working run showed +35); any drop at all qualified, so 38 → 37
+> produced "Strike this page now"; and the detector was not scoped to the run, so a
+> competitor skipped this run (omitted, PA-filtered, DataForSEO 429, dropped from the
+> handoff) kept its last recorded drop in every later briefing, indefinitely. There is
+> now one detector, thresholded, run-scoped, and silent when either side is unmeasured.
 
 ---
 
@@ -467,6 +491,23 @@ competitor signals) and the *Reputation Risk* Excel sheet.
 > **Read it honestly:** these are **pattern detections, not confirmed Google penalties**. A
 > parasite flag needs both topical mismatch *and* commercial-intent keywords (the subfolder's
 > name alone never triggers one); a cliff is measured against a recent window, not all-time.
+>
+> **`visibility_cliff` is often withheld, and that is the honest answer.** It is computed
+> per **run** (not per calendar day) from every ranked keyword of that run, as the share
+> in the top 10, and only for domains with at least `risk_signals.cliff_min_sample` (10)
+> measured keywords in two or more runs. Below that floor the signal is withheld and the
+> section says so — it is not reported as "visibility held".
+>
+> **Fixed 2026-11-15 (C-C-06, C-M-07).** The series used to be the number of
+> `market_history` rows with rank ≤ 10, grouped by `DATE(timestamp)` — at most
+> `technical.max_audit_pages_per_domain` (3) rows per domain per run, because the
+> snapshot was written only for pages that scraped cleanly. So it measured the tool's own
+> sampling: two runs on one day then one the next gave `[6, 3]`, a "high severity 50%
+> collapse"; one page slipping from rank 10 to 11, or one errored scrape, gave `[3, 2]`.
+> An errored scrape is now recorded with a NULL rank rather than omitted. Whether the
+> signal should exist at all before a data source routinely supplies ten or more ranked
+> keywords per snapshot is an open question for the owner (decision 5 of the review plan)
+> — this release keeps it, with the floor.
 
 ## 6. Action features (drafting help)
 
@@ -516,10 +557,10 @@ and `audit_results_run_12.xlsx`).
 ### 8.1 Strategic Briefing (Markdown) — section-by-section
 | Section | One-line meaning | Your move |
 |---|---|---|
-| Executive Summary | What this run set out to find | Orientation |
+| Executive Summary | What this run set out to find, plus **Run coverage**: domains audited vs. in the handoff, which were skipped and why, which had no Moz authority figure, and how the keyword universe was assembled | Orientation; check coverage before reading anything as absence |
 | 📈 Internal GSC Performance Gaps | Your own low-CTR / Page-2 / mismatch opportunities | Fix titles, boost near-misses |
 | 💰 AI Token Usage | Cost of the reframes this run | Budget awareness |
-| 📉 / ⚡ / 🚩 Alerts | Who moved since last run | Re-prioritise & time your strike |
+| 📉 Volatility / 🚩 Fragile Magnets | Who moved since the last run that saw the same page (one authority-drift detector, thresholded) | Re-prioritise & time your strike |
 | Competitor Ranking Summary | Each competitor's depth, position, recommended strategy, and the **Keyword provenance** line (how many keywords came from the handoff vs. enrichment) | Pick who to target |
 | EEAT Competitive Analysis | How credible each page *looks* | Out-signal the weak, match the strong |
 | Internal Linking Cluster Analysis | How defended each competitor is | Prefer isolated targets |
@@ -552,6 +593,13 @@ content plan. *Traffic Magnets* carries `keyword_source` and the handoff `rank`;
   re-measure it. Tool 1's rank semantics are themselves under repair (its paginated
   SERP positions restart at 1 per page), so a rank from a handoff generated before that
   fix understates how far down the page a result really was.
+- **A missing number is NULL, not zero, all the way down** (fixed 2026-11-15). An
+  unmeasured Moz Page Authority, a brand whose search volume the provider would not
+  return, a page whose scrape errored, a drift whose two sides were not both measured:
+  each is stored and rendered as unknown. Where that leaves a section quieter than it
+  used to be, the briefing states the coverage — *Run coverage* in the Executive
+  Summary names the skipped domains, the unmeasured authorities and the "N of M URLs
+  had PA" count.
 - **The magnet / vacuum thresholds are editorial and uncalibrated**
   (`technical.vacuum_min_medical` = 10 and `technical.magnet_max_position` = 10, both
   dated 2026-11-14; `branded_demand.ambiguous_brand_ratio` = 10). They were chosen to
@@ -585,6 +633,10 @@ content plan. *Traffic Magnets* carries `keyword_source` and the handoff `rank`;
   language-tier concentration (medical vs. systems), not topic breadth; and because
   your own axes come from GSC (not a page audit), a run without GSC marks you
   `insufficient_data` rather than mis-plotting you.
+- **Alert thresholds are editorial and uncalibrated too**: `risk_signals.pa_drop_min`
+  (3) for Fragile Magnets and `risk_signals.cliff_min_sample` (10) for visibility
+  cliffs, both dated 2026-11-15. The cliff floor is high relative to what one run
+  samples, so the signal is often withheld; that is deliberate (§5.3).
 - **AI-era comparison features are consumed/estimated, honestly labelled.** AI Share-of-Voice
   is a rolling snapshot consumed from serp-discover (absent when there's no export, never
   zero); Branded-Demand competitor figures are search-volume estimates (only your own can be

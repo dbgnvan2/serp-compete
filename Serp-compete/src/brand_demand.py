@@ -118,23 +118,32 @@ def compute_branded_demand(brand_by_domain: Dict[str, str],
     pruned: Dict[str, bool] = {}
     queries_used: Dict[str, List[str]] = {}
     ambiguous: Dict[str, bool] = {}
+    unmeasured: Dict[str, bool] = {}
     for domain, brand in brand_by_domain.items():
         if not brand or is_generic_brand(brand, generic):
             pruned[domain] = True
             queries_used[domain] = []
             continue
         queries = expand_branded_queries(brand, modifiers)
-        vols = volume_provider(queries) or {}
+        queries_used[domain] = list(queries)
+        vols = volume_provider(queries)
+        # C-C-11: `None` is the provider saying "I could not answer" (a 429 on the
+        # third of twenty per-brand calls), `{}` is "I answered and had no rows".
+        # Collapsing the first into 0 reported that competitor as having no branded
+        # demand at all, at a 0.00% share, with estimation_basis `volume_estimated` —
+        # a transient outage rendered as a measured fact about a brand (P1).
+        if vols is None:
+            unmeasured[domain] = True
+            continue
         volume[domain] = sum(int(v.get("search_volume") or 0) for v in vols.values())
         growth[domain] = compute_growth(
             _aggregate_monthly([v.get("monthly_searches", []) for v in vols.values()]), window)
-        queries_used[domain] = list(queries)
 
         # The ambiguity probe is a separate call for the bare stem alone, so its
         # volume never enters the branded total.
         token = str(tokens.get(domain) or "").strip()
         if token and token.lower() != str(brand).strip().lower():
-            probe = volume_provider([token]) or {}
+            probe = volume_provider([token]) or {}   # None (outage) → no probe, no gate
             token_volume = sum(int(v.get("search_volume") or 0) for v in probe.values())
             if is_ambiguous_brand(volume[domain], token_volume, ratio):
                 ambiguous[domain] = True
@@ -154,6 +163,14 @@ def compute_branded_demand(brand_by_domain: Dict[str, str],
                          "branded_search_volume": None, "branded_volume_share": None,
                          "branded_growth": None, "est_branded_click_share": None,
                          "estimation_basis": "pruned_generic_brand",
+                         "queries": queries_used.get(domain, [])})
+            continue
+        if unmeasured.get(domain):
+            # NULL volume, no share, no growth: this brand was not measured this run.
+            rows.append({"domain": domain, "brand": brand, "period": period,
+                         "branded_search_volume": None, "branded_volume_share": None,
+                         "branded_growth": None, "est_branded_click_share": None,
+                         "estimation_basis": "volume_unavailable",
                          "queries": queries_used.get(domain, [])})
             continue
         vol = volume[domain]

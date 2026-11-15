@@ -5,7 +5,7 @@ import json
 import glob
 import warnings
 import jsonschema
-from src.api_clients import DataForSEOClient, MozClient
+from src.api_clients import DataForSEOClient, MozClient, page_authority_map
 from src.semantic import SemanticAuditor
 from src.geo_profiler import GeoProfiler
 from src.eeat_scorer import EEATScorer
@@ -262,7 +262,10 @@ def pre_flight_check():
         import requests
         r = requests.get(
             'https://api.dataforseo.com/v3/appendix/user_data',
-            auth=(dfs.login, dfs.password)
+            auth=(dfs.login, dfs.password),
+            # C-C-12: without a timeout this call could hang the pre-flight check
+            # indefinitely — the one call in the run that had none.
+            timeout=30
         ).json()
         balance = r['tasks'][0]['result'][0]['money']['balance']
         if balance <= 0:
@@ -400,6 +403,13 @@ def run_audit():
     handoff_keywords = audit_universe.handoff_keyword_set(targets_raw)
     clinical_terms = audit_universe.clinical_term_set(shared_config.get("clinical", {}))
     universe_stats = audit_universe.new_universe_stats()
+    # C-C-12 (P2): a domain that drops out of the run must leave a trace in the
+    # ARTEFACT, not only in the console. The "Missing Data Alert" could never fire
+    # for one, because it compared the set of domains that produced pages with
+    # itself.
+    skipped_domains: List[Tuple[str, str]] = []
+    enrichment_failures: List[Tuple[str, str]] = []
+    unmeasured_pa_domains: List[str] = []
     print(f"🎯 Audit universe: {len(handoff_keywords)} keyword(s) handed over by Tool 1 "
           f"across {len(targets_raw)} target URL(s) in {len(domain_groups)} domain(s).")
 
@@ -416,21 +426,35 @@ def run_audit():
         # Aggregator/Omitted Exclusion: Cross-reference the external omitted_domains list
         if normalise_domain(domain) in omitted_domains:
             print(f"Skipping omitted domain: {domain}")
+            skipped_domains.append((domain, "on the omit list"))
             continue
-            
+
         print(f"Analyzing competitor: {domain}")
         brand_token = derive_brand_name(domain, brand_suffixes)
         # Enrichment only now, never the universe itself: a DataForSEO failure here
-        # costs this domain its keyword enrichment, not its audit.
-        enrichment_items = dfs_client.get_relevant_pages(domain)
-        if not enrichment_items:
-            print(f"  ℹ️ No DataForSEO ranked keywords for {domain} — "
-                  f"auditing its handoff targets only.")
+        # costs this domain its keyword enrichment, not its audit. The call is also
+        # guarded: an unhandled RequestException used to abort the whole run AFTER
+        # create_run had written its row, leaving an orphan run and no report
+        # (C-C-12). get_relevant_pages no longer raises, but the guard means a future
+        # change there cannot resurrect that failure mode.
+        try:
+            enrichment_items = dfs_client.get_relevant_pages(domain)
+        except Exception as dfs_err:  # noqa: BLE001 - recorded, never fatal
+            enrichment_items = []
+            enrichment_failures.append((domain, str(dfs_err)))
+            print(f"  ⚠️ DataForSEO enrichment failed for {domain}: {dfs_err}")
+        else:
+            if not enrichment_items:
+                reason = getattr(dfs_client, "last_error", None) or "no ranked keywords returned"
+                enrichment_failures.append((domain, reason))
+                print(f"  ℹ️ No DataForSEO ranked keywords for {domain} ({reason}) — "
+                      f"auditing its handoff targets only.")
         pages = audit_universe.build_domain_universe(
             group_targets, enrichment_items, handoff_keywords, clinical_terms,
             brand_token, universe_stats)
         if not pages:
             print(f"  ⚠️ No auditable (url, keyword) rows for {domain} — skipped.")
+            skipped_domains.append((domain, "no auditable (url, keyword) rows"))
             continue
 
         # Moz metrics for filtering
@@ -438,25 +462,41 @@ def run_audit():
         for record in pages:
             if record["url"] not in urls:
                 urls.append(record["url"])
+        # C-C-03/C-C-04: a URL Moz had no record for is ABSENT from this map, never
+        # present with 0, so `pa` below is None ("unknown") rather than a measured
+        # authority of zero. The N-of-M line makes a shape mismatch (`page` vs `url`,
+        # C-C-04) visible as 0-of-M on the next live run instead of silently mapping
+        # one arbitrary URL.
         moz_metrics_map = {}
+        moz_error = None
         try:
             moz_results = moz_client.get_url_metrics(urls)
-            for res in moz_results:
-                moz_metrics_map[res.get('url')] = res.get('page_authority') or res.get('pa') or 0
+            moz_metrics_map = page_authority_map(moz_results, urls)
+            print(f"  Moz returned {len(moz_metrics_map)} metrics for {len(urls)} URL(s).")
         except Exception as e:
-            print(f"  Warning: Moz metrics failed: {e}")
+            moz_error = str(e)
+            print(f"  Warning: Moz metrics failed: {e} — Page Authority is UNKNOWN for "
+                  f"{domain} this run (stored NULL, not 0).")
 
-        # Expert Filter: DA Threshold: Skip any domain where Domain Authority > 50
-        avg_pa = sum(moz_metrics_map.values()) / len(moz_metrics_map) if moz_metrics_map else 0
-        if avg_pa > 50:
-            print(f"  Skipping high-authority domain (Avg PA {avg_pa:.1f} > 50): {domain}")
-            continue
-
-        # C2/C4: persist this competitor's Domain Authority (avg Moz PA) so positioning
-        # (authority axis) and feasibility use the same DA basis as the client. Without
-        # this the competitors table stays empty and both features degrade silently.
+        # Expert Filter: DA Threshold: Skip any domain where Domain Authority > 50.
+        # With no measured PA the filter cannot be applied at all: say so rather than
+        # let `avg_pa = 0` silently disable it (P2).
         if moz_metrics_map:
+            avg_pa = sum(moz_metrics_map.values()) / len(moz_metrics_map)
+            if avg_pa > 50:
+                print(f"  Skipping high-authority domain (Avg PA {avg_pa:.1f} > 50): {domain}")
+                skipped_domains.append((domain, f"PA filter (avg PA {avg_pa:.1f} > 50)"))
+                continue
+            # C2/C4: persist this competitor's Domain Authority (avg Moz PA) so positioning
+            # (authority axis) and feasibility use the same DA basis as the client. Without
+            # this the competitors table stays empty and both features degrade silently.
             db.save_competitor_summary(domain, int(round(avg_pa)))
+        else:
+            avg_pa = None
+            unmeasured_pa_domains.append(domain)
+            print(f"  ℹ️ Avg Page Authority unmeasured for {domain} "
+                  f"({moz_error or 'Moz returned no metrics for these URLs'}) — the "
+                  f"PA > 50 filter was NOT applied and no competitors row was written.")
 
         domain_medical_total = 0
         domain_t2_total = 0
@@ -491,7 +531,8 @@ def run_audit():
                 "keyword_source": keyword_source
             })
             
-            pa = moz_metrics_map.get(url, 0)
+            # C-C-03: None, not 0 — "Moz had no figure" is not "authority zero".
+            pa = moz_metrics_map.get(url)
             db.save_competitor_history(run_id, url, pos, pa, traffic)
             
             max_pages = shared_config.get("technical", {}).get("max_audit_pages_per_domain", 3)
@@ -516,6 +557,14 @@ def run_audit():
                     # not saved as zero-score traffic magnets / false systemic vacuums.
                     content = auditor.scrape_content(url)
                     status = getattr(content, "extraction_status", "error")
+                    if status in ("blocked", "error"):
+                        # C-C-06: record the ATTEMPT with rank NULL instead of omitting
+                        # it. An omitted page used to shrink the visibility series,
+                        # which read as the competitor losing visibility; a NULL rank
+                        # says "we could not read this", which is what happened.
+                        velocity.save_market_snapshot(
+                            domain=domain, url=url, keyword=keyword, rank=None, da=pa,
+                            systems_score=None, medical_score=None, run_id=run_id)
                     if status == "blocked":
                         print(f"  🛑 Circuit Breaker: Domain {domain} is blocking us (429). Skipping remaining pages.")
                         domain_blocked = True
@@ -547,9 +596,10 @@ def run_audit():
                     url=url,
                     keyword=keyword,
                     rank=pos,
-                    da=pa, # Using PA as proxy for DA at URL level
+                    da=pa, # Using PA as proxy for DA at URL level (NULL when unknown)
                     systems_score=scores['systems_score'],
-                    medical_score=scores['medical_score']
+                    medical_score=scores['medical_score'],
+                    run_id=run_id,  # C-C-05: alerts are scoped to the run
                 )
 
                 domain_medical_total += scores['medical_score']
@@ -589,6 +639,30 @@ def run_audit():
 
     if all_metrics_to_save:
         db.save_competitor_metrics(all_metrics_to_save, run_id=run_id)
+
+    # C-C-03 / C-C-12 (P2): run coverage, for the console AND the briefing. An absent
+    # competitor and an unmeasured authority figure are facts about the run; until
+    # now they reached only the console, so a reader of the .md could not tell a
+    # competitor that was skipped from one that has nothing to report.
+    pa_measured, pa_total = db.get_pa_coverage(run_id)
+    run_coverage = {
+        "domains_in_handoff": len(domain_groups),
+        "domains_audited": len(competitor_keywords),
+        "skipped_domains": skipped_domains,
+        "enrichment_failures": enrichment_failures,
+        "unmeasured_pa_domains": unmeasured_pa_domains,
+        "pa_measured": pa_measured,
+        "pa_total": pa_total,
+        "universe": dict(universe_stats),
+    }
+    print(f"\n📋 Run coverage: audited {len(competitor_keywords)} of "
+          f"{len(domain_groups)} handoff domain(s); "
+          f"{len(skipped_domains)} skipped"
+          + (f" ({', '.join(f'{d}: {r}' for d, r in skipped_domains)})"
+             if skipped_domains else "")
+          + f"; Page Authority measured for {pa_measured} of {pa_total} audited URL(s)."
+          + (f" Enrichment unavailable for {len(enrichment_failures)} domain(s)."
+             if enrichment_failures else ""))
 
     # Comparison layer (C4 SERP-overlap / C2 positioning / C1 AI share-of-voice /
     # C3 branded-demand / C6 reputation-risk) — extracted to src/comparison_features.py
@@ -644,8 +718,10 @@ def run_audit():
             "reframe": reframe_result["reframe"]
         })
 
-    # Spec 4: Get market velocity alerts
-    market_alerts = velocity.get_market_alerts()
+    # Spec 4: Get market velocity alerts — scoped to THIS run (C-C-05). Before this,
+    # a URL that left the competitive set kept its last recorded drop in every later
+    # briefing, forever.
+    market_alerts = velocity.get_market_alerts(run_id=run_id)
 
     reporter.generate_summary(
         client_domain, 
@@ -654,7 +730,8 @@ def run_audit():
         reframes=reframes,
         token_usage=total_usage,
         market_alerts=market_alerts,
-        gsc_findings=gsc_findings
+        gsc_findings=gsc_findings,
+        run_coverage=run_coverage,
     )
 
 if __name__ == "__main__":

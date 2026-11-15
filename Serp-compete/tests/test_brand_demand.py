@@ -185,3 +185,57 @@ def test_cm03_query_strings_are_persisted_for_the_excel_sheet(tmp_path):
         queries = conn.execute("SELECT queries FROM brand_demand_bench WHERE run_id=?",
                                (run_id,)).fetchone()[0]
     assert "Acme Counselling reviews" in queries
+
+
+# ── C-C-11: one brand's provider failure is not that brand having no demand ───
+# Promotes docs/review_2026-11-04/probes/compete/probe_brand_demand.py (the
+# `clearcounselling.ca clear 0 0.0 volume_estimated` row). `get_search_volume` now
+# returns None when the provider did not answer, and `{}` only when it answered with
+# no rows — the caller must treat those differently.
+
+def _provider_failing_for(brand_prefix, vol=100):
+    def provider(queries):
+        if any(str(q).lower().startswith(brand_prefix) for q in queries):
+            return None                       # the provider could not answer
+        return {str(q).lower(): {"search_volume": vol, "monthly_searches": []}
+                for q in queries}
+    return provider
+
+
+def test_cc11_one_brands_outage_is_null_not_zero():
+    rows = compute_branded_demand(
+        {"a.com": "Acme", "b.com": "Bcorp", "c.com": "Clear Counselling"},
+        _provider_failing_for("clear"), CONFIG, period="p")
+    by_domain = {r["domain"]: r for r in rows}
+    failed = by_domain["c.com"]
+    assert failed["branded_search_volume"] is None        # not 0
+    assert failed["branded_volume_share"] is None         # not 0.0
+    assert failed["branded_growth"] is None
+    assert failed["estimation_basis"] == "volume_unavailable"
+
+
+def test_cc11_share_is_computed_over_the_measured_brands_only():
+    rows = compute_branded_demand(
+        {"a.com": "Acme", "b.com": "Bcorp", "c.com": "Clear Counselling"},
+        _provider_failing_for("clear"), CONFIG, period="p")
+    measured = [r for r in rows if r["branded_volume_share"] is not None]
+    assert len(measured) == 2
+    assert abs(sum(r["branded_volume_share"] for r in measured) - 100.0) < 0.01
+
+
+def test_cc11_a_measured_zero_is_still_a_zero():
+    """A brand the provider answered for, with zero volume, is a measured zero — the
+    distinction `None` exists to protect. Only a whole-market zero is labelled
+    unavailable (the pre-existing all-zero rule)."""
+    def mixed(queries):
+        if any("acme" in str(q).lower() for q in queries):
+            return {str(q).lower(): {"search_volume": 0, "monthly_searches": []}
+                    for q in queries}
+        return {str(q).lower(): {"search_volume": 50, "monthly_searches": []}
+                for q in queries}
+    rows = compute_branded_demand({"a.com": "Acme", "b.com": "Bcorp"}, mixed, CONFIG,
+                                  period="p")
+    by_domain = {r["domain"]: r for r in rows}
+    assert by_domain["a.com"]["branded_search_volume"] == 0
+    assert by_domain["a.com"]["estimation_basis"] == "volume_estimated"
+    assert by_domain["b.com"]["branded_volume_share"] == 100.0

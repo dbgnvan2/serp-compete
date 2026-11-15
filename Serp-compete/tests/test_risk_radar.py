@@ -20,6 +20,7 @@ from src.handoff_moz import anchor_coverage, anchor_texts_by_domain, load_moz_bl
 from src.risk_radar import anchor_caveat_lines, anchor_data_unreadable
 from src.risk_radar import (
     detect_visibility_cliff, detect_parasite, compute_risk_signals,
+    cliff_sample_shortfall,
     detect_anchor_spam,
 )
 
@@ -120,17 +121,76 @@ def test_get_parasite_candidates_core_from_other_subfolders(tmp_path):
     assert "therapy" in core_text or "grief" in core_text
 
 
+# ── C-C-06 / C-M-07: the series is per RUN, normalised, and has a sample floor ──
+# Promotes docs/review_2026-11-04/probes/compete/probe_visibility_cliff.py and
+# probes/compete_method/p02 §G.
+
+def _metrics(db, run_id, domain, positions):
+    db.save_competitor_metrics(
+        [{"domain": domain, "url": f"https://{domain}/{i}", "keyword": f"kw{i}",
+          "position": p, "traffic": 1.0} for i, p in enumerate(positions)],
+        run_id=run_id)
+
+
 def test_get_visibility_series_graceful_and_with_data(tmp_path):
     db = DatabaseManager(str(tmp_path / "v.db"))
-    assert db.get_visibility_series("x.com") == []   # market_history absent → graceful, no crash
-    with db._get_connection() as conn:
-        conn.execute("""CREATE TABLE market_history (id INTEGER PRIMARY KEY, domain TEXT,
-            url TEXT, keyword TEXT, rank INTEGER, da INTEGER, systems_score REAL,
-            medical_score REAL, timestamp DATETIME)""")
-        conn.execute("INSERT INTO market_history (domain, rank, timestamp) VALUES ('x.com', 3, '2026-01-01')")
-        conn.execute("INSERT INTO market_history (domain, rank, timestamp) VALUES ('x.com', 15, '2026-01-02')")
-        conn.commit()
-    assert db.get_visibility_series("x.com") == [1.0, 0.0]   # day1 rank3→top10=1; day2 rank15→0
+    assert db.get_visibility_series("x.com") == []   # no data → graceful, no crash
+    run1, run2 = db.create_run("c.com"), db.create_run("c.com")
+    _metrics(db, run1, "x.com", [3, 8, 15, 20])      # 2 of 4 in the top 10
+    _metrics(db, run2, "x.com", [3, 25])             # 1 of 2
+    series = db.get_visibility_series("x.com")
+    assert [(s["run_id"], s["ranked"], s["attempted"], s["rate"]) for s in series] == [
+        (run1, 2, 4, 0.5), (run2, 1, 2, 0.5)]
+    # The RATE is unchanged, so a smaller sample is no longer a collapse.
+    assert detect_visibility_cliff(series, {"cliff_drop_pct": 0.3}) is None
+
+
+def test_two_runs_on_one_day_are_two_snapshots_not_one(tmp_path):
+    """The old series grouped by DATE(timestamp) and summed every run of a day, so the
+    documented "re-run within the cache window" use case made every competitor a
+    `high` cliff the next day."""
+    db = DatabaseManager(str(tmp_path / "same_day.db"))
+    runs = [db.create_run("c.com") for _ in range(3)]
+    for run_id in runs:
+        _metrics(db, run_id, "x.com", [3, 8, 25])    # identical each run
+    series = db.get_visibility_series("x.com")
+    assert len(series) == 3
+    assert {s["rate"] for s in series} == {2 / 3}
+    assert detect_visibility_cliff(series, {"cliff_drop_pct": 0.3}) is None
+
+
+def test_one_missing_row_of_three_is_not_a_cliff(tmp_path):
+    """A 429 on page 2, or one keyword slipping out of the top 10, on a 3-row sample."""
+    db = DatabaseManager(str(tmp_path / "small.db"))
+    run1, run2 = db.create_run("c.com"), db.create_run("c.com")
+    _metrics(db, run1, "x.com", [3, 8, 9])
+    _metrics(db, run2, "x.com", [3, 8, 11])
+    series = db.get_visibility_series("x.com")
+    config = {"cliff_drop_pct": 0.3, "cliff_min_sample": 10}
+    assert detect_visibility_cliff(series, config) is None      # sample below the floor
+    # …and the caller can say so, instead of leaving the silence unexplained.
+    assert cliff_sample_shortfall({"x.com": series}, config) == (1, 1)
+
+
+def test_a_real_collapse_on_a_sufficient_sample_still_fires(tmp_path):
+    """The floor withholds small samples; it must not disable the detector."""
+    db = DatabaseManager(str(tmp_path / "big.db"))
+    run1, run2 = db.create_run("c.com"), db.create_run("c.com")
+    _metrics(db, run1, "x.com", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])   # 10 of 12
+    _metrics(db, run2, "x.com", [1, 2, 30, 40, 50, 60, 70, 80, 90, 95, 96, 97])  # 2 of 12
+    sig = detect_visibility_cliff(db.get_visibility_series("x.com"),
+                                  {"cliff_drop_pct": 0.3, "cliff_min_sample": 10})
+    assert sig["signal_type"] == "visibility_cliff"
+    assert sig["severity"] == "high"
+    assert sig["evidence"]["sample_latest"] == 12
+
+
+def test_a_bare_value_series_cannot_satisfy_a_configured_floor():
+    """P1: a caller that supplies no sample size gets silence, not a drop whose
+    sample is unknown."""
+    assert detect_visibility_cliff([1.0, 0.2], {"cliff_drop_pct": 0.3}) is not None
+    assert detect_visibility_cliff([1.0, 0.2], {"cliff_drop_pct": 0.3,
+                                                "cliff_min_sample": 10}) is None
 
 
 # ── SC-8.4 anchor-text spam ───────────────────────────────────────────────────

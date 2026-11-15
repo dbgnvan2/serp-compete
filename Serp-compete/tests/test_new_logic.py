@@ -29,31 +29,70 @@ def test_competitor_tagging(temp_db):
     meta = temp_db.get_competitor_metadata("generalist.com")
     assert meta['market_position'] == "Generalist"
 
-def test_feasibility_drift(temp_db):
-    run_id1 = temp_db.create_run("client.com")
-    url = "https://competitor.com/page"
-    
-    # First run
-    temp_db.save_competitor_history(run_id1, url, position=1, pa=30, traffic=500)
-    
-    # Second run with drift
-    run_id2 = temp_db.create_run("client.com")
-    temp_db.save_competitor_history(run_id2, url, position=1, pa=25, traffic=500) # PA dropped from 30 to 25
-    
-    alerts = temp_db.get_feasibility_drift(run_id2)
-    assert len(alerts) == 1
-    assert alerts[0]['url'] == url
-    assert alerts[0]['drift'] == -5
-    assert alerts[0]['alert'] == "Fragile Magnet"
+# ── C-C-03 / C-C-05: PA 0 is not PA unknown, and there is now ONE drift detector ──
+# Promotes docs/review_2026-11-04/probes/compete/probe_pa_zero_fragile.py. The second
+# detector (`database.get_feasibility_drift`, drift < -2) is gone: it rendered under its
+# own heading for the same event, with its own threshold, off the same bad input.
 
-def test_no_drift(temp_db):
+def test_drift_is_computed_from_two_measured_page_authorities(temp_db):
     run_id1 = temp_db.create_run("client.com")
     url = "https://competitor.com/page"
-    
     temp_db.save_competitor_history(run_id1, url, position=1, pa=30, traffic=500)
-    
+
     run_id2 = temp_db.create_run("client.com")
-    temp_db.save_competitor_history(run_id2, url, position=1, pa=29, traffic=500) # Drift is -1 (> -2)
-    
-    alerts = temp_db.get_feasibility_drift(run_id2)
-    assert len(alerts) == 0
+    temp_db.save_competitor_history(run_id2, url, position=1, pa=25, traffic=500)
+
+    with temp_db._get_connection() as conn:
+        drift = conn.execute("SELECT drift FROM competitor_history WHERE run_id=?",
+                             (run_id2,)).fetchone()[0]
+    assert drift == -5
+
+
+def test_an_unknown_page_authority_is_stored_null_and_drifts_nowhere(temp_db):
+    """A Moz 401/429/5xx used to arrive here as pa=0, so every page of every affected
+    domain showed a -35 authority collapse and the next working run showed +35."""
+    run_id1 = temp_db.create_run("client.com")
+    url = "https://competitor.com/page"
+    temp_db.save_competitor_history(run_id1, url, position=1, pa=35, traffic=500)
+
+    run_id2 = temp_db.create_run("client.com")
+    temp_db.save_competitor_history(run_id2, url, position=1, pa=None, traffic=500)
+
+    with temp_db._get_connection() as conn:
+        pa, drift = conn.execute(
+            "SELECT pa, drift FROM competitor_history WHERE run_id=?",
+            (run_id2,)).fetchone()
+    assert pa is None            # not 0.0
+    assert drift is None         # not -35.0
+
+
+def test_the_run_after_an_outage_does_not_report_a_rebound(temp_db):
+    """The mirror image of the same bug: 0 -> 35 used to read as +35 of real growth."""
+    url = "https://competitor.com/page"
+    run1 = temp_db.create_run("client.com")
+    temp_db.save_competitor_history(run1, url, position=1, pa=35, traffic=500)
+    run2 = temp_db.create_run("client.com")
+    temp_db.save_competitor_history(run2, url, position=1, pa=None, traffic=500)
+    run3 = temp_db.create_run("client.com")
+    temp_db.save_competitor_history(run3, url, position=1, pa=35, traffic=500)
+
+    with temp_db._get_connection() as conn:
+        drift = conn.execute("SELECT drift FROM competitor_history WHERE run_id=?",
+                             (run3,)).fetchone()[0]
+    assert drift == 0            # compared with the last MEASURED PA, not with NULL
+
+
+def test_pa_coverage_counts_measured_against_attempted(temp_db):
+    """"N of M URLs had PA" is persisted as the NULL-vs-value distinction, so an old
+    run can still say whether its authority figures were measured."""
+    run_id = temp_db.create_run("client.com")
+    temp_db.save_competitor_history(run_id, "u1", position=1, pa=30, traffic=1)
+    temp_db.save_competitor_history(run_id, "u2", position=2, pa=None, traffic=1)
+    temp_db.save_competitor_history(run_id, "u3", position=3, pa=None, traffic=1)
+    assert temp_db.get_pa_coverage(run_id) == (1, 3)
+
+
+def test_the_second_fragile_magnet_detector_is_gone(temp_db):
+    """C-M-06: two detectors with different thresholds rendered under two headings for
+    the same event. `velocity_module.get_market_alerts` is the only one left."""
+    assert not hasattr(temp_db, "get_feasibility_drift")

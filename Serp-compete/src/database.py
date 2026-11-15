@@ -854,19 +854,48 @@ class DatabaseManager:
             ])
             conn.commit()
 
-    def get_visibility_series(self, domain: str) -> List[float]:
-        """C6/SC-8: a per-domain visibility series (top-10 ranking count per snapshot
-        date) from market_history, oldest→newest. [] when the table/data is absent."""
+    def get_visibility_series(self, domain: str) -> List[Dict[str, Any]]:
+        """C6/SC-8: a per-domain visibility series, one snapshot per RUN, oldest→newest.
+
+        Each snapshot is `{run_id, ranked, attempted, rate}` where `ranked` is the
+        number of the domain's keywords in the top 10 that run, `attempted` is how
+        many had a measured position at all, and `rate = ranked / attempted`.
+
+        C-C-06 / C-M-07: this used to read `market_history` grouped by
+        `DATE(timestamp)`, summing every run of a calendar day, over a sample whose
+        per-run maximum was `technical.max_audit_pages_per_domain` (3) because the
+        snapshot was written inside the processed-page branch. So the series measured
+        the tool's own sampling: two runs on one day then one the next produced
+        `[6, 3]` — a "high severity visibility cliff, 50% drop" — and one page slipping
+        from rank 10 to 11, or one errored scrape, produced `[3, 2]`. Reading
+        `competitor_metrics` keyed by `run_id` uses every ranked keyword of the run,
+        one snapshot per run, and the rate normalises for how many were measured;
+        `risk_signals.cliff_min_sample` then withholds the signal when the sample is
+        too small to support a step-change test at all.
+
+        [] when the table or the data is absent — never a fabricated series.
+        """
         try:
             with self._get_connection() as conn:
                 rows = conn.execute('''
-                    SELECT DATE(timestamp) AS d, SUM(CASE WHEN rank <= 10 THEN 1 ELSE 0 END)
-                    FROM market_history WHERE domain = ?
-                    GROUP BY d ORDER BY d
+                    SELECT run_id,
+                           SUM(CASE WHEN position IS NOT NULL AND position <= 10
+                                    THEN 1 ELSE 0 END) AS ranked,
+                           SUM(CASE WHEN position IS NOT NULL THEN 1 ELSE 0 END) AS attempted
+                    FROM competitor_metrics
+                    WHERE domain = ? AND run_id IS NOT NULL
+                    GROUP BY run_id ORDER BY run_id
                 ''', (domain,)).fetchall()
-            return [float(v or 0) for _d, v in rows]
         except sqlite3.OperationalError:
             return []
+        series: List[Dict[str, Any]] = []
+        for run_id, ranked, attempted in rows:
+            ranked, attempted = int(ranked or 0), int(attempted or 0)
+            if not attempted:
+                continue  # nothing measured that run — not a visibility of zero
+            series.append({"run_id": int(run_id), "ranked": ranked,
+                           "attempted": attempted, "rate": ranked / attempted})
+        return series
 
     def get_parasite_candidates(self, run_id: int) -> List[Dict[str, Any]]:
         """C6/SC-8: per (domain, subfolder) keyword sets + the domain's core terms (from
@@ -1001,53 +1030,52 @@ class DatabaseManager:
             ''', (run_id, url, medical_score, systems_score, label))
             conn.commit()
 
-    def save_competitor_history(self, run_id: int, url: str, position: int, pa: float, traffic: float):
+    def save_competitor_history(self, run_id: int, url: str, position: int,
+                                pa: float, traffic: float):
         """
         Revision 4: Store snapshot data and calculate drift.
         Drift = Current_PA - Previous_PA.
+
+        C-C-03: `pa` is nullable and NULL means "Moz had no figure for this URL this
+        run" — a Moz 401/429/5xx, or a URL Moz has no record for. The drift is then
+        NULL as well, not `0 - 35`: the previous code stored a missing PA as 0 and so
+        reported a -35 authority collapse for every page of every affected domain,
+        with the mirror-image +35 on the next working run.
         """
+        pa_value = None if pa is None else float(pa)
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
-            # Find previous PA for this URL
+
+            # Find the previous MEASURED PA for this URL (a NULL snapshot is not a
+            # comparison point).
             cursor.execute('''
-                SELECT pa FROM competitor_history 
-                WHERE url = ? AND run_id < ? 
+                SELECT pa FROM competitor_history
+                WHERE url = ? AND run_id < ? AND pa IS NOT NULL
                 ORDER BY run_id DESC LIMIT 1
             ''', (url, run_id))
             prev_row = cursor.fetchone()
-            prev_pa = prev_row[0] if prev_row else pa
-            drift = pa - prev_pa
-            
+            prev_pa = prev_row[0] if prev_row else None
+            drift = (None if pa_value is None or prev_pa is None
+                     else pa_value - float(prev_pa))
+
             cursor.execute('''
                 INSERT INTO competitor_history (run_id, url, position, pa, traffic_value, drift)
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (run_id, url, position, pa, traffic, drift))
+            ''', (run_id, url, position, pa_value, traffic, drift))
             conn.commit()
 
-    def get_feasibility_drift(self, run_id: int) -> List[Dict[str, Any]]:
-        """
-        Revision 4: Identify 'Fragile Magnets'.
-        Expert Alert: If Drift < -2 and Traffic_Value is stable, flag as a 'Fragile Magnet.'
+    def get_pa_coverage(self, run_id: int) -> Tuple[int, int]:
+        """(URLs with a measured Page Authority, URLs attempted) for a run.
+
+        "N of M URLs had PA" is persisted rather than printed and forgotten: it is the
+        NULL-vs-value distinction in `competitor_history.pa`, so an old run can still
+        say whether its authority figures were measured (P2).
         """
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT url, pa, drift, traffic_value 
-                FROM competitor_history 
-                WHERE run_id = ? AND drift < -2
-            ''', (run_id,))
-            
-            alerts = []
-            for row in cursor.fetchall():
-                alerts.append({
-                    "url": row[0],
-                    "pa": row[1],
-                    "drift": row[2],
-                    "traffic": row[3],
-                    "alert": "Fragile Magnet"
-                })
-            return alerts
+            row = conn.execute(
+                'SELECT COUNT(pa), COUNT(*) FROM competitor_history WHERE run_id = ?',
+                (run_id,)).fetchone()
+        return (int(row[0] or 0), int(row[1] or 0))
 
     def tag_competitor_position(self, domain: str, medical_score: int, systems_t2: int, systems_t3: int, traffic: float):
         """

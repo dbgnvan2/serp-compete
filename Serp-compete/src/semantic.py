@@ -1,4 +1,5 @@
 import spacy
+import time
 from bs4 import BeautifulSoup
 import requests
 from typing import Dict, List, Tuple, Any, Literal
@@ -72,13 +73,22 @@ class SemanticAuditor:
         fetched_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         extraction_errors = []
 
+        # C-C-18: the homepage pre-visit is a best-effort anti-bot warm-up, so it gets
+        # its own guard. Inside the main try, a ReadTimeout on a competitor's HOMEPAGE
+        # marked the TARGET page unreadable even when the target would have loaded —
+        # and since main.py marks the URL as attempted before fetching, that spent one
+        # of the domain's three audit slots and left no row anywhere.
         try:
-            # First, visit the homepage to get any cookies (common anti-bot bypass)
             base_url = "{0.scheme}://{0.netloc}/".format(urlparse(url))
             session.get(base_url, headers=http_headers, timeout=10)
+        except Exception as warm_err:  # noqa: BLE001 - best effort only
+            print(f"  ℹ️ Homepage warm-up failed for {url} ({warm_err}) — "
+                  f"fetching the page anyway.")
 
-            # Now fetch the target URL
-            response = session.get(url, headers=http_headers, timeout=15)
+        try:
+            # Now fetch the target URL, with one retry: a single transient network
+            # error must not cost the page its audit slot (P5).
+            response = self._get_with_one_retry(session, url, http_headers)
 
             # Handle 429 blocked
             if response.status_code == 429:
@@ -181,6 +191,22 @@ class SemanticAuditor:
                 full_text_word_count=0,
                 metadata=self._build_empty_metadata()
             )
+
+    @staticmethod
+    def _get_with_one_retry(session, url: str, http_headers: Dict[str, str],
+                            timeout: int = 15):
+        """GET the page, retrying ONCE after a transient network error (C-C-18).
+
+        Only the exception path is retried. A 429 or a 4xx/5xx response is returned to
+        the caller to classify — re-requesting a rate-limited page is exactly what the
+        circuit breaker exists to avoid.
+        """
+        try:
+            return session.get(url, headers=http_headers, timeout=timeout)
+        except requests.RequestException as first_err:
+            print(f"  ℹ️ Fetch failed for {url} ({first_err}) — retrying once.")
+            time.sleep(1.5)
+            return session.get(url, headers=http_headers, timeout=timeout)
 
     def _extract_outline(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """Extract h1, h2, h3 headers with source order."""

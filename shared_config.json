@@ -306,6 +306,10 @@
   "risk_signals": {
     "cliff_drop_pct": 0.3,
     "cliff_lookback": 6,
+    "_cliff_min_sample_comment": "C-C-06 / C-M-07: the smallest number of MEASURED ranked keywords a per-run visibility snapshot must carry before a step-change (cliff) test may be computed on it. Below this the signal is withheld and the briefing says so, rather than reporting one page slipping from rank 10 to 11 as a 33% collapse. Editorial default, uncalibrated, 2026-11-15; 10 is the figure C-M-07 asks for. Whether the signal should exist at all before a data source routinely supplies that many is the owner's open decision 5.",
+    "cliff_min_sample": 10,
+    "_pa_drop_min_comment": "C-C-05 / C-M-06: the smallest Moz Page-Authority drop between two consecutive runs reported as a Fragile Magnet. The previous rule was any drop at all, so a 38 -> 37 move produced 'Strike this page now'. Editorial default, uncalibrated, 2026-11-15.",
+    "pa_drop_min": 3,
     "volatility_high_shift": 6,
     "commercial_terms": [
       "casino",

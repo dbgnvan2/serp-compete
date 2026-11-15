@@ -3,10 +3,51 @@ import json
 import os
 import time
 import base64
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# C-C-12 / LEARNINGS rule 1 (P5): external calls are hardened as a CLASS, not one at
+# a time. `get_search_volume` had timeout + retry + backoff while its siblings
+# `get_relevant_pages` and `get_url_metrics` had neither, so a DataForSEO 429 on
+# domain 17 of 34 dropped that competitor with no trace and a `ConnectionError`
+# aborted the whole run after `create_run` had already written a row.
+DEFAULT_TIMEOUT = 30
+DEFAULT_ATTEMPTS = 3
+RETRY_STATUS = (429, 500, 502, 503, 504)
+
+
+def post_with_retries(url: str, label: str, attempts: int = DEFAULT_ATTEMPTS,
+                      timeout: int = DEFAULT_TIMEOUT,
+                      **kwargs) -> Tuple[Optional[requests.Response], Optional[str]]:
+    """POST with timeout, bounded retries and backoff. Returns `(response, error)`.
+
+    Exactly one of the two is None. A 429 or 5xx is transient and retried; any other
+    4xx is terminal and returned at once (retrying a 401 only burns time). A network
+    exception never escapes — the caller decides what an outage means for its own
+    contract, which is the distinction between "unknown" and "zero" this repo keeps
+    getting wrong (P1).
+    """
+    last_error = "no attempt made"
+    for attempt in range(max(1, attempts)):
+        try:
+            response = requests.post(url, timeout=timeout, **kwargs)
+        except requests.RequestException as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            print(f"  ⚠️ {label} attempt {attempt + 1} failed: {last_error}")
+        else:
+            if response.status_code == 200:
+                return response, None
+            last_error = f"HTTP {response.status_code}"
+            if response.status_code not in RETRY_STATUS:
+                print(f"  ⚠️ {label} failed: {last_error} (terminal, not retried)")
+                return None, last_error
+            print(f"  ⚠️ {label} attempt {attempt + 1}: {last_error} (retrying)")
+        if attempt + 1 < max(1, attempts):
+            time.sleep(1.5 * (attempt + 1))  # backoff before retry (429-friendly)
+    return None, last_error
+
 
 class DataForSEOClient:
     def __init__(self):
@@ -17,7 +58,14 @@ class DataForSEOClient:
     def get_relevant_pages(self, domain: str) -> List[Dict[str, Any]]:
         """
         POST https://api.dataforseo.com/v3/dataforseo_labs/google/ranked_keywords/live
+
+        Keyword ENRICHMENT for one domain (the audit universe itself comes from the
+        handoff — see src/audit_universe.py). Hardened like `get_search_volume`
+        (timeout + retry + backoff, 429/5xx retried, other 4xx terminal) and it never
+        raises: `self.last_error` carries the reason so `run_audit` can name the
+        domain in the report instead of dropping it silently (C-C-12).
         """
+        self.last_error = None
         url = f"{self.base_url}/dataforseo_labs/google/ranked_keywords/live"
         payload = [{
             "target": domain,
@@ -25,19 +73,21 @@ class DataForSEOClient:
             "language_code": "en",
             "limit": 10
         }]
-        
-        response = requests.post(
-            url, 
-            auth=(self.login, self.password),
-            json=payload,
-            timeout=30
-        )
-        
-        if response.status_code != 200:
-            print(f"DataForSEO API error: {response.status_code} - {response.text}")
+
+        response, error = post_with_retries(
+            url, f"DataForSEO ranked_keywords({domain})",
+            auth=(self.login, self.password), json=payload)
+        if response is None:
+            self.last_error = error
+            print(f"DataForSEO API error for {domain}: {error}")
             return []
-            
-        data = response.json()
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            self.last_error = f"unparseable response: {exc}"
+            print(f"DataForSEO API error for {domain}: {self.last_error}")
+            return []
         if not data.get('tasks') or not data['tasks'][0].get('result'):
             print(f"No results found for {domain}")
             return []
@@ -56,40 +106,52 @@ class DataForSEOClient:
             
         return items
 
-    def get_search_volume(self, keywords: List[str]) -> Dict[str, Dict[str, Any]]:
+    def get_search_volume(self, keywords: List[str]) -> Optional[Dict[str, Dict[str, Any]]]:
         """C3/SC-5: monthly + current search volume for a keyword list.
 
-        POST .../keywords_data/google_ads/search_volume/live. Hardened (timeout +
-        one retry). Returns {keyword_lower: {'search_volume': int, 'monthly_searches':
-        [...]}}; {} on any failure (the caller degrades to zero volume, never crashes).
-        This is a live external call — mocked in tests (integration-only otherwise).
+        POST .../keywords_data/google_ads/search_volume/live, hardened via
+        `post_with_retries`.
+
+        Returns {keyword_lower: {'search_volume': int, 'monthly_searches': [...]}} when
+        the API answered with rows, and **None when it did not** (C-C-11): a non-200
+        after retries, a network failure, an unparseable body, or a 200 whose `result`
+        is empty for a non-empty keyword list — DataForSEO normally returns one item
+        per keyword, so an empty result is an anomaly, not a measured zero. A brand
+        with no demand comes back as rows with `search_volume` 0.
+
+        The distinction is the point: `None` means "we do not know", and the caller
+        must then write NULL and `estimation_basis = volume_unavailable` for that
+        brand, not 0 volume and a 0.00% share, which is how a 429 on the third of
+        twenty per-brand calls turned a competitor into a brand with no demand (P1).
         """
         if not keywords:
             return {}
         url = f"{self.base_url}/keywords_data/google_ads/search_volume/live"
         payload = [{"keywords": [str(k) for k in keywords][:1000],
                     "location_code": 2124, "language_code": "en"}]
-        for attempt in range(3):
-            try:
-                response = requests.post(url, auth=(self.login, self.password),
-                                         json=payload, timeout=30)
-                if response.status_code != 200:
-                    print(f"DataForSEO search_volume error: {response.status_code}")
-                    time.sleep(1.5 * (attempt + 1))  # backoff before retry (429-friendly)
-                    continue
-                data = response.json()
-                result = (data.get('tasks') or [{}])[0].get('result') or []
-                out: Dict[str, Dict[str, Any]] = {}
-                for item in result:
-                    kw = str(item.get('keyword') or '').lower()
-                    if kw:
-                        out[kw] = {'search_volume': item.get('search_volume') or 0,
-                                   'monthly_searches': item.get('monthly_searches') or []}
-                return out
-            except requests.RequestException as e:
-                print(f"DataForSEO search_volume attempt {attempt + 1} failed: {e}")
-                time.sleep(1.5 * (attempt + 1))
-        return {}
+        response, error = post_with_retries(
+            url, "DataForSEO search_volume", auth=(self.login, self.password),
+            json=payload)
+        if response is None:
+            print(f"DataForSEO search_volume unavailable: {error}")
+            return None
+        try:
+            data = response.json()
+        except ValueError as exc:
+            print(f"DataForSEO search_volume unparseable: {exc}")
+            return None
+        result = (data.get('tasks') or [{}])[0].get('result') or []
+        out: Dict[str, Dict[str, Any]] = {}
+        for item in result:
+            kw = str(item.get('keyword') or '').lower()
+            if kw:
+                out[kw] = {'search_volume': item.get('search_volume') or 0,
+                           'monthly_searches': item.get('monthly_searches') or []}
+        if not out:
+            print("DataForSEO search_volume returned no rows for "
+                  f"{len(keywords)} keyword(s) — treated as unavailable, not as zero.")
+            return None
+        return out
 
     def get_top_pages(self, domain: str, limit: int = 20) -> List[Dict[str, Any]]:
         """
@@ -179,18 +241,74 @@ class MozClient:
     def get_url_metrics(self, urls: List[str]) -> List[Dict[str, Any]]:
         """
         Call Moz V2 url_metrics for each URL to get page_authority (PA).
+
+        Hardened like its siblings (timeout + retry + backoff, 429/5xx retried, other
+        4xx terminal) and still raises on terminal failure — the caller treats that as
+        "PA unknown" and writes NULL, never 0 (C-C-03).
+
+        C-C-04 is NOT closed by this change and cannot be from a sandbox: Moz's
+        url-metrics objects identify the target as `page` (scheme-less), not `url`,
+        and serp-discover has already migrated to JSON-RPC `api.moz.com/jsonrpc`.
+        `identify_target` below therefore accepts either key and matches
+        scheme-insensitively, and the caller logs "Moz returned N metrics for M URLs"
+        so a shape mismatch shows up as 0-of-M on the next live run rather than as a
+        silent map of one arbitrary URL. See docs/TEST_RUN_CHECKLIST.md §1.
         """
+        if not urls:
+            return []
         url = f"{self.base_url}/url_metrics"
         headers = {
             "Authorization": f"Basic {self.token}",
             "Content-Type": "application/json"
         }
         payload = {"targets": urls}
-        
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code != 200:
+
+        response, error = post_with_retries(
+            url, "Moz url_metrics", headers=headers, json=payload)
+        if response is None:
             # If 401, maybe token is not base64 encoded or is invalid
-            raise Exception(f"Moz API error: {response.status_code} - {response.text}")
-            
+            raise Exception(f"Moz API error: {error}")
+
         return response.json().get('results', [])
+
+
+def identify_target(result: Dict[str, Any]) -> Optional[str]:
+    """The URL a Moz url-metrics object is about: `url`, or `page` (C-C-04)."""
+    return result.get('url') or result.get('page')
+
+
+def _strip_scheme(url: Any) -> str:
+    text = str(url or "").strip().lower()
+    for prefix in ("https://", "http://"):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    return text.rstrip("/")
+
+
+def page_authority_map(results: List[Dict[str, Any]],
+                       requested_urls: List[str]) -> Dict[str, float]:
+    """{requested url: page authority} for the results Moz actually returned.
+
+    Matched scheme-insensitively and without a trailing slash, because Moz echoes the
+    target in its own normalised form. A URL Moz had no record for is ABSENT from the
+    map — not present with 0 — so the caller cannot mistake "no record" for "authority
+    zero" and report a -35 authority drop (C-C-03).
+    """
+    by_target = {}
+    for result in results or []:
+        target = identify_target(result)
+        if not target:
+            continue
+        pa = result.get('page_authority')
+        if pa is None:
+            pa = result.get('pa')
+        if pa is None:
+            continue
+        by_target[_strip_scheme(target)] = float(pa)
+    out: Dict[str, float] = {}
+    for requested in requested_urls or []:
+        pa = by_target.get(_strip_scheme(requested))
+        if pa is not None:
+            out[requested] = pa
+    return out

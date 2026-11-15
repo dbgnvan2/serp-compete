@@ -30,12 +30,67 @@ pattern). The high-frequency ones in this codebase:
 
 ## Open risks (found by review, not yet bitten)
 
-_(none open — the two risks found during the F7 review were fixed; see the fix log.)_
+- **C-C-04 — the Moz endpoint and response key are assumed, not verified.** This tool calls
+  `api.moz.com/v2/url_metrics` and now reads either `url` or `page` (scheme-insensitively),
+  while serp-discover has migrated to JSON-RPC `api.moz.com/jsonrpc` and its real-response
+  fixture models the target as `page`. Unverifiable without a live call, so the next real run
+  must check the per-domain line `Moz returned N metrics for M URL(s).` — N of 0 against a
+  non-zero M means the shape or the endpoint is wrong and every Page Authority will be NULL.
+  `docs/TEST_RUN_CHECKLIST.md` §1b carries the check. Then align the client with
+  serp-discover's.
+- **`visibility_cliff` is kept but will usually be withheld.** With the handoff universe a run
+  samples well under `risk_signals.cliff_min_sample` (10) keywords per domain, so the signal
+  rarely has a large enough sample to compute. Whether to keep it at all until a data source
+  supplies that many (DataForSEO `domain_rank_overview`, or the full `ranked_keywords` count)
+  is the owner's open decision 5 in the 2026-11-04 review plan.
 
 ## Fix log
 
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
+
+**Null was zero in every longitudinal path, so outages and sampling noise rendered as measured collapses (C-C-03, C-C-05, C-C-06, C-C-09, C-C-11, C-C-12, C-C-18, C-M-06, C-M-07).**
+- **Root cause (P1 / P2 / P5):** the same substitution in five places. A Moz failure or a URL
+  Moz had no record for became `pa = 0` (`moz_metrics_map.get(url, 0)`), so every page of every
+  affected domain reported a ~-35 authority collapse — and the next working run reported +35;
+  `avg_pa = 0` also silently disabled the "PA > 50" filter and wrote 0 as the competitor's
+  measured authority. A per-brand search-volume failure became `0` volume at a `0.00%` share
+  labelled `volume_estimated`. An errored scrape was omitted from the visibility series rather
+  than recorded, so the series fell and read as the competitor losing visibility. A 429 on the
+  client's own page was stored as a 0/0 semantic audit and served from the 7-day cache, which
+  suppressed the Clinical Mismatch check as a confident "no mismatches" (the `content !=
+  "BLOCK"` test had been dead since the ScrapedPage refactor — P22). And `get_search_volume`
+  was hardened with timeout + retry + backoff while its siblings `get_relevant_pages` and
+  `get_url_metrics` had neither, so a DataForSEO 429 dropped a competitor with no trace in the
+  artefact and a `ConnectionError` aborted the run after `create_run` had written its row.
+  Two further faults compounded them: the drift detector was not scoped to the run (so a
+  competitor skipped this run kept its last drop in every later briefing, forever) and had no
+  threshold (38 → 37 produced "Strike this page now"), and the visibility series was grouped by
+  `DATE(timestamp)` over a ≤3-row sample, so a same-day re-run was a "50% cliff".
+- **What would have caught it:** a second-run test where the provider fails — for each of them.
+  The suite had second-run tests, but every one fed the *success* path; and two of the asserts
+  passed only because an earlier run of the same suite had left rows in the repo's own database
+  (`test_analyze_gaps_logic` wrote `semantic_audits` with run_id 0 and then read its own
+  7-day cache), so they would have failed on a blank machine. Dirty-state tests have to seed
+  the dirt themselves and own their database (P8).
+- **Fix:** unknown is NULL end to end — `competitor_history.pa`, `market_history.da`,
+  `market_history.rank`, `branded_search_volume` — and every consumer skips rather than
+  substitutes. `api_clients.post_with_retries` hardens all three external POSTs as a class
+  (429/5xx retried, other 4xx terminal, never raising out of `get_relevant_pages`);
+  `page_authority_map` omits URLs Moz had no record for instead of defaulting them to 0;
+  `get_search_volume` returns `None` for "could not answer" and a mapping only when it
+  answered with rows. One run-scoped, thresholded drift detector (`risk_signals.pa_drop_min`)
+  replaces the two. The visibility series is per `run_id` from `competitor_metrics`, normalised
+  by how many keywords were measured, with a `risk_signals.cliff_min_sample` floor below which
+  the signal is withheld and the briefing says so. Coverage travels into the artefact: *Run
+  coverage* names the skipped domains with reasons, the unmeasured authorities, and "N of M
+  URLs had PA".
+- **Rule:** `.get(key, 0)` on an external result is a bug the type system will not catch —
+  default to `None` and make the consumer decide. A fetch helper hardened in one method must be
+  extracted and applied to its siblings in the same commit, or the next sibling is the next
+  outage. And when a detector's sample is too small to support its own test, withholding the
+  signal with a stated reason is the answer; a number computed on three rows is not a
+  measurement.
 
 **The audit never read the handoff: `main.py` grouped Tool 1's targets by domain and then audited each domain's DataForSEO top-10 instead (C-M-01, and C-M-02 / C-M-15 / C-M-03 / C-C-01 / C-C-13 downstream).**
 - **Root cause (P21 / P6):** `for domain, group_targets in domain_groups.items():` never read

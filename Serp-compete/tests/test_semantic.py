@@ -39,3 +39,45 @@ def test_scrape_content_mock(requests_mock):
     assert page.http_status == 200
     assert "Heading" in page.first_500_words
     assert "Some text" in page.first_500_words
+
+
+# ── C-C-18: a failing homepage warm-up must not cost the page its audit slot ──
+# main.py marks a URL as attempted BEFORE fetching it, so an error here spent one of
+# the domain's three slots and left no traffic_magnets / market_history row at all.
+
+def test_cc18_homepage_warmup_failure_still_audits_the_page(requests_mock):
+    import requests as _requests
+    auditor = SemanticAuditor()
+    requests_mock.get("https://example.com/", exc=_requests.exceptions.ReadTimeout)
+    requests_mock.get("https://example.com/page",
+                      text="<html><h1>Couples counselling</h1><p>Body text.</p></html>")
+
+    page = auditor.scrape_content("https://example.com/page")
+    assert page.extraction_status == "complete"
+    assert "Couples counselling" in page.first_500_words
+
+
+def test_cc18_a_transient_page_error_is_retried_once(requests_mock):
+    import requests as _requests
+    auditor = SemanticAuditor()
+    requests_mock.get("https://example.com/", text="<html></html>")
+    requests_mock.get("https://example.com/page", [
+        {"exc": _requests.exceptions.ConnectionError},
+        {"text": "<html><h1>Second try</h1></html>"},
+    ])
+
+    page = auditor.scrape_content("https://example.com/page")
+    assert page.extraction_status == "complete"
+    assert "Second try" in page.first_500_words
+
+
+def test_cc18_a_429_is_still_blocked_and_not_retried(requests_mock):
+    """Only the exception path is retried: re-requesting a rate-limited page is what
+    the circuit breaker exists to avoid."""
+    auditor = SemanticAuditor()
+    requests_mock.get("https://example.com/", text="<html></html>")
+    page_mock = requests_mock.get("https://example.com/page", status_code=429)
+
+    page = auditor.scrape_content("https://example.com/page")
+    assert page.extraction_status == "blocked"
+    assert page_mock.call_count == 1
