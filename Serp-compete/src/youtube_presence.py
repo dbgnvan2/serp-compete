@@ -203,7 +203,12 @@ def _score(detail, domain, stem, token):
     nstem, ntoken = _norm(stem), _norm(token)
 
     domain_in_about = _domain_in_text(d, desc) or _domain_in_text(d, custom)
-    handle = bool(ncustom) and (ncustom == nstem or (bool(ntoken) and ncustom == ntoken))
+    # C-M-16: `high` confidence for a handle requires the handle to equal the DOMAIN
+    # STEM, not the derived brand token. `bachcounselling.com` derives the token
+    # "bach", so a channel at `@bach` — a composer, a beer, anyone — was `confirmed`
+    # as that practice's channel. A handle matching the bare token is still a name
+    # match, which yields `candidate` and waits for the owner's confirmation.
+    handle = bool(ncustom) and bool(nstem) and ncustom == nstem
     # Name tier is intentionally HIGH-RECALL (substring, not word-boundary): candidates come
     # from a brand-relevance-ranked search.list, and a name match only ever yields `candidate`
     # (owner-confirmed), NEVER `confirmed` — so recall (don't miss a real channel titled
@@ -261,8 +266,17 @@ def _channel_row(domain, is_client, snapshot_date, chan, confidence, basis, chec
 
 
 def _state_row(domain, is_client, snapshot_date, check_status, estimation_basis):
-    """A no-channel row: none_found (has_channel False) or error (has_channel None — P1)."""
-    has_channel = False if check_status == "none_found" else None
+    """A no-channel row.
+
+    C-M-16: `has_channel` is None for `none_found` too. "Not found by a 3-result name
+    search" is not "this practice has no YouTube channel" — a therapist whose channel
+    is titled by her own name, with no domain in the About, is indistinguishable from
+    a practice that never made one, and the report rendered the first as a definitive
+    ✗. The guide's own principle is "state absence, don't fake it", and the state is
+    carried in `check_status` / `estimation_basis` where it can be read honestly.
+    `has_channel` is now True only when a channel was actually matched.
+    """
+    has_channel = None
     return {
         "domain": domain, "is_client": is_client, "checked_at": snapshot_date,
         "has_channel": has_channel, "channel_id": "", "handle": None,

@@ -110,6 +110,27 @@ def compute_sov(export: Optional[Dict[str, Any]], competitor_domains: List[str],
 
     competitor_set = {_norm_domain(d) for d in (competitor_domains or [])}
     competitor_brand_set = {_norm(b) for b in (competitor_brands or []) if _norm(b)}
+    # C-M-17: the export carries DISPLAY names ("Jericho Counselling") and
+    # `competitor_brands` carries derived tokens ("jericho"), so an exact-set test
+    # missed every mentioned-but-not-cited rival and dropped it into "other" — where
+    # the report filters it out, leaving the client's 25% printed with no visible 75%.
+    # Matching the export brand through the SAME derivation makes the two meet.
+    try:
+        from src.brand_utils import derive_brand_name
+    except ImportError:  # pragma: no cover - standalone use
+        derive_brand_name = None
+
+    def _is_competitor_brand(normalised_brand: str, raw_brand: Any) -> bool:
+        if normalised_brand in competitor_brand_set:
+            return True
+        if derive_brand_name is None:
+            return False
+        derived = _norm(derive_brand_name(str(raw_brand or "").replace(" ", "")))
+        if derived and derived in competitor_brand_set:
+            return True
+        # …and the other direction: a token that is a word of the display name.
+        return any(token and token in normalised_brand
+                   for token in competitor_brand_set if len(token) >= 3)
     mentions = export.get("brand_mentions", []) or []
     citations = export.get("ai_citations", []) or []
     sentiment = export.get("answer_sentiment", []) or []
@@ -143,7 +164,7 @@ def compute_sov(export: Optional[Dict[str, Any]], competitor_domains: List[str],
             domain = brand_to_domain.get(nb)
             if m.get("is_client"):
                 category = "client"
-            elif (domain and domain in competitor_set) or (nb in competitor_brand_set):
+            elif (domain and domain in competitor_set) or _is_competitor_brand(nb, m.get("brand")):
                 category = "competitor"       # matched by cited domain OR brand name
             else:
                 category = "other"

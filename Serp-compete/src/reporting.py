@@ -662,7 +662,8 @@ class ReportGenerator:
             # 3f. Competitive AI Share-of-Voice (C1 / SC-3)
             df_sov = pd.read_sql_query('''
                 SELECT engine, entity, entity_type, is_client, category,
-                       mention_share, citation_share, avg_sentiment, cited_gap
+                       mention_share, citation_share, presence_rate, avg_sentiment,
+                       cited_gap
                 FROM sov_daily WHERE run_id = ?
             ''', conn, params=(run_id,))
 
@@ -674,12 +675,33 @@ class ReportGenerator:
                 for engine in sorted(df_sov['engine'].dropna().unique()):
                     eng = df_sov[df_sov['engine'] == engine]
                     report.append(f"\n### {engine}")
-                    men = eng[(eng['entity_type'] == 'brand') & (eng['category'] != 'other')]
+                    brands = eng[eng['entity_type'] == 'brand']
+                    men = brands[brands['category'] != 'other']
                     men = men.sort_values('mention_share', ascending=False).head(10)
                     if not men.empty:
-                        report.append("**Mention share:** " + ", ".join(
+                        # C-M-17: `presence_rate` is the quantity the guide describes
+                        # ("whose brand the models return") — named in k of n answers —
+                        # and it was computed and never printed. `mention_share` is a
+                        # share of all brand mentions, including "other".
+                        report.append("**Mention share** (share of all brand mentions "
+                                      "this engine made) **and presence** (the share of "
+                                      "answers the brand was named in): " + ", ".join(
                             f"{r['entity']}{' (you)' if r['is_client'] else ''} "
-                            f"{(r['mention_share'] or 0):.0f}%" for _, r in men.iterrows()))
+                            f"{(r['mention_share'] or 0):.0f}%"
+                            + (f" / named in {(r['presence_rate'] or 0) * 100:.0f}% of answers"
+                               if r['presence_rate'] is not None else "")
+                            for _, r in men.iterrows()))
+                    # …and the remainder, so the shares visibly sum to 100.
+                    other_share = brands[brands['category'] == 'other']['mention_share'].sum()
+                    if other_share:
+                        other_names = sorted(
+                            brands[brands['category'] == 'other']['entity'].dropna().unique())
+                        report.append(
+                            f"**Other brands (not you, not a tracked competitor):** "
+                            f"{other_share:.0f}% of mentions"
+                            + (f" — {', '.join(other_names[:8])}" if other_names else "")
+                            + ". A tracked rival that is mentioned but never cited used "
+                              "to land here and be filtered out of the line above.")
                     gap_rows = eng[eng['cited_gap'] == 1]   # single source: the persisted flag
                     if not gap_rows.empty:
                         report.append("⚔️ **Cited but you're not:** "
@@ -798,10 +820,12 @@ class ReportGenerator:
                 report.append("Which of your competitors run a YouTube channel, and how active — "
                               "from the official YouTube **Data API** (a sanctioned metadata check, "
                               "**not** scraping). _`confirmed` = the domain appears in the channel's "
-                              "About or the handle matches; `candidate` = a name-only match **awaiting "
-                              "your confirmation** (see `TEST_RUN_CHECKLIST.md`); `none_found` = no "
-                              "channel; `error` = couldn't check this run (retryable — never a "
-                              "definitive 'no')._")
+                              "About or the handle equals the domain stem; `candidate` = a name-only "
+                              "match **awaiting your confirmation** (see `TEST_RUN_CHECKLIST.md`); "
+                              "`none_found` = **none matched by a name search of the top 3 results** "
+                              "— not a measured 'no channel'; `error` = couldn't check this run "
+                              "(retryable). `channel?` reads `?` for both, because neither is "
+                              "evidence that the practice has no channel._")
                 disp = df_yt.copy()
                 disp['channel?'] = disp['has_channel'].apply(
                     lambda v: '✓' if v == 1 else ('✗' if v == 0 else '?'))

@@ -67,26 +67,69 @@ class GSCManager:
                 token.write(creds.to_json())
         return creds
 
-    def fetch_performance_data(self, site_url=None, days=90):
+    # C-C-17 / C-M-11: GSC's row cap per request. The old call asked for one page of
+    # 5000 rows and stopped; GSC returns rows by clicks descending, so everything past
+    # row 5000 — the zero-click long tail, which is most of a real property — was
+    # simply missing, and `serp_overlap` read every missing query as "the client is
+    # absent", feeding the top action queue.
+    GSC_PAGE_SIZE = 5000
+    GSC_MAX_PAGES = 20          # 100k rows; a safety stop, not an expected limit
+
+    def fetch_performance_data(self, site_url=None, days=None):
         if not site_url:
             site_url = self.config.get("auth", {}).get("gsc_property_url")
-        
+
+        # C-C-14: `gsc_settings.date_range_days` was documented and had no reader —
+        # the window was hard-coded at 90 days. The argument still wins when given.
+        if days is None:
+            days = int((self.config.get("gsc_settings", {}) or {}).get(
+                "date_range_days", 90))
+
         end_date = datetime.date.today().strftime('%Y-%m-%d')
         start_date = (datetime.date.today() - datetime.timedelta(days=days)).strftime('%Y-%m-%d')
 
-        request = {
-            'startDate': start_date,
-            'endDate': end_date,
-            'dimensions': ['query', 'page'],
-            'rowLimit': 5000
-        }
-        
-        try:
-            response = self.service.searchanalytics().query(siteUrl=site_url, body=request).execute()
-            return response.get('rows', [])
-        except Exception as e:
-            print(f"⚠️ GSC Data Fetch Error for {site_url}: {e}")
-            return []
+        # C-M-11: `country=can` matches the DataForSEO side, which is a Canada
+        # snapshot (location_code 2124). Comparing a global GSC average with a
+        # Canadian SERP rank is comparing two different measurements, and the overlap
+        # matrix tests them against each other with a symmetric `<= top_n`.
+        country = str((self.config.get("gsc_settings", {}) or {}).get(
+            "country", "can") or "").strip().lower()
+
+        rows = []
+        start_row = 0
+        for _page in range(self.GSC_MAX_PAGES):
+            request = {
+                'startDate': start_date,
+                'endDate': end_date,
+                'dimensions': ['query', 'page'],
+                'rowLimit': self.GSC_PAGE_SIZE,
+                'startRow': start_row,
+            }
+            if country:
+                request['dimensionFilterGroups'] = [{
+                    'filters': [{'dimension': 'country', 'operator': 'equals',
+                                 'expression': country}]
+                }]
+            try:
+                response = self.service.searchanalytics().query(
+                    siteUrl=site_url, body=request).execute()
+            except Exception as e:
+                print(f"⚠️ GSC Data Fetch Error for {site_url}: {e}")
+                # Partial data is still data, but it must not be mistaken for all of
+                # it: say how much was read before the failure (P2).
+                if rows:
+                    print(f"   ⚠️ Returning {len(rows)} row(s) read before the error — "
+                          f"the rest of the window is UNREAD, not empty.")
+                return rows
+            page_rows = response.get('rows', []) or []
+            rows.extend(page_rows)
+            if len(page_rows) < self.GSC_PAGE_SIZE:
+                break
+            start_row += self.GSC_PAGE_SIZE
+        else:
+            print(f"⚠️ GSC pagination stopped at {self.GSC_MAX_PAGES} pages "
+                  f"({len(rows)} rows) — there may be more.")
+        return rows
 
     def get_query_position_map(self) -> dict:
         """C4/SC-6: {normalized query: best (lowest) client position} from GSC.

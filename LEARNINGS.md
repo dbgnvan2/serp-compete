@@ -49,6 +49,43 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The consumers read their inputs at the wrong scale, the wrong market and the wrong depth, and documented knobs controlled nothing (C-M-11, C-C-17, C-M-16, C-M-17, C-M-18, C-C-14).**
+- **Root cause (P2 / P4 / P6 / P21):** every one of these is a contract read loosely. GSC was
+  asked for ONE 5000-row page, and since it returns rows by clicks descending, the zero-click
+  long tail of a real property was simply missing — and `serp_overlap`'s module docstring treats
+  an absent query as "the client is absent", so the missing rows became the top action queue. The
+  same matrix compared a 90-day GLOBAL GSC average against a Canada-only DataForSEO snapshot with
+  a symmetric `<= top_n` test, and the competitor side used `rank_absolute`, which counts SERP
+  features, so an organic #8 under three features read as 11. A rival's own brand query sat in
+  "your clearest content gaps to fill". The AI-visibility export carries display names ("Jericho
+  Counselling") while the matcher held derived tokens ("jericho"), so a mentioned-but-uncited
+  rival fell into "other", which the report filters out — printing the client's 25% with no
+  visible 75% — and `presence_rate`, the quantity the section's own description promises, was
+  computed and never rendered. A YouTube handle matching the bare brand token ("@bach" for
+  bachcounselling.com) was `confirmed`, and `none_found` — "not found by a 3-result name search" —
+  was stored as `has_channel = False` and rendered as a definitive ✗. And four thresholds that
+  drive verdicts were literals in Python (`+5`, `avg_pa > 50`, volatility `>= 3`, the GSC 90-day
+  window) while config keys with the same names sat unread, so the knobs the owner could see did
+  nothing and the ones that mattered were invisible.
+- **What would have caught it:** a test that feeds a consumer MORE than one page of input, and
+  one that asserts a documented config key changes behaviour. The suite mocked GSC with three
+  rows, so pagination could never be exercised; and no test asked whether
+  `technical.feasibility_threshold` did anything, which is why it sat decorative since March.
+- **Fix:** GSC paginates with `startRow` until a short page, filters on
+  `gsc_settings.country`, reads `date_range_days`, and reports partial data as partial; the
+  overlap universe excludes rival-brand keywords and the top-N test uses `rank_group`; the SoV
+  matcher runs the export's brand through `derive_brand_name` and the report prints
+  `presence_rate` and the "other" remainder; a YouTube handle must equal the domain stem, and
+  `none_found` carries `has_channel = None` with the report saying what it means; the four
+  literals moved into config, `handoff.supported_versions` is enforced (with its values corrected
+  from 2.0/2.1 to the real 1.0/1.1), and eight keys with no reader were deleted with the removal
+  recorded in the file. Every threshold now carries a `_source` note, FEATURE_GUIDE §9 has the
+  provenance table, and a standing guard test fails when a new threshold arrives without one.
+- **Rule:** when an API returns a page, assume there is a second one; when two numbers are
+  compared, check they come from the same market and the same scale; and a config key with no
+  reader is worse than no key — it is a lie about what the owner controls. Grep for a reader
+  before documenting a knob.
+
 **Every composite score flattered the client or the template, and said so with unearned precision (C-M-09, C-M-10, C-M-12, C-M-13, C-M-14).**
 - **Root cause (P6 / P7 / P2):** five separate scores, one habit — comparing numbers that were
   not comparable, then presenting the result with more confidence than the inputs carry. The

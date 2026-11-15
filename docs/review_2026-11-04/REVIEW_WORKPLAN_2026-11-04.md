@@ -470,10 +470,10 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 | C-C-11 | S2 | C2 | Per-brand volume failure persisted as 0 | fixed `7a6405b` (C2) |
 | C-C-12 | S2 | C2 | `get_relevant_pages` no retry; dropped domain untraced; abort after `create_run` | fixed `7a6405b` (C2) |
 | C-C-13 | S3 | C1 | `client_brand_names` dropped; config key doesn't exist | fixed `f7b09bf` (C1) |
-| C-C-14 | S3 | C4 | Documented config keys with no reader | open |
+| C-C-14 | S3 | C4 | Documented config keys with no reader | fixed (C4c) |
 | C-C-15 | S3 | C4 | `self-regulation` unmatchable; position thresholds hard-coded | fixed (C4a) |
 | C-C-16 | S3 | C3 | Orchestrator ignores selected handoff / reports dir | fixed `3d56e0a` (C3) |
-| C-C-17 | S3 | C4 | GSC 5000-row page; `rank_absolute` vs `position` | open |
+| C-C-17 | S3 | C4 | GSC 5000-row page; `rank_absolute` vs `position` | fixed (C4c) |
 | C-C-18 | S3 | C2 | Homepage warm-up failure burns an audit slot | fixed `7a6405b` (C2) |
 | C-M-01 | High | C1 | Audited keywords are DataForSEO per-domain top-10, not the handoff | fixed `f7b09bf` (C1) |
 | C-M-02 | High | C1 | Vacuum = any systems-0 page | fixed `f7b09bf` (C1) |
@@ -485,14 +485,14 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 | C-M-08 | Med | C4 | "therapy" is Tier-1 medical | fixed (C4a) |
 | C-M-09 | Med | C4 | Barbell authority: DA vs PA; client authoritative by construction | fixed (C4b) |
 | C-M-10 | Med | C4 | Focus undefined at ≤3 pages | fixed (C4b) |
-| C-M-11 | Med | C4 | Overlap cells are sampling artefacts; unlike position scales | open |
+| C-M-11 | Med | C4 | Overlap cells are sampling artefacts; unlike position scales | fixed (C4c) |
 | C-M-12 | Med | C4 | EEAT composites of near-constant booleans, always "high" confidence | fixed (C4b) |
 | C-M-13 | Med | C4 | Cluster label from 3 pages; www mismatch → isolated | fixed (C4b) |
 | C-M-14 | Med | C4 | GEO tier rewards WP defaults; section asserts causation | fixed (C4b) |
 | C-M-15 | Med | C1 | Reframe prompt asserts Medical Model at medical 0; PAA never present | fixed `f7b09bf` (C1) |
-| C-M-16 | Low–Med | C4 | YouTube `none_found` rendered as "no channel" | open |
-| C-M-17 | Low–Med | C4 | SoV drops mentioned-not-cited rivals; `presence_rate` unprinted | open |
-| C-M-18 | Med | C4 | Provenance; dead keys; hard-coded live thresholds | open |
+| C-M-16 | Low–Med | C4 | YouTube `none_found` rendered as "no channel" | fixed (C4c) |
+| C-M-17 | Low–Med | C4 | SoV drops mentioned-not-cited rivals; `presence_rate` unprinted | fixed (C4c) |
+| C-M-18 | Med | C4 | Provenance; dead keys; hard-coded live thresholds | fixed (C4c) |
 | C-M-19 | Med | C4 | Vocabulary counting mechanics | fixed (C4a) |
 | C-M-20 | Low | C3 | Smaller doc/label drifts | fixed `3d56e0a` (C3) |
 

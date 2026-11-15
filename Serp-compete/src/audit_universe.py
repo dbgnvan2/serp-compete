@@ -146,11 +146,22 @@ def new_universe_stats() -> Dict[str, int]:
 
 
 def _dfs_fields(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Any, float]:
-    """(url, keyword, rank_absolute, etv) out of one ranked_keywords item."""
+    """(url, keyword, organic rank, etv) out of one ranked_keywords item.
+
+    C-C-17: the rank is `rank_group` — DataForSEO's ORGANIC position — falling back
+    to `rank_absolute` only when it is absent. `rank_absolute` counts every SERP
+    element, so a competitor sitting organically at #8 below three SERP features
+    reads as 11 and drops out of a `<= 10` test, while the client's side of that same
+    test is a GSC `position` computed on a different element model. The top-N
+    comparison was therefore applied to two different scales.
+    """
     serp_item = (item.get("ranked_serp_element") or {}).get("serp_item") or {}
     url = serp_item.get("url") or item.get("url")
     keyword = (item.get("keyword_data") or {}).get("keyword") or item.get("keyword")
-    return url, keyword, serp_item.get("rank_absolute"), float(serp_item.get("etv") or 0)
+    rank = serp_item.get("rank_group")
+    if rank is None:
+        rank = serp_item.get("rank_absolute")
+    return url, keyword, rank, float(serp_item.get("etv") or 0)
 
 
 def build_domain_universe(group_targets: Iterable[Dict[str, Any]],

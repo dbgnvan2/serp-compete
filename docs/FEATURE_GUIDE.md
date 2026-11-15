@@ -408,6 +408,19 @@ winning while you're not on the board.
 undifferentiated ground). The feasibility read (your Domain Authority vs each
 competitor's) flags which are realistic.
 
+> **Fixed 2026-11-15 (C-M-11, C-C-17).** Four things that made the cells artefacts:
+> a rival's own brand query ("jericho counselling") landed in *exclusive-competitor* —
+> "your clearest content gaps to fill" — and is now excluded; your positions were a
+> **global** 90-day GSC average tested against a **Canadian** SERP snapshot, and GSC is
+> now filtered to the same market (`gsc_settings.country`); GSC was read as a single
+> 5000-row page, and since it returns rows by clicks descending, the zero-click long
+> tail was missing and every missing query read as "you're absent" — it is paginated
+> now; and the competitor side of the `top-N` test used `rank_absolute`, which counts
+> SERP features, so an organic #8 under three features read as 11 — it uses
+> `rank_group`, the organic rank. The keyword universe is the handoff's (§2.1), and
+> each rival contributes at most the ≤10 keywords DataForSEO sampled for it, which the
+> section states.
+>
 > **Fixed 2026-11-15.** The per-cell figure is now labelled **best-rival ETV**: it
 > is `MAX(competitor_metrics.traffic)` per keyword — the DataForSEO estimated monthly
 > visits of the best-ranking audited rival — summed per cell. It was presented as
@@ -478,6 +491,20 @@ gaps) and the *AI Share-of-Voice* Excel sheet.
 
 > **Read it honestly:** rolling snapshots — LLM answers swing between runs and model versions.
 > If serp-discover hasn't produced an AI-visibility export, the section is simply absent (not zero).
+>
+> **Two numbers, and they answer different questions.** *Mention share* is a brand's
+> share of all the brand mentions an engine made, **including brands that are neither
+> you nor a tracked competitor** — so the remainder is now printed too, and the shares
+> visibly sum to 100. *Presence* is the share of ANSWERS the brand was named in
+> ("named in 40% of answers"), which is the quantity this section's own description
+> promises; it was computed and never shown (C-M-17).
+>
+> **Fixed 2026-11-15 (C-M-17).** A tracked rival that an engine *mentions* but never
+> *cites* used to fall into "other" — the export carries display names ("Jericho
+> Counselling") and the matcher compared them with derived tokens ("jericho") — and the
+> report filtered "other" out, so a 6-mention rival vanished and the client's 25% was
+> printed with no visible 75%. The export's brand is now matched through the same
+> derivation.
 
 ### 4.7 Branded-Demand Benchmark — how your brand pull compares  ⭐ newest
 **What it does:** estimates each competitor's *branded* search demand (searches for
@@ -531,20 +558,34 @@ sheet — per competitor: has-channel?, handle, subscribers, last upload, recent
 confidence, status.
 
 > **Read it honestly:** a same-name channel is **never** auto-confirmed. `confirmed` means the
-> domain is in the channel's About **or** the handle matches; a bare name match is a
-> **`candidate`** you confirm yourself (see `TEST_RUN_CHECKLIST.md`) before trusting it —
+> domain is in the channel's About **or** the handle equals the domain stem; a bare name match
+> is a **`candidate`** you confirm yourself (see `TEST_RUN_CHECKLIST.md`) before trusting it —
 > confirmed ones can be pinned in `youtube_presence.channel_map` so future runs cost ~1 quota
-> unit instead of ~100. `none_found` = no channel; `error` = couldn't check this run (quota /
-> network) — retryable, **never** recorded as a definitive "no". **Needs a free `YOUTUBE_API_KEY`
-> in the env**; with no key the whole section is simply absent (not zeros, not an error).
+> unit instead of ~100. **Needs a free `YOUTUBE_API_KEY` in the env**; with no key the whole
+> section is simply absent (not zeros, not an error).
+>
+> **`none_found` does not mean "no channel"** (fixed 2026-11-15, C-M-16). It means
+> *none matched by a name search of the top 3 results*. A therapist whose channel is
+> titled by her own name, with no domain in the About, is indistinguishable here from a
+> practice that never made one — so `has_channel` is now **unknown (`?`)** for
+> `none_found` as well as for `error`, and only a real match reads ✓. The guide used to
+> present it as a measured negative.
+>
+> **A handle must equal the domain stem to earn `confirmed`** — `bachcounselling.com`
+> derives the brand token "bach", so a channel at `@bach` (a composer, a beer, anyone)
+> was confirmed as that practice's channel. A handle matching only the token is a name
+> match, and name matches wait for you.
 
 ## 5. Movement-over-time features (longitudinal memory)
 
 Each run records a snapshot, so later runs can compare against earlier ones.
 
 ### 5.1 Volatility alerts
-**What it does:** flags competitors whose *average position* moved by 3 places or more
-between this run and the previous one (*Volatility Alerts*).
+**What it does:** flags competitors whose *average position* moved by at least
+`risk_signals.volatility_min_shift` (3) places between this run and the previous one
+(*Volatility Alerts*). The briefing states the sign convention — positive means the
+domain moved **down** — and the trigger is config: it was a literal in the query while
+the key the owner could edit only set the severity band (C-M-18).
 
 **What it lets you understand:** direction of travel — who's rising, who's slipping —
 which a single snapshot can't show.
@@ -807,6 +848,47 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
   detections, not confirmed Google penalties*.
 - **Reframes are AI-drafted scaffolds**, not clinical copy — always apply your own
   judgement.
+
+### Provenance of every threshold that drives a verdict
+
+Owner decision 7 (2026-11-15): **an honest label on an uncalibrated number is
+sufficient; no calibration is scheduled.** Every threshold below carries the same note
+in `shared_config.json` beside the key itself, and the report says so once per section
+that depends on one. "Editorial" means somebody chose it; "uncalibrated" means it has
+never been checked against an outcome.
+
+| Threshold | Value | Basis | Last set |
+|---|---|---|---|
+| `technical.vacuum_min_medical` | 6 | editorial; re-set from 10 when decision 3 shrank the Tier-1 vocabulary, from measured before/after counts on this repo's real corpora (§3.1) | 2026-11-15 |
+| `technical.magnet_max_position` | 10 | editorial; encodes the "top 10" wording in the README and USER_MANUAL | 2026-11-14 |
+| `technical.penalty_thresholds.tier_1_max_density_per_1000` | 12 | editorial; the old absolute count of 10 over a ≤500-word window, re-expressed as a density and scaled for the shorter vocabulary | 2026-11-15 |
+| `technical.penalty_thresholds.tier_1_min_hits` | 3 | editorial; a floor under the density's numerator, so one hit in 40 words is not "Surface-Level" | 2026-11-15 |
+| `technical.position_thresholds.*` | 1000 / 9 / 10 | editorial; traffic and Tier-2 unchanged from 2026-03, the medical figure re-set for the shorter vocabulary | 2026-03 / 2026-11-15 |
+| `technical.feasibility_threshold` | 5 | editorial; the DA head-start a counter-page is assumed to be worth. **Documented since 2026-03 with no reader** — the real value was a literal `+5` in `analysis.py` until it was wired | 2026-03 (wired 2026-11-15) |
+| `technical.high_authority_max_pa` | 50 | editorial; the "too entrenched to audit" line. Was a literal in `main.py` | 2026-03 (moved to config 2026-11-15) |
+| `technical.scoring_window_words` | 500 | editorial; preserves the historic window, now measured and reported | 2026-11-15 |
+| `positioning.min_focus_tokens` | 12 | editorial; the review's suggested 20, scaled by the same vocabulary shrink | 2026-11-15 |
+| `positioning.authority_threshold` / `focus_threshold` / `top10_saturation` / `min_signal_rankings` | 50 / 50 / 10 / 2 | editorial; the 2×2 boundaries. The barbell is a framing, not a measured law | 2026-05 |
+| `risk_signals.pa_drop_min` | 3 | editorial; below it, Moz noise. Any drop at all used to fire | 2026-11-15 |
+| `risk_signals.cliff_min_sample` | 10 | editorial; the sample a step-change test needs. The signal is usually withheld (§5.3) | 2026-11-15 |
+| `risk_signals.volatility_min_shift` | 3 | editorial; the alert TRIGGER. Was a literal while the config key the owner could edit only set the severity band | 2026-03 (moved to config 2026-11-15) |
+| `risk_signals.cliff_drop_pct` / `cliff_lookback` / `volatility_high_shift` | 0.3 / 6 / 6 | editorial | 2026-05 |
+| `branded_demand.ambiguous_brand_ratio` | 10 | editorial; above it, a bare stem's demand is not the practice's (§4.7) | 2026-11-15 |
+| `serp_overlap.top_n` / `commodity_high_overlap` | 10 / 3 | editorial; a local overlap proxy, not a measured index | 2026-05 |
+| `cluster_thresholds.*` | 2 / 3 | editorial; bounded by `max_audit_pages_per_domain` (§3.3) | 2026-05 |
+| `geo_signals.strong_tier_min_signals` / `moderate_tier_min_signals` | 3 / 1 | editorial; read against the WEIGHTED total since 2026-11-15 (§3.4) | 2026-05 / 2026-11-15 |
+| `eeat_weights.*` | per dimension | editorial, no stated source; the composites are weighted booleans (§3.2) | 2026-05 |
+| `technical.scoring_weights` / `penalty_thresholds.tier_2_penalty_multiplier` | ×1.0 / ×0.5 / ×2.0, ×0.5 | editorial, from the spec's Revision 2 | 2026-03 |
+
+A standing guard test (`Serp-compete/tests/test_config_provenance.py`) walks the config
+and fails when a threshold has no provenance note, so a number added later cannot
+arrive undocumented. **Keys that were documented but had no reader were deleted**
+rather than left looking live: `technical.score_normaliser`,
+`technical.moderate_feasibility_max_gap`,
+`technical.penalty_thresholds.pseudo_systems_threshold`, `step_dag.*`,
+`orchestrator.step_timeout_seconds`, `orchestrator.log_level`,
+`handoff.minimum_version` and `handoff.legacy_fallback_enabled` (C-C-14). The removal
+is recorded in `shared_config.json → _removed_2026_11_15`.
 
 ---
 

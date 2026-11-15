@@ -16,14 +16,14 @@
   "gsc_settings": {
     "date_range_days": 90,
     "ctr_threshold": 0.01,
-    "position_target_max": 20
+    "position_target_max": 20,
+    "_comment": "C-C-14: `date_range_days` is read by gsc_performance.fetch_performance_data since 2026-11-15 (it was hard-coded at 90), and `country` is the GSC country filter added by C-M-11 so the client's positions come from the same market as the DataForSEO snapshot (location_code 2124 = Canada). `position_target_max` is read by get_striking_distance_keywords.",
+    "country": "can"
   },
   "technical": {
     "database_path": "living_systems_intel.db",
     "feasibility_threshold": 5,
     "max_audit_pages_per_domain": 3,
-    "moderate_feasibility_max_gap": 15,
-    "score_normaliser": 30.0,
     "_vacuum_min_medical_comment": "C-M-02 / owner decision 2 (2026-11-14): the MINIMUM medical score a page must reach before it can be a Traffic Magnet, a Systemic Vacuum or a gpt-4o reframe target. Deliberately NOT penalty_thresholds.tier_1_max, which means 'the highest Tier-1 count still counted as Tier 1' — reading it as a minimum inverts its sense. Re-set 2026-11-15 by review chunk C4 because decision 3 shrank the Tier-1 vocabulary (20 entries -> 13 lemmas, dropping therapy/patient/patients/condition/trauma) and C-M-19 changed the counting mechanics, so the old number no longer meant what it did. Measured on the real corpora in this repo: on the client's own three drafts the total Tier-1 hits went 38 -> 20 on the vocabulary change alone and 38 -> 23 with the new mechanics (39% fewer); across the 56 audited competitor pages printed in the shipped briefings, the old floor of 10 admitted 15 of 56 rows (26.8%), and 6 is the value that admits the same 15 under the 0.39 shrink. EDITORIAL and UNCALIBRATED (decision 7): those counts show the number admits roughly what it used to, they are NOT a calibration — no outcome data was used, and the competitor page text is not in this repo, so the after-side for those 56 rows is scaled, not recomputed.",
     "vacuum_min_medical": 6,
     "_magnet_max_position_comment": "The 'ranks well' half of the documented Traffic Magnet definition (README Key Concepts, USER_MANUAL 'Rank well (top 10)'), read against the HANDOFF rank Tool 1 measured. Editorial, uncalibrated as of 2026-11-14; 10 encodes the published 'top 10' wording.",
@@ -36,7 +36,6 @@
     "penalty_thresholds": {
       "tier_1_max": 10,
       "tier_2_penalty_multiplier": 0.5,
-      "pseudo_systems_threshold": 1,
       "_comment": "tier_1_max is the highest Tier-1 COUNT still treated as Tier 1 — the Surface-Level trigger is 'more than this, with no Tier-3 term'. It is kept only as the fallback for a caller that scores a bare string with no known window; the live trigger is tier_1_max_density_per_1000 (C-M-19), because the same absolute count meant different things in a 60-word page and an 800-word one.",
       "_tier_1_max_density_per_1000_source": "editorial, uncalibrated, 2026-11-15",
       "_tier_1_max_density_per_1000_basis": "The old trigger was a count above 10 over a window of up to 500 words, i.e. a density above ~20 per 1000 words under the OLD vocabulary. Under the new vocabulary and mechanics (0.39 fewer Tier-1 hits, measured on the client's own drafts) the equivalent is ~12 per 1000. Re-set 2026-11-15 by review chunk C4 because decision 3 shrank the Tier-1 vocabulary (20 entries -> 13 lemmas, dropping therapy/patient/patients/condition/trauma) and C-M-19 changed the counting mechanics, so the old number no longer meant what it did. Measured on the real corpora in this repo: on the client's own three drafts the total Tier-1 hits went 38 -> 20 on the vocabulary change alone and 38 -> 23 with the new mechanics (39% fewer); across the 56 audited competitor pages printed in the shipped briefings, the old floor of 10 admitted 15 of 56 rows (26.8%), and 6 is the value that admits the same 15 under the 0.39 shrink. EDITORIAL and UNCALIBRATED (decision 7): those counts show the number admits roughly what it used to, they are NOT a calibration — no outcome data was used, and the competitor page text is not in this repo, so the after-side for those 56 rows is scaled, not recomputed.",
@@ -55,8 +54,15 @@
     "position_thresholds": {
       "volume_scaler_min_traffic": 1000,
       "volume_scaler_min_medical": 9,
-      "generalist_min_t2": 10
-    }
+      "generalist_min_t2": 10,
+      "_source": "editorial; traffic/t2 2026-03, volume_scaler_min_medical re-set 2026-11-15 for the shrunken Tier-1 vocabulary (see technical._vacuum_min_medical_comment). Uncalibrated."
+    },
+    "_feasibility_threshold_comment": "C-M-18 / C-C-14: the Domain-Authority head-start a systemic counter-page is assumed to be worth — feasible when client DA + this >= competitor DA. Until 2026-11-15 this key had NO reader and the real threshold was a literal `+ 5` in analysis.py; it is now read there.",
+    "_feasibility_threshold_source": "editorial, uncalibrated, 2026-03 (wired 2026-11-15)",
+    "_high_authority_max_pa_comment": "C-M-18: a domain whose AVERAGE Moz Page Authority across its sampled URLs exceeds this is skipped entirely as too entrenched (FEATURE_GUIDE 2.2). It was a literal 50 inside main.py's loop, so the one threshold that decides whether a competitor is audited at all could not be changed without editing Python.",
+    "_high_authority_max_pa_source": "editorial, uncalibrated, 2026-03 (moved to config 2026-11-15)",
+    "high_authority_max_pa": 50,
+    "_max_audit_pages_per_domain_source": "operational cost choice, 2026-03 — pages scraped per competitor. It is the reason cluster/EEAT/focus are keyhole views; raising it is review decision 8."
   },
   "stop_words": [
     "the",
@@ -264,12 +270,14 @@
   },
   "cluster_thresholds": {
     "hub_in_degree_threshold": 2,
-    "min_pages_for_signal": 3
+    "min_pages_for_signal": 3,
+    "_source": "editorial, uncalibrated, 2026-05 — hub_in_degree_threshold 2 and min_pages_for_signal 3 are bounded by technical.max_audit_pages_per_domain (3): with three pages the only possible hub is one both others link to (C-M-13)."
   },
   "serp_overlap": {
     "top_n": 10,
     "commodity_high_overlap": 3,
-    "framework_caption": "SERP overlap is a strategic framing of shared vs. defensible ground, not a measured commodity index. 'Commodity' here is a local overlap-density proxy (how many tracked rivals share the SERP); upgrade to the serp-discover D4 commodity export when it exists."
+    "framework_caption": "SERP overlap is a strategic framing of shared vs. defensible ground, not a measured commodity index. 'Commodity' here is a local overlap-density proxy (how many tracked rivals share the SERP); upgrade to the serp-discover D4 commodity export when it exists.",
+    "_source": "editorial, uncalibrated, 2026-05 — top_n is the 'in the battle' depth for both sides of the matrix; commodity_high_overlap is how many tracked rivals sharing a SERP reads as commoditised. A local overlap proxy, not a measured index (C-M-11)."
   },
   "positioning": {
     "authority_threshold": 50,
@@ -283,7 +291,8 @@
     "framework_caption": "The barbell is a strategic framing — winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses — not a measured law. Authority = Moz DOMAIN Authority + how many of the handoff's keywords the domain ranks top-10 for, the same formula and the same keyword universe for you and competitors (fixed 2026-11-15: the competitor figure used to be the average PAGE authority of its sampled URLs and the client's top-10 count came from every GSC query it ranked for, so the client was authoritative by construction). Focus is tier-identity concentration (medical vs. systems language) over unweighted term counts, withheld as insufficient_data below positioning.min_focus_tokens. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist.",
     "_min_focus_tokens_comment": "C-M-10: the smallest tier-token total (Tier-1 hits + Tier-2/3 hits across the domain's audited pages) a focus figure may be computed from; below it the domain is `insufficient_data` rather than placed. With technical.max_audit_pages_per_domain at 3, focus was decided by a handful of generic tokens — {medical 3, systems 0} gave focus 100 and `niche_owner`, and one occurrence of 'relationship' moved a domain across the quadrant boundary. 12 is 20 (the review's suggested floor) scaled by the same 0.39 vocabulary shrink as technical.vacuum_min_medical; see that key's basis note.",
     "_min_focus_tokens_source": "editorial, uncalibrated, 2026-11-15",
-    "min_focus_tokens": 12
+    "min_focus_tokens": 12,
+    "_source": "editorial, uncalibrated, 2026-05 — authority_threshold / focus_threshold are the 2x2 boundaries, top10_saturation the count at which the ranking component saturates, min_signal_rankings the floor below which a low-authority domain reads `emerging`. The barbell is a strategic framing, not a measured law (positioning.framework_caption)."
   },
   "sov": {
     "export_path": null,
@@ -327,7 +336,8 @@
     ],
     "growth_window_months": 3,
     "_ambiguous_brand_ratio_comment": "C-M-03: branded demand is measured for the DISPLAY brand ('Lavender Counselling'). When the bare stem's volume ('lavender') is at least this many times the display brand's, the demand cannot be attributed to the practice: the row is labelled estimation_basis=ambiguous_brand, its share and growth are withheld, and it leaves the share denominator. Editorial default, uncalibrated, 2026-11-14.",
-    "ambiguous_brand_ratio": 10
+    "ambiguous_brand_ratio": 10,
+    "_growth_window_months_source": "editorial, uncalibrated, 2026-05 — the window length for period-over-period growth; growth is compared over two equal windows of this many months."
   },
   "reporting": {
     "_comment": "C-C-07: DISPLAY caps for the markdown briefing only — every Excel sheet carries the full frame, and each capped section prints 'Showing the first N of M'. Before this the LIMITs were in the SQL, so the sheet that is meant to be the full export was truncated identically and said nothing. systems_depth_min_t2 is the Tier-2 term count at which a domain's systemic_depth reads 'Systems (Tier 2 only)' rather than 'Trace'; editorial, uncalibrated 2026-11-15, and a COUNT not a density (densities need the per-page word counts that C-M-19 / chunk C4 adds).",
@@ -376,7 +386,13 @@
     ],
     "anchor_spam_min_domains": 1,
     "anchor_spam_high_share": 0.25,
-    "anchor_spam_min_anchor_reach": 5
+    "anchor_spam_min_anchor_reach": 5,
+    "_volatility_min_shift_comment": "C-M-18: the TRIGGER — the smallest change in a competitor's average position between consecutive runs that raises a Volatility Alert. It was the literal 3 in database.get_volatility_alerts while volatility_high_shift (below) sat in config and only set the severity band, so the visible knob did not control whether an alert fired.",
+    "_volatility_min_shift_source": "editorial, uncalibrated, 2026-03 (moved to config 2026-11-15)",
+    "volatility_min_shift": 3,
+    "_volatility_high_shift_source": "editorial, uncalibrated, 2026-05 (severity band only)",
+    "_cliff_drop_pct_source": "editorial, uncalibrated, 2026-05 — the share of its recent peak a domain's visibility must lose to read as a cliff. See _cliff_min_sample_comment for why the signal is usually withheld anyway (C-M-07).",
+    "_cliff_lookback_source": "editorial, uncalibrated, 2026-05 — how many run snapshots the 'recent peak' is taken from, so an old collapse scrolls out of the window instead of re-flagging every run."
   },
   "clinical_pivots": {
     "avoidant attachment": "Emotional Distance / Pursuer-Distancer",
@@ -402,55 +418,16 @@
   },
   "handoff": {
     "supported_versions": [
-      "2.0",
-      "2.1"
+      "1.0",
+      "1.1"
     ],
     "schema_dir": ".",
-    "minimum_version": "2.0",
-    "legacy_fallback_enabled": true
+    "_comment": "C-C-14: `supported_versions` is ENFORCED since 2026-11-15 (main._unsupported_handoff_version) — a handoff whose schema_version is not listed is a hard fail, not a silent audit. The values were 2.0/2.1 while every real handoff and handoff_schema.json carry 1.0 or 1.1, so enforcing the old list would have rejected every file; they are corrected here. An empty list means 'accept any version'. `minimum_version` and `legacy_fallback_enabled` still have no reader and are removed: the ordered fallback (handoff -> market_analysis -> manual_targets) is unconditional in get_latest_market_data, and there is no version ordering to compare against."
   },
   "orchestrator": {
     "enabled": true,
     "streamlit_theme": "light",
-    "step_timeout_seconds": 3600,
-    "log_level": "INFO",
     "show_advanced_options": false
-  },
-  "step_dag": {
-    "step_1_mining": {
-      "name": "Competitor Mining",
-      "depends_on": [],
-      "optional": true
-    },
-    "step_2_audit": {
-      "name": "SERP Audit",
-      "depends_on": [
-        "step_1_mining"
-      ],
-      "optional": false
-    },
-    "step_3_scoring": {
-      "name": "Systematic Scoring",
-      "depends_on": [
-        "step_2_audit"
-      ],
-      "optional": false,
-      "includes": [
-        "step_2_audit"
-      ]
-    },
-    "step_4_gsc": {
-      "name": "GSC Analysis",
-      "depends_on": [],
-      "optional": true
-    },
-    "step_5_strike": {
-      "name": "Strike Mapping",
-      "depends_on": [
-        "step_4_gsc"
-      ],
-      "optional": true
-    }
   },
   "eeat_client_messaging": {
     "caveat": "These scores are heuristic structural signals based on SEO industry conventions, not Google's proprietary EEAT model. Use as competitive analysis framework, not authoritative SEO measurement.",
@@ -460,5 +437,6 @@
       "medium": "0.5-0.8: Moderate signal coverage. Scores are indicative.",
       "low": "0.0-0.5: Limited signals. Scores are exploratory only."
     }
-  }
+  },
+  "_removed_2026_11_15": "C-C-14 / C-M-18: keys deleted on 2026-11-15 because nothing read them and their presence implied the owner could tune something: technical.moderate_feasibility_max_gap, technical.score_normaliser, technical.penalty_thresholds.pseudo_systems_threshold, step_dag, orchestrator.step_timeout_seconds, orchestrator.log_level. handoff.minimum_version, handoff.legacy_fallback_enabled. `step_dag.*` configured src/step_dag.py, which is imported only by its own test and is not on the run path. Editing any of these changed nothing; the live thresholds they appeared to control are technical.feasibility_threshold, technical.high_authority_max_pa, technical.penalty_thresholds.* and risk_signals.volatility_min_shift, each of which now has a reader and a _source note."
 }

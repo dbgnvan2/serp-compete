@@ -110,7 +110,8 @@ def build_overlap_rows(competitor_positions: Dict[str, Dict[str, int]],
                        config: Dict[str, Any], snapshot_date: str,
                        gap_keywords: Optional[Set[str]] = None,
                        best_rival_etv: Optional[Dict[str, float]] = None,
-                       client_positions_available: bool = True) -> List[Dict[str, Any]]:
+                       client_positions_available: bool = True,
+                       excluded_keywords: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
     """Build one classified overlap row per ranked keyword. Deterministic.
 
     competitor_positions: {keyword: {domain: best_position}} (from competitor_metrics).
@@ -129,8 +130,13 @@ def build_overlap_rows(competitor_positions: Dict[str, Dict[str, int]],
     rival_etv = {_norm_kw(k): float(v or 0.0) for k, v in (best_rival_etv or {}).items()}
     config_ref = f"top_n={top_n};commodity_high_overlap={commodity_high_overlap}"
 
+    # C-M-11: a rival's own brand query is not a content gap. "jericho counselling"
+    # landed in `exclusive_competitor` — "rivals rank, you're absent — your clearest
+    # content gaps to fill", the top action queue — so the owner could have spent
+    # content effort on a competitor's brand name.
+    excluded = {_norm_kw(k) for k in (excluded_keywords or set())}
     rows: List[Dict[str, Any]] = []
-    for kw in sorted(set(comp) | set(client)):
+    for kw in sorted((set(comp) | set(client)) - excluded):
         comp_top = {d: p for d, p in comp.get(kw, {}).items() if p <= top_n}
         n_comp = len(comp_top)
         raw_self = client.get(kw)
@@ -198,7 +204,8 @@ def analyze_serp_overlap(competitor_positions: Dict[str, Dict[str, int]],
                          client_keywords: Set[str], client_domain: str,
                          client_da: int, competitor_das: Dict[str, int],
                          config: Dict[str, Any], snapshot_date: str,
-                         best_rival_etv: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                         best_rival_etv: Optional[Dict[str, float]] = None,
+                         excluded_keywords: Optional[Set[str]] = None) -> Dict[str, Any]:
     """Orchestrate C4: the classified matrix + AnalysisEngine gap/feasibility + the
     per-cell volume rollup + action queues. Pure — the caller persists rows via
     db.save_serp_overlap and feasibility via db.save_competitor_feasibility.
@@ -209,7 +216,7 @@ def analyze_serp_overlap(competitor_positions: Dict[str, Dict[str, int]],
     gap_keywords = compute_analysis_gap(client_domain, competitor_keywords, client_keywords)
     rows = build_overlap_rows(competitor_positions, client_positions, config,
                               snapshot_date, gap_keywords, best_rival_etv,
-                              client_positions_available)
+                              client_positions_available, excluded_keywords)
     return {
         "rows": rows,
         "rollup": rollup_by_cell(rows),

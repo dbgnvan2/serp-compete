@@ -198,6 +198,18 @@ def get_latest_market_data(handoff_path: str = None) -> Tuple[List[Dict[str, Any
             with open(handoff_file, 'r') as f:
                 handoff_data = json.load(f)
 
+            # C-C-14: enforce `handoff.supported_versions`. README and USER_MANUAL
+            # tell the owner this key lists "Tool 1 handoff formats accepted" and
+            # nothing read it — so a future Tool 1 bump to 2.0 would have been
+            # neither accepted nor rejected by version, only by the schema's
+            # `additionalProperties: false`. The config also listed 2.0/2.1 while
+            # every real handoff is 1.0 or 1.1; the values are corrected to the real
+            # ones, because enforcing the wrong list would reject every file.
+            version_error = _unsupported_handoff_version(handoff_data)
+            if version_error:
+                print(f"❌ {version_error}")
+                sys.exit(1)
+
             # Validate against schema
             if schema:
                 try:
@@ -250,6 +262,26 @@ def get_latest_market_data(handoff_path: str = None) -> Tuple[List[Dict[str, Any
     # No data sources found
     print(f"⚠️ No data sources found (checked: handoff, legacy, manual).")
     return [], {}, [], "none"
+
+def _unsupported_handoff_version(handoff_data: Dict[str, Any]) -> str | None:
+    """None when the handoff's `schema_version` is accepted, else why not (C-C-14).
+
+    An empty or absent `handoff.supported_versions` means "accept any version", which
+    is the pre-2026-11-15 behaviour — the key is a allowlist, not a requirement to
+    configure one.
+    """
+    config = load_shared_config().get("handoff", {}) or {}
+    supported = [str(v) for v in (config.get("supported_versions") or [])]
+    if not supported:
+        return None
+    version = str(handoff_data.get("schema_version") or "")
+    if version in supported:
+        return None
+    return (f"Handoff schema_version {version or '(absent)'} is not in "
+            f"handoff.supported_versions {supported}. Either Tool 1 changed format or "
+            f"the config is stale — this is a hard fail rather than a silent audit of "
+            f"a file this tool does not understand.")
+
 
 def pre_flight_check():
     """
@@ -529,9 +561,17 @@ def run_audit(handoff_path: str = None):
         # let `avg_pa = 0` silently disable it (P2).
         if moz_metrics_map:
             avg_pa = sum(moz_metrics_map.values()) / len(moz_metrics_map)
-            if avg_pa > 50:
-                print(f"  Skipping high-authority domain (Avg PA {avg_pa:.1f} > 50): {domain}")
-                skipped_domains.append((domain, f"PA filter (avg PA {avg_pa:.1f} > 50)"))
+            # C-M-18: the threshold is config, not a literal. FEATURE_GUIDE §3.1 says
+            # "exact weights/thresholds live in shared_config.json ... editable
+            # without code changes", and this one — which decides whether a
+            # competitor is audited at all — was a `50` in the middle of the loop.
+            high_authority_max_pa = float(
+                (shared_config.get("technical", {}) or {}).get("high_authority_max_pa", 50))
+            if avg_pa > high_authority_max_pa:
+                print(f"  Skipping high-authority domain (Avg PA {avg_pa:.1f} > "
+                      f"{high_authority_max_pa:g}): {domain}")
+                skipped_domains.append(
+                    (domain, f"PA filter (avg PA {avg_pa:.1f} > {high_authority_max_pa:g})"))
                 continue
             # C2/C4: persist this competitor's authority figures. `avg_da` is the
             # average PAGE authority of the sampled URLs (the historic column);

@@ -59,11 +59,21 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
     # C4 / SC-6: SERP Overlap & Differentiation Gap.
     try:
         from src.serp_overlap import analyze_serp_overlap
+        # C-M-11: every tracked rival's own brand token, so its navigational queries
+        # cannot become "your clearest content gaps to fill".
+        from src.audit_universe import contains_brand_token
+        rival_brand_keywords = {
+            kw for kw in db.get_competitor_positions(run_id)
+            for d in domains
+            if contains_brand_token(kw, derive_brand_name(d, brand_suffixes))}
+        if rival_brand_keywords:
+            print(f"   🗺️  SERP overlap: excluding {len(rival_brand_keywords)} "
+                  f"rival-brand keyword(s) from the matrix.")
         overlap = analyze_serp_overlap(
             competitor_positions=db.get_competitor_positions(run_id),
             client_positions=client_positions, competitor_keywords=competitor_keywords,
             client_keywords=set(client_positions.keys()), client_domain=client_domain,
-            client_da=client_da,
+            client_da=client_da, excluded_keywords=rival_brand_keywords,
             # C-C-10: this run's domains only. `competitors` is domain-keyed and
             # overwritten in place, so unscoped it listed every domain ever audited.
             competitor_das=db.get_competitor_das(run_id),

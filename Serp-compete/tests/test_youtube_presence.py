@@ -292,8 +292,11 @@ def _rows_by_domain(result):
 # ---------------------------------------------------------------------------
 
 def test_p1_1_none_found_distinct_from_error():
-    # jericho: search returns nothing → none_found (a real "no channel", has_channel False).
-    # err.com: the client raises a transient error → error (has_channel None, retryable).
+    # jericho: search returns nothing → none_found. err.com: the client raises a
+    # transient error → error. Both carry has_channel None since 2026-11-15 (C-M-16):
+    # "not found by a 3-result name search" is not a measured "no channel" — the
+    # report rendered it as a definitive ✗ — so the two states live in
+    # `check_status` / `estimation_basis`, which say which it was.
     client = FakeClient(by_query={"jerichocounselling": []}, raise_for={"errcorp"})
     result = compute_presence(
         client, competitor_domains=["jerichocounselling.com", "errcorp.com"],
@@ -305,12 +308,16 @@ def test_p1_1_none_found_distinct_from_error():
 
     none_row = rows["jerichocounselling.com"]
     assert none_row["check_status"] == "none_found"
-    assert none_row["has_channel"] is False        # a real negative
+    # C-M-16: NOT False. A therapist whose channel is titled by her own name, with no
+    # domain in the About, is indistinguishable here from a practice with no channel.
+    assert none_row["has_channel"] is None
+    assert none_row["estimation_basis"] == "none_found"
 
     err_row = rows["errcorp.com"]
     assert err_row["check_status"] == "error"
     assert err_row["has_channel"] is None          # unknown — NEVER written as False
     assert err_row["check_status"] != none_row["check_status"]  # the two are distinct
+    assert err_row["estimation_basis"] != none_row["estimation_basis"]
 
 
 # ---------------------------------------------------------------------------

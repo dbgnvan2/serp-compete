@@ -170,7 +170,13 @@ All settings in `shared_config.json`:
   "Systems (Tier 2 only)" rather than "Trace" (default 3; editorial, uncalibrated 2026-11-15)
 - `orchestrator.reports_dir` — Where the briefing and workbook are written (set in the GUI's
   Settings tab; honoured by the writer since 2026-11-15)
-- `handoff.supported_versions` — Tool 1 handoff formats accepted (e.g. `2.0`, `2.1`)
+- `handoff.supported_versions` — Tool 1 handoff formats accepted (`1.0`, `1.1`). **Enforced**
+  since 2026-11-15: an unlisted `schema_version` is a hard fail, not a silent audit
+- `technical.feasibility_threshold` / `high_authority_max_pa` / `risk_signals.volatility_min_shift`
+  — the DA head-start, the "too entrenched to audit" PA line, and the Volatility Alert trigger.
+  All three were literals in Python until 2026-11-15
+- `gsc_settings.date_range_days` / `country` — the GSC window (now read; it was hard-coded at 90)
+  and the market filter, so your positions come from the same country as the SERP snapshot
 - `eeat_weights`, `cluster_thresholds`, `scoring_weights` — tuning for the scoring engines
 
 > **Note:** the handoff source directory and reports directory are **not** stored in

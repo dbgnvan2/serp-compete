@@ -26,6 +26,10 @@ def load_shared_config() -> Dict[str, Any]:
 # here mirror shared_config.json so a missing config degrades to the documented
 # definition rather than to "no filter at all", which is the bug being fixed.
 DEFAULT_VACUUM_MIN_MEDICAL = 6
+# C-M-18: the volatility TRIGGER (shared_config `risk_signals.volatility_min_shift`).
+# It was the literal 3 in the query while a config key the owner could edit
+# (`volatility_high_shift`) only set the severity band.
+DEFAULT_VOLATILITY_MIN_SHIFT = 3
 DEFAULT_MAGNET_MAX_POSITION = 10
 
 
@@ -1306,8 +1310,17 @@ class DatabaseManager:
 
     def get_volatility_alerts(self, run_id: int) -> List[Dict[str, Any]]:
         """
-        Logic: Flag if a competitor's average position moves by > 3 places compared to previous run.
+        Flag a competitor whose average position moved by at least
+        `risk_signals.volatility_min_shift` places since the previous run.
+
+        C-M-18: the threshold was the literal 3, while `risk_signals.
+        volatility_high_shift` (6) sat in config and was read only for the severity
+        band — so the knob the owner could see did not control whether an alert
+        fired. Both now live in config, and the trigger is the one being read here.
         """
+        volatility_min_shift = float((load_shared_config().get("risk_signals", {}) or {})
+                                     .get("volatility_min_shift",
+                                          DEFAULT_VOLATILITY_MIN_SHIFT))
         with self._get_connection() as conn:
             cursor = conn.cursor()
             # Get previous run_id
@@ -1323,8 +1336,8 @@ class DatabaseManager:
                 JOIN competitor_metrics prev ON curr.domain = prev.domain AND curr.keyword = prev.keyword
                 WHERE curr.run_id = ? AND prev.run_id = ?
                 GROUP BY curr.domain
-                HAVING ABS(AVG(curr.position) - AVG(prev.position)) >= 3
-            ''', (run_id, prev_run_id))
+                HAVING ABS(AVG(curr.position) - AVG(prev.position)) >= ?
+            ''', (run_id, prev_run_id, volatility_min_shift))
             
             alerts = []
             for row in cursor.fetchall():

@@ -237,11 +237,19 @@ The system executes in 5 optional steps (configurable via `shared_config.json`):
 
 ---
 
-### **Step 4: GSC Analysis** (Required by the CLI audit; optional in the step DAG)
+### **Step 4: GSC Analysis** (Required by the CLI audit)
 **What:** Analyze your own site's Google Search Console data to find internal opportunities.
 
+The data pull was fixed on 2026-11-15: it is **paginated** (it read a single 5000-row
+page, and GSC returns rows by clicks descending, so the zero-click long tail was
+missing — and `serp_overlap` read every missing query as "you are absent"), it is
+**filtered to `gsc_settings.country`** so your positions come from the same market as
+the DataForSEO SERP snapshot, and the window comes from `gsc_settings.date_range_days`
+instead of being hard-coded at 90 (C-C-17, C-M-11, C-C-14).
+
 > ⚠️ **Important — GSC credentials are mandatory for the command-line audit.**
-> Although `step_dag` marks this step `optional`, the CLI audit (`src/main.py`)
+> The `step_dag` block that used to mark this step `optional` was removed on
+> 2026-11-15 (nothing read it). The CLI audit (`src/main.py`)
 > runs a `pre_flight_check()` that **hard-fails and aborts the entire run** if
 > Google Search Console connectivity cannot be verified (valid
 > `auth.gsc_client_secrets` path plus a working OAuth token). Set up GSC before
@@ -440,23 +448,38 @@ and growth are withheld, and it leaves the share denominator. Editorial, uncalib
 ```
 Non-engineers can edit these to change reframe triggers without touching code.
 
-### **step_dag**
-```json
-"step_dag": {
-  "step_1_mining": {"optional": true, "depends_on": []},
-  "step_2_audit": {"optional": false, "depends_on": ["step_1_mining"]}
-}
-```
-Defines which steps are required, which are optional, and dependencies between them.
+### Keys that were removed on 2026-11-15 (C-C-14)
+`technical.score_normaliser`, `technical.moderate_feasibility_max_gap`,
+`technical.penalty_thresholds.pseudo_systems_threshold`, `step_dag.*`,
+`orchestrator.step_timeout_seconds`, `orchestrator.log_level`,
+`handoff.minimum_version` and `handoff.legacy_fallback_enabled` are **gone**. Nothing
+read any of them, so editing them changed nothing while their presence implied you
+could tune something — `step_dag.*` configured `src/step_dag.py`, which is imported
+only by its own test and is not on the audit path. The removal is recorded in
+`shared_config.json → _removed_2026_11_15`.
+
+The thresholds that *looked* like those keys are real and now have readers:
+`technical.feasibility_threshold` (the DA head-start, previously a literal `+5` in
+`analysis.py`), `technical.high_authority_max_pa` (the PA > 50 skip, previously a
+literal in `main.py`) and `risk_signals.volatility_min_shift` (the Volatility Alert
+trigger, previously a literal `3` in the query).
 
 ### **handoff**
 ```json
 "handoff": {
-  "supported_versions": ["2.0", "2.1"],
-  "minimum_version": "2.0"
+  "supported_versions": ["1.0", "1.1"]
 }
 ```
-Controls compatibility with Tool 1 (Serp-Discover) data formats.
+Controls compatibility with Tool 1 (Serp-Discover) data formats, and **is enforced**
+since 2026-11-15: a handoff whose `schema_version` is not in the list is a hard fail
+with a message naming both, rather than a silent audit of a file this tool may not
+understand. An empty list means "accept any version".
+
+Two corrections came with the enforcement (C-C-14): the values were `2.0` / `2.1` while
+every real handoff and `handoff_schema.json` carry `1.0` or `1.1` — enforcing the old
+list would have rejected every file — and `minimum_version` /
+`legacy_fallback_enabled` were removed, because nothing read them and the ordered
+fallback (handoff → `market_analysis` → `manual_targets`) is unconditional.
 
 ### **eeat_client_messaging**
 ```json
