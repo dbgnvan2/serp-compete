@@ -39,7 +39,15 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
     from src.brand_utils import derive_brand_name, derive_display_brand
 
     today = datetime.datetime.now().strftime("%Y-%m-%d")
-    client_da = shared_config.get("client", {}).get("da", 0)
+    # None, not 0, when `client.da` is absent. A 0 makes
+    # `check_feasibility(0, da)` return "not feasible / Hyper-Local Pivot" for
+    # EVERY competitor, on the strength of an authority figure nobody measured
+    # — the D-C-03 / D-M-08 class on this side. The positioning path two
+    # hundred lines below already reads `.get("da")` without a default, with a
+    # comment saying why (C-M-09); this path kept the 0. Decision 6 makes the
+    # key an explicit OVERRIDE to a live provider lookup, so absence becomes
+    # more likely, not less.
+    client_da = shared_config.get("client", {}).get("da")
     brand_suffixes = shared_config.get("brand", {}).get("name_suffixes")  # None → helper default
     domains = list(competitor_keywords.keys())
     summary: Dict[str, Any] = {}

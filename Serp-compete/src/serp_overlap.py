@@ -184,16 +184,26 @@ def compute_analysis_gap(client_domain: str,
     return engine.find_keyword_intersection(comp_norm, client_norm)
 
 
-def feasibility_by_competitor(client_domain: str, client_da: int,
+def feasibility_by_competitor(client_domain: str, client_da: Optional[int],
                               competitor_das: Dict[str, int]) -> Dict[str, Dict[str, Any]]:
     """Wire AnalysisEngine.check_feasibility per competitor (client_da vs each
-    competitor_da). Degrades to {} when a competitor's DA is unknown."""
+    competitor_da).
+
+    Degrades to `{}` when a competitor's DA is unknown — and now also when the
+    CLIENT's is. `int(client_da or 0)` made a missing `client.da` into DA 0, so
+    `check_feasibility` returned "not feasible / Hyper-Local Pivot" for every
+    competitor whose DA exceeded 5, from an authority figure nobody had
+    measured. A verdict on every rival out of one absent config key is the
+    D-C-03 / D-M-08 class, and the honest output is no verdict at all.
+    """
+    if client_da is None:
+        return {}
     engine = AnalysisEngine(client_domain)
     out: Dict[str, Dict[str, Any]] = {}
     for domain, da in (competitor_das or {}).items():
         if da is None:
             continue
-        out[domain] = {**engine.check_feasibility(int(client_da or 0), int(da)),
+        out[domain] = {**engine.check_feasibility(int(client_da), int(da)),
                        "competitor_da": int(da)}
     return out
 

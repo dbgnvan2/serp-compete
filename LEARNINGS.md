@@ -87,6 +87,29 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**A missing `client.da` returned "not feasible — Hyper-Local Pivot" for every competitor, from an authority figure nobody had measured.**
+- **Root cause (H2, the same sweep):** `comparison_features` read
+  `shared_config.get("client", {}).get("da", 0)`, and `feasibility_by_competitor` then did
+  `int(client_da or 0)`. So an absent key made the client DA 0 and
+  `check_feasibility(0, competitor_da)` returned False for every rival above the threshold — a
+  verdict on the whole competitive set out of one missing config value, which is the
+  D-C-03 / D-M-08 class on this side. `save_competitor_feasibility` recorded that 0 against
+  every row too, so a later reader could not tell an unmeasured client from one with no
+  authority.
+- **The same file already did it right, 200 lines down.** The positioning path reads
+  `.get("da")` with no default, under a comment saying why: `compute_authority` excludes a
+  missing DA and renormalises rather than counting it as zero (C-M-09). One module, two
+  readings of one key, and only one of them was fixed when the class was swept.
+- **And it matters more going forward, not less.** Decision 6 makes `config.client_da` an
+  explicit OVERRIDE to a live provider lookup, so absence becomes the normal case.
+- **Fix:** None is preserved, `feasibility_by_competitor` withholds every verdict when the
+  client's DA is unknown, the DB column takes NULL, and the report states the absence and its
+  likely cause instead of simply omitting the section. A real DA of 0 still produces verdicts —
+  that is a measurement.
+- **Rule:** when a value has two readers in the same module, fixing one is a coin flip. Grep the
+  KEY, not the function — `client.da` appears twice in `comparison_features.py` and the second
+  occurrence carries a comment explaining the fix that the first one never got.
+
 **`get_search_volume` was careful at every level except the one its own comment did not cover, and the consumer re-coerced what I had just fixed.**
 - **Root cause (H2, two layers):** `DataForSEOClient.get_search_volume` returns None on a
   transport failure, None on an unparseable body, and None on an empty result — the last with

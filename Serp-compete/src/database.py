@@ -3,7 +3,7 @@ import datetime
 import logging
 import json
 import os
-from typing import List, Tuple, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 # Paths relative to serp-compete/src/
 SHARED_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "shared_config.json"))
@@ -805,10 +805,16 @@ class DatabaseManager:
             ])
             conn.commit()
 
-    def save_competitor_feasibility(self, run_id: int, client_da: int,
+    def save_competitor_feasibility(self, run_id: int, client_da: Optional[int],
                                     feasibility: Dict[str, Dict[str, Any]]):
         """C4/SC-6: persist per-competitor feasibility (check_feasibility output), the
-        second half of the AnalysisEngine wiring — surfaced, not discarded."""
+        second half of the AnalysisEngine wiring — surfaced, not discarded.
+
+        `client_da` is written as NULL when it was not measured. `int(client_da
+        or 0)` recorded DA 0 against every row, so a later reader of the table
+        could not tell an unmeasured client from one with no authority at all —
+        and the rows would carry a verdict computed from that 0.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.executemany('''
@@ -816,7 +822,9 @@ class DatabaseManager:
                     (run_id, domain, client_da, competitor_da, feasible, suggestion)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', [
-                (run_id, domain, int(client_da or 0), v.get("competitor_da"),
+                (run_id, domain,
+                 None if client_da is None else int(client_da),
+                 v.get("competitor_da"),
                  int(bool(v.get("feasible"))), v.get("suggestion"))
                 for domain, v in (feasibility or {}).items()
             ])

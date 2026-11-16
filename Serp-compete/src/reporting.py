@@ -834,6 +834,20 @@ class ReportGenerator:
                 ORDER BY feasible DESC, domain
             ''', conn, params=(run_id,))
 
+            if df_feasibility.empty and not df_overlap.empty:
+                # Silence here used to be indistinguishable from "no competitor
+                # was scorable". The commonest cause is an unmeasured client DA:
+                # `feasibility_by_competitor` now withholds every verdict rather
+                # than computing them all from a default of 0.
+                report.append("\n### 🎯 Competitor Feasibility (your DA vs. each competitor)")
+                report.append(
+                    "_Not computed this run. Feasibility needs **your** Domain Authority "
+                    "and each competitor's; if `client.da` is absent from "
+                    "`shared_config.json` (decision 6 makes it an override to a live "
+                    "provider lookup) every verdict is withheld rather than computed "
+                    "from a default of 0, which would have read \"not feasible — "
+                    "Hyper-Local Pivot\" for every rival. This is not a finding that "
+                    "no competitor is beatable._")
             if not df_feasibility.empty:
                 report.append("\n### 🎯 Competitor Feasibility (your DA vs. each competitor)")
                 report.append("Whether a systemic counter-page can realistically compete, from "

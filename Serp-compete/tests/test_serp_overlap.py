@@ -264,3 +264,55 @@ def test_finding3_save_competitor_feasibility_roundtrip(tmp_path):
             "SELECT domain, feasible FROM competitor_feasibility WHERE run_id=?",
             (run_id,)).fetchall())
     assert rows == {"weak.com": 1, "strong.com": 0}
+
+
+# ── 2026-11-16: an unmeasured client DA must not become a verdict ────────────
+
+def test_an_unknown_client_da_withholds_every_feasibility_verdict():
+    """`int(client_da or 0)` made a missing `client.da` into DA 0, so
+    `check_feasibility(0, da)` returned "not feasible / Hyper-Local Pivot" for
+    every competitor whose DA exceeded the threshold — a verdict on every rival
+    out of one absent config key (the D-C-03 / D-M-08 class on this side)."""
+    from src.serp_overlap import feasibility_by_competitor
+
+    assert feasibility_by_competitor(
+        "livingsystems.ca", None, {"rival.ca": 40, "other.ca": 20}) == {}
+
+
+def test_a_known_client_da_still_produces_verdicts():
+    from src.serp_overlap import feasibility_by_competitor
+
+    out = feasibility_by_competitor(
+        "livingsystems.ca", 35, {"beatable.ca": 38, "entrenched.ca": 70})
+    assert out["beatable.ca"]["feasible"] is True
+    assert out["entrenched.ca"]["feasible"] is False
+    assert out["beatable.ca"]["competitor_da"] == 38
+
+
+def test_a_client_da_of_zero_is_a_measurement_not_an_absence():
+    """A real DA of 0 is data: the verdicts must still be computed."""
+    from src.serp_overlap import feasibility_by_competitor
+
+    out = feasibility_by_competitor("livingsystems.ca", 0, {"rival.ca": 40})
+    assert out["rival.ca"]["feasible"] is False
+    assert out["rival.ca"]["competitor_da"] == 40
+
+
+def test_an_unmeasured_client_da_is_stored_as_null():
+    """So a later reader cannot mistake it for a client with no authority."""
+    import os
+    import tempfile
+
+    from src.database import DatabaseManager
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = DatabaseManager(os.path.join(tmp, "t.db"))
+        run_id = db.create_run("livingsystems.ca")
+        db.save_competitor_feasibility(run_id, None, {
+            "rival.ca": {"competitor_da": 40, "feasible": False,
+                         "suggestion": "Hyper-Local Pivot"}})
+        with db._get_connection() as conn:
+            stored = conn.execute(
+                "SELECT client_da FROM competitor_feasibility WHERE run_id=?",
+                (run_id,)).fetchone()
+    assert stored[0] is None
