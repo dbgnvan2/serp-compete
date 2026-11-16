@@ -87,6 +87,37 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The SERP-overlap top-10 test is asymmetric, so a keyword nobody wins is reported as "your clearest content gap". Four consumers of H1 in total, each distorted differently.**
+- **Root cause (H1, consumed a fourth time):** `build_overlap_rows` filters competitor
+  positions on `p <= top_n` and the client's on `raw_self <= top_n`. The competitor side comes
+  from the handoff, whose ranks restart at 1 on every SERP page; the client side comes from
+  Search Console and is **absolute**. So a rival counts as top-10 at any true position while the
+  client counts only if it genuinely is.
+  Worked through on the real function: rivals at true positions 14, 22 and 27 (handoff ranks 4,
+  2, 7) with the client at a true GSC position of 12 classifies as `exclusive_competitor` —
+  "rivals rank, you're absent — your clearest content gaps to fill", the section's own
+  description of the top action queue — for a keyword where **nobody** is in the top 10 and the
+  client is the closest of the four.
+  `exclusive_competitor` and `shared_commodity` are therefore overstated and `exclusive_self`
+  understated. And the competitor column mixes scales within itself: handoff rows are
+  page-relative, enrichment rows carry DataForSEO's absolute `rank_group` (C-C-17).
+- **The fourth consumer, and what it means for decision 5:** `get_visibility_series` counts
+  `position <= 10` per run, so `ranked` equals `attempted` and the visibility rate is a constant
+  1.0 for every domain in every run. The cliff detector would find no step change **even with a
+  large sample** — its input is degenerate, not merely thin. Decision 5 (keep the cliff, or
+  remove it until a real data source exists) was taken on the sample size; this is a second and
+  stronger reason, and the owner should know it before the decision is revisited.
+- **Why C-M-11 did not catch it:** C-M-11 was explicitly about unlike position scales, and it
+  fixed two of the three — the market (GSC `country=can` against a Canada-scoped SERP snapshot)
+  and the SERP-feature model (`rank_group` over `rank_absolute`). The pagination mismatch is the
+  third, it is upstream, and it was not on the list.
+- **Rule:** when two sides of a comparison come from different providers, enumerate every way
+  the two scales can differ, and check them off one at a time. Market, element model,
+  pagination, freshness — fixing two of four leaves a comparison that still is not one, and the
+  fixed ones make it look audited. Four consumers, four different distortions: a vacuous
+  criterion, a saturated component, an asymmetric filter, a degenerate series. None of them
+  looks like the others, and finding one is not finding them.
+
 **The barbell's authority axis is inflated by 21-27 points, which moves domains across the quadrant boundary — the same root cause, in the section that gives a verdict rather than a list.**
 - **Root cause (H1, consumed again):** `get_positioning_inputs` counts top-10 rankings as
   `MIN(position) <= 10` over the handoff keywords. That `position` IS the handoff rank, which

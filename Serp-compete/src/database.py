@@ -1053,6 +1053,16 @@ class DatabaseManager:
         too small to support a step-change test at all.
 
         [] when the table or the data is absent — never a fabricated series.
+
+        `position <= 10` has the same defect as every other rank comparison on
+        this side: a handoff-sourced position restarts at 1 on every SERP page
+        (H1 / D-C-01), so `ranked` equals `attempted` and the rate is a
+        constant 1.0 for every domain in every run. The cliff detector would
+        therefore find no step change even with a large sample — it is not
+        merely under-sampled, its input is degenerate until serp-discover's D1
+        lands. This bears on owner decision 5 (keep the signal, or remove it
+        until a real data source exists): the decision was taken on the sample
+        size, and this is a second and stronger reason.
         """
         try:
             with self._get_connection() as conn:

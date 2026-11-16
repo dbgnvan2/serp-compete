@@ -748,6 +748,44 @@ class ReportGenerator:
                               "`exclusive_self` / `exclusive_competitor` / `absent`. "
                               "_'Commodity' is a local overlap-density proxy — a strategic "
                               "framing, not a measured index._")
+                # The top-N test is ASYMMETRIC while the handoff's ranks are
+                # page-relative, and this section's `exclusive_competitor` cell
+                # is described as the top action queue — so the distortion has
+                # to be stated here.
+                #
+                # `comp_top` filters competitor positions on `p <= top_n`,
+                # where a handoff-sourced position restarts at 1 on every SERP
+                # page; `self_present` filters the client's GSC position, which
+                # is absolute. Competitors therefore pass the top-10 test at
+                # any true position while the client passes only if genuinely
+                # in the top 10. Worked through: rivals at true positions 14,
+                # 22 and 27 with a client at 12 classifies as
+                # `exclusive_competitor` — "rivals rank, you're absent" — for a
+                # keyword where NOBODY is in the top 10 and the client is the
+                # closest of the four.
+                #
+                # Worse, the competitor column is itself a MIX: handoff rows
+                # carry the page-relative rank, enrichment rows carry
+                # DataForSEO's absolute `rank_group` (C-C-17). C-M-11 fixed the
+                # market mismatch (GSC country=can) and the SERP-feature
+                # mismatch (rank_group over rank_absolute); the pagination
+                # mismatch is this one, and it is upstream.
+                if (run_coverage or {}).get("rank_is_absolute") is False:
+                    report.append(
+                        "\n> ⚠️ **The top-10 test is asymmetric, so the cells are "
+                        "skewed against you.** Competitor positions come from the "
+                        "handoff, whose ranks restart at 1 on every SERP page (H1 / "
+                        "D-C-01, open on the serp-discover side); your own position "
+                        "comes from Search Console and is absolute. A rival therefore "
+                        "counts as \"in the top 10\" at any true position, while you "
+                        "count only if you genuinely are. Rivals at true positions 14, "
+                        "22 and 27 with you at 12 is reported as "
+                        "`exclusive_competitor` — \"your clearest content gaps\" — for "
+                        "a keyword where nobody is in the top 10 and you are the "
+                        "closest. `exclusive_competitor` and `shared_commodity` are "
+                        "therefore overstated and `exclusive_self` understated. The "
+                        "competitor column also mixes scales: handoff keywords are "
+                        "page-relative, enrichment keywords are absolute.")
                 # If the client's GSC positions were unavailable this run, self-presence
                 # is UNKNOWN — say so loudly rather than imply "you're absent".
                 if 'self_unknown' in set(df_overlap['cell']):

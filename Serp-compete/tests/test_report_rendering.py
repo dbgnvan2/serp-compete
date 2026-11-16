@@ -486,3 +486,38 @@ class TestTheBarbellSaysItsAuthorityIsOverstated(unittest.TestCase):
         self.assertIn("upper bounds", content)
         # It must say what top10_count really counts.
         self.assertIn('"handoff keywords", not "top-10 rankings"', content)
+
+
+class TestTheOverlapCellsSayTheyAreSkewed(unittest.TestCase):
+    """The asymmetry: competitor positions page-relative, the client's absolute.
+
+    `build_overlap_rows` filters competitor positions on `p <= top_n`, where a
+    handoff-sourced position restarts at 1 on every SERP page, and filters the
+    client's GSC position, which is absolute. Competitors pass the top-10 test
+    at any true position; the client passes only if genuinely in the top 10.
+    """
+
+    def test_a_keyword_nobody_wins_is_reported_as_a_content_gap(self):
+        """The demonstration the warning cites, so the claim is checkable."""
+        from src.serp_overlap import build_overlap_rows
+
+        config = {"top_n": 10, "commodity_high_overlap": 3}
+        # Rivals at TRUE positions 14, 22 and 27 — handoff ranks 4, 2 and 7
+        # after the per-page reset. The client is at a true GSC position of 12,
+        # i.e. the CLOSEST of the four to the top 10.
+        rows = build_overlap_rows(
+            {"couples counselling": {"a.ca": 4, "b.ca": 2, "c.ca": 7}},
+            {"couples counselling": 12},
+            config, "2026-11-16", client_positions_available=True)
+        row = rows[0]
+        self.assertEqual(row["cell"], "exclusive_competitor")
+        self.assertEqual(row["overlap_count"], 3)
+        self.assertEqual(row["self_position"], 12)
+
+    def test_the_section_carries_the_qualification(self):
+        content = TestNothingScoredStillSaysSo._briefing("deep")
+        self.assertIn("SERP Overlap", content)
+        self.assertIn("top-10 test is asymmetric", content)
+        self.assertIn("exclusive_self", content)
+        # It must name the mixed-scale problem in the competitor column too.
+        self.assertIn("mixes scales", content)
