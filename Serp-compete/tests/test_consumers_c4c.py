@@ -292,3 +292,105 @@ def test_cm16_the_report_says_what_none_found_means(tmp_path, monkeypatch):
     content = rg.generate_summary("livingsystems.ca", run_id=run_id)
     assert "none matched by a name search of the top 3 results" in content
     assert "not a measured 'no channel'" in content
+
+
+# ── 2026-11-16: the paths the owner meets on a FIRST live GSC run ────────────
+
+def test_the_pagination_cap_warns_that_there_may_be_more(capsys):
+    """`GSC_MAX_PAGES` stops the loop. If it stops silently, a truncated window
+    reads as the whole property — the same defect C-C-17 fixed for one page,
+    one order of magnitude up."""
+    from src.gsc_performance import GSCManager
+
+    full = [_row(f"kw{i}") for i in range(GSCManager.GSC_PAGE_SIZE)]
+    service = _FakeGscService([full] * (GSCManager.GSC_MAX_PAGES + 2))
+    rows = _gsc_manager(service).fetch_performance_data()
+
+    assert len(service.requests) == GSCManager.GSC_MAX_PAGES
+    assert len(rows) == GSCManager.GSC_PAGE_SIZE * GSCManager.GSC_MAX_PAGES
+    assert "there may be more" in capsys.readouterr().out
+
+
+def test_a_failure_on_the_very_first_page_returns_nothing_and_says_so(capsys):
+    """Zero rows read. The caller must not get a silent empty window."""
+    class _FailsImmediately(_FakeGscService):
+        def query(self, siteUrl=None, body=None):
+            self.requests.append(body)
+            raise RuntimeError("GSC 503")
+
+    rows = _gsc_manager(_FailsImmediately([])).fetch_performance_data()
+    out = capsys.readouterr().out
+    assert rows == []
+    assert "GSC Data Fetch Error" in out
+    # No "rows read before the error" claim when none were.
+    assert "UNREAD, not empty" not in out
+
+
+def test_list_sites_survives_an_api_failure(capsys):
+    class _NoSites:
+        def sites(self):
+            raise RuntimeError("permission denied")
+
+    manager = _gsc_manager(_FakeGscService([]))
+    manager.service = _NoSites()
+    assert manager.list_sites() == []
+    assert "GSC List Sites Error" in capsys.readouterr().out
+
+
+class _SitesService(_FakeGscService):
+    """A service with a sites() listing as well as searchanalytics()."""
+
+    def __init__(self, site_entries, pages=None):
+        super().__init__(pages or [[]])
+        self.site_entries = site_entries
+
+    def sites(self):
+        return SimpleNamespace(
+            list=lambda: SimpleNamespace(
+                execute=lambda: {"siteEntry": self.site_entries}))
+
+
+def test_test_connection_names_the_www_variant_when_the_property_differs():
+    """The owner's most likely first-run mistake, and the one the error message
+    has to diagnose: GSC holds `https://www.x/` and the config says
+    `https://x/`, or the reverse."""
+    manager = _gsc_manager(_SitesService(
+        [{"siteUrl": "https://www.livingsystems.ca/", "permissionLevel": "siteOwner"}]))
+    ok, message = manager.test_connection()
+    assert ok is False
+    assert "URL Mismatch" in message
+    assert "https://www.livingsystems.ca/" in message
+
+
+def test_test_connection_lists_the_available_sites_when_there_is_no_match():
+    manager = _gsc_manager(_SitesService(
+        [{"siteUrl": "https://someone-else.ca/", "permissionLevel": "siteOwner"}]))
+    ok, message = manager.test_connection()
+    assert ok is False
+    assert "someone-else.ca" in message
+
+
+def test_test_connection_reports_insufficient_permissions_distinctly():
+    """"Unverified" is not "not found", and the fix is different."""
+    for level in ("siteUnverifiedUser", "siteRestrictedUser"):
+        manager = _gsc_manager(_SitesService(
+            [{"siteUrl": "https://livingsystems.ca/", "permissionLevel": level}]))
+        ok, message = manager.test_connection()
+        assert ok is False
+        assert "Insufficient permissions" in message
+        assert level in message
+
+
+def test_test_connection_succeeds_on_a_verified_property():
+    manager = _gsc_manager(_SitesService(
+        [{"siteUrl": "https://livingsystems.ca/", "permissionLevel": "siteOwner"}]))
+    ok, message = manager.test_connection()
+    assert ok is True
+    assert "Successfully connected" in message
+
+
+def test_test_connection_reports_an_empty_account():
+    manager = _gsc_manager(_SitesService([]))
+    ok, message = manager.test_connection()
+    assert ok is False
+    assert "No GSC properties" in message
