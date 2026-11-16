@@ -55,7 +55,7 @@ demand was measured for the bare stem "livingsystems" (C-C-13).
 | `targets[].domain` | `domain`, then the canonical group key | see §1.3 |
 | `targets[].primary_keyword_for_url` | `primary_keyword` | the audit universe's keyword |
 | `targets[].source_keyword` | `source_keyword` | |
-| `targets[].rank` | `position` | **page-relative today**, see §1.4 |
+| `targets[].rank` | `position` | absolute from schema v2.0; page-relative in v1.0/v1.1, see §1.4 |
 | `targets[].entity_type` / `content_type` / `title` | same names | |
 | `client_brand_names` | threaded to `run_comparison_features` | falls back to `client.name` on the legacy path |
 | `client_domain` | the own-site checks | |
@@ -111,26 +111,41 @@ What went wrong before 2026-11-16, and what each failure cost:
 
 ### 1.4 Rank semantics
 
-> **This is review finding H1 / D-C-01, and it is OPEN on the serp-discover side.**
+> **Review finding H1 / D-C-01 — FIXED on the serp-discover side 2026-11-16
+> (its chunk D1). Files produced before that date are still affected.**
 
-`serp-discover` stores SerpAPI's `position` verbatim as `Rank`, and
-`_merge_google_pages` concatenates paginated pages **without an offset**. In its
-3-page Balanced mode the ranks therefore run `1..9, 1..10, 1..10`: three targets
-each claim rank 1, and a "rank 2" may be the second result of page 3. The handoff
-inherits this, so **`targets[].rank` is page-relative in schema v1.0 and v1.1.**
+SerpAPI restarts `position` at 1 on every paginated page. Up to schema v1.1
+`serp-discover` stored that value verbatim as `Rank` and `_merge_google_pages`
+concatenated the pages **without an offset**, so in its 3-page Balanced mode the
+ranks ran `1..9, 1..10, 1..10`: three targets each claimed rank 1, and a "rank 2"
+might be the second result of page 3. The handoff inherited it, so
+**`targets[].rank` is page-relative in schema v1.0 and v1.1.**
+
+Chunk D1 renumbers the merged pages to the absolute SERP position and bumps the
+handoff to **v2.0** (**v2.1** when the optional `moz` block is present). The
+document's shape did not change — only the meaning of `rank` — which is exactly
+why the version moved: it is the only way Tool 2 can tell the two conventions
+apart in a file that otherwise looks identical.
 
 Tool 2 cannot fix the producer. Its obligation is to know which convention it is
 reading and to say so:
 
 - `handoff.absolute_rank_versions` in `shared_config.json` lists the versions whose
-  `rank` counts results across the whole SERP. It is **empty** as of 2026-11-16,
-  because serp-discover's chunk D1 has not shipped.
+  `rank` counts results across the whole SERP. It holds **`2.0` and `2.1`** as of
+  2026-11-16.
 - While the ingested version is not in that list, the briefing's coverage block
   carries a warning naming the version and telling the reader to read the `rank`
-  column as "where on its SERP page", not as a market position.
-- When D1 lands, serp-discover bumps `schema_version`; adding that version to
-  `absolute_rank_versions` and to `supported_versions` retires the warning with no
-  code change.
+  column as "where on its SERP page", not as a market position. v1.0/v1.1 files
+  already on disk still get that warning, correctly.
+- `supported_versions` keeps 1.0 and 1.1 alongside 2.0/2.1, so an older handoff
+  still validates rather than hard-failing; it is read with the warning attached.
+
+Consequence for the scoring sections: `rank ≤ technical.magnet_max_position` is a
+real top-10 test on a v2.x handoff. On the v1.x reference distribution it admitted
+29 of 29 results, so it had no filtering effect at all; what it admits on absolute
+ranks has **not been measured** — no v2.x handoff exists on disk yet. The same
+applies to the barbell authority axis and the SERP-overlap comparison, which take
+a genuine top-10 position as an input (see `docs/session_notes_2026-11-16.md` §1.4).
 
 This value is **not editorial**: it records what the producer actually emits. Do
 not set it to make a warning go away.
@@ -286,7 +301,7 @@ across both tools, and stating it in serp-discover's report too, is still open**
 | Item | Owner / where |
 |---|---|
 | Decision 4 — which side canonicalises domains | owner; Tool 2 is defensive either way (§1.3) |
-| H1 / D-C-01 — absolute ranks | serp-discover chunk D1; Tool 2 warns until then (§1.4) |
+| H1 / D-C-01 — absolute ranks | fixed by serp-discover chunk D1, 2026-11-16 (handoff v2.0/2.1); Tool 2 still warns on a v1.x file (§1.4) |
 | C-C-04 — one Moz client shape, live endpoint | needs a live Moz key (§3.1) |
 | D-C-05 / D-C-11 — engines with zero answers | serp-discover chunk D3; Tool 2 excludes them (§2) |
 | D-C-10 — cached Moz errors | serp-discover chunk D2; Tool 2 dates them (§3.2) |

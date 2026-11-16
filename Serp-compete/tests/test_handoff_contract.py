@@ -176,10 +176,16 @@ class TestSchemaVersionIsEnforced(unittest.TestCase):
     def test_a_listed_version_is_accepted(self):
         self.assertIsNone(_unsupported_handoff_version(_handoff(schema_version="1.1")))
 
+    def test_a_listed_2x_version_is_accepted(self):
+        """serp-discover's chunk D1 bumped the producer to 2.0/2.1 (absolute
+        ranks); refusing them would hard-fail every new handoff."""
+        self.assertIsNone(_unsupported_handoff_version(_handoff(schema_version="2.0")))
+        self.assertIsNone(_unsupported_handoff_version(_handoff(schema_version="2.1")))
+
     def test_an_unlisted_version_is_refused_with_a_reason(self):
-        error = _unsupported_handoff_version(_handoff(schema_version="2.0"))
+        error = _unsupported_handoff_version(_handoff(schema_version="9.9"))
         self.assertIsNotNone(error)
-        self.assertIn("2.0", error)
+        self.assertIn("9.9", error)
         self.assertIn("supported_versions", error)
 
     def test_an_absent_version_is_refused(self):
@@ -206,11 +212,69 @@ class TestSchemaVersionIsEnforced(unittest.TestCase):
                           f"schema_version description does not mention it")
 
 
-class TestRankSemantics(unittest.TestCase):
-    """`targets[].rank` is page-relative until serp-discover's D1 lands (H1).
+class TestAbsoluteRankVersionsTracksTheProducer(unittest.TestCase):
+    """`absolute_rank_versions` records what serp-discover actually emits.
 
-    The tool cannot fix the producer, so the contract is: know which version
-    you are reading, and say so in the report.
+    It is not editorial. Its purpose is to retire the rank-column warning
+    exactly when the ranks became trustworthy, so it has to stay in step with
+    the producer's `schema_version` — and every version in it has to be one
+    this tool will accept at all.
+    """
+
+    def _handoff_config(self):
+        import os
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        with open(os.path.join(root, "shared_config.json")) as f:
+            return json.load(f)["handoff"]
+
+    def test_the_2x_versions_are_listed_as_absolute(self):
+        """serp-discover chunk D1 (2026-11-16) emits 2.0, or 2.1 with the moz
+        block; both carry absolute ranks."""
+        cfg = self._handoff_config()
+        absolute = {str(v) for v in cfg.get("absolute_rank_versions") or []}
+        self.assertIn("2.0", absolute)
+        self.assertIn("2.1", absolute)
+
+    def test_the_1x_versions_are_not_listed_as_absolute(self):
+        """v1.x ranks were SerpAPI's per-page position; files are still on
+        disk and must keep the warning."""
+        absolute = {str(v) for v in
+                    self._handoff_config().get("absolute_rank_versions") or []}
+        self.assertNotIn("1.0", absolute)
+        self.assertNotIn("1.1", absolute)
+
+    def test_every_absolute_version_is_also_supported(self):
+        """A version flagged absolute but not supported is unreachable: the
+        run hard-fails before the warning is ever evaluated."""
+        cfg = self._handoff_config()
+        absolute = {str(v) for v in cfg.get("absolute_rank_versions") or []}
+        supported = {str(v) for v in cfg.get("supported_versions") or []}
+        self.assertTrue(
+            absolute <= supported,
+            f"absolute_rank_versions not in supported_versions: "
+            f"{sorted(absolute - supported)}")
+
+    def test_the_warning_retires_on_the_configured_versions(self):
+        """End to end: a 2.0 handoff read with the repo's own config reports
+        absolute ranks, a 1.1 one does not."""
+        from src.handoff_moz import handoff_rank_is_absolute, remember_handoff_version
+        absolute = [str(v) for v in
+                    self._handoff_config().get("absolute_rank_versions") or []]
+        try:
+            remember_handoff_version(_handoff(schema_version="2.0"))
+            self.assertTrue(handoff_rank_is_absolute(absolute_versions=absolute))
+            remember_handoff_version(_handoff(schema_version="1.1"))
+            self.assertFalse(handoff_rank_is_absolute(absolute_versions=absolute))
+        finally:
+            remember_handoff_version({})
+
+
+class TestRankSemantics(unittest.TestCase):
+    """`targets[].rank` is absolute from v2.0, page-relative in v1.0/v1.1 (H1).
+
+    serp-discover's chunk D1 fixed the producer on 2026-11-16, but v1.x files
+    are still on disk, so the contract is unchanged: know which version you
+    are reading, and say so in the report.
     """
 
     def tearDown(self):

@@ -327,7 +327,7 @@ parts of the magnet definition, richest estimated traffic first:
 |---|---|
 | **Ranks well** | the handoff `rank` Serp-Discover measured is ≤ `technical.magnet_max_position` (10) |
 | **Uses medical language** | `medical_score` ≥ `technical.vacuum_min_medical` (6) |
-| ⚠️ **"Ranks well" is not enforced** | `rank ≤ technical.magnet_max_position` is compared against the handoff's rank, which restarts at 1 on every SERP page (H1 / D-C-01, open on the Serp-Discover side). On the reference run's distribution it admits 29 of 29 results, so the magnet, vacuum and reframe lists are filtered by the medical floor and the relevance test ALONE. `handoff.absolute_rank_versions` retires the warning when D1 ships |
+| ⚠️ **"Ranks well" bites only on a 2.x handoff** | `rank ≤ technical.magnet_max_position` is compared against the handoff's rank. On `schema_version` 1.0/1.1 that rank restarted at 1 on every SERP page (H1 / D-C-01), and on the reference run's distribution the filter admitted 29 of 29 results — the magnet, vacuum and reframe lists were filtered by the medical floor and the relevance test ALONE. Serp-Discover's chunk D1 shipped 2026-11-16 and bumped the handoff to 2.0/2.1 with absolute ranks, which are now listed in `handoff.absolute_rank_versions`, so the warning retires itself on those files and the filter is a real top-10 test. **The 29-of-29 figure was measured on page-relative data and does not describe a 2.x run**; how many results the filter admits on absolute ranks has not been measured yet — no 2.x handoff exists on disk. Older 1.x files still on disk keep the warning |
 | **On a keyword that matters** | the keyword is in the handoff set or carries a clinical term, and is not the competitor's own brand token |
 
 The section header states how many of the audited pages qualified ("Showing 3 of 97"),
@@ -755,14 +755,14 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
   is therefore never treated as a magnet, vacuum or reframe target.
 - **The handoff `rank` is whatever Serp-Discover wrote, and today it is
   page-relative.** Serp-Compete does not re-measure it. Tool 1 stores SerpAPI's
-  per-page `position` verbatim and merges paginated pages without an offset, so in
-  its 3-page mode the ranks run `1..9, 1..10, 1..10`: several targets each claim
-  rank 1, and a "rank 2" may be the second result of page 3 (review finding H1 /
-  D-C-01, still open on the Serp-Discover side). Since 2026-11-16 the briefing's
-  coverage block **says so**, naming the schema version it read. The warning is
-  driven by `handoff.absolute_rank_versions`, so it retires itself once a handoff
-  arrives on a version whose ranks are absolute — see `docs/handoff_contract.md`
-  §1.4.
+  per-page `position` verbatim and merged paginated pages without an offset, so in
+  its 3-page mode the ranks ran `1..9, 1..10, 1..10`: several targets each claimed
+  rank 1, and a "rank 2" might be the second result of page 3 (review finding H1 /
+  D-C-01). Its chunk D1 fixed that on 2026-11-16 and bumped the handoff to
+  `schema_version` 2.0 (2.1 with the moz block), both now listed in
+  `handoff.absolute_rank_versions`, so the warning retires itself on a 2.x file and
+  still fires on the 1.x files already on disk. The briefing's coverage block names
+  the schema version it read either way — see `docs/handoff_contract.md` §1.4.
 - **A missing number is NULL, not zero, all the way down** (fixed 2026-11-15). An
   unmeasured Moz Page Authority, a brand whose search volume the provider would not
   return, a page whose scrape errored, a drift whose two sides were not both measured:
@@ -926,7 +926,7 @@ never been checked against an outcome.
 | `risk_signals.cliff_drop_pct` / `cliff_lookback` / `volatility_high_shift` | 0.3 / 6 / 6 | editorial | 2026-05 |
 | `risk_signals.moz_cache_tolerance_hours` | 24 | editorial; how far a domain's `fetched_at` may trail the handoff's assembly and still count as collected during that Tool 1 run. Beyond it an `error` status is a 30-day cache hit being re-served, not this run's outage (§6.4) | 2026-11-16 |
 | `gsc_settings.date_range_days` / `country` | 90 / `can` | **not editorial** — the pull parameters, printed on the GSC section so a figure from this tool is not read beside serp-discover's differently-scoped one (`docs/handoff_contract.md` §5) | 2026-11-15 |
-| `handoff.absolute_rank_versions` | *(empty)* | **not editorial** — records which handoff `schema_version`s carry absolute SERP ranks. Empty because serp-discover's chunk D1 has not shipped, so the briefing warns that `rank` is page-relative (`docs/handoff_contract.md` §1.4) | 2026-11-16 |
+| `handoff.absolute_rank_versions` | `2.0`, `2.1` | **not editorial** — records which handoff `schema_version`s carry absolute SERP ranks, read from what serp-discover emits (`handoff_writer.SCHEMA_VERSION_BASE` / `_WITH_MOZ`). Set when its chunk D1 shipped; a 1.x file still gets the page-relative warning (`docs/handoff_contract.md` §1.4) | 2026-11-16 |
 | `branded_demand.ambiguous_brand_ratio` | 10 | editorial; above it, a bare stem's demand is not the practice's (§4.7) | 2026-11-15 |
 | `serp_overlap.top_n` / `commodity_high_overlap` | 10 / 3 | editorial; a local overlap proxy, not a measured index | 2026-05 |
 | `cluster_thresholds.*` | 2 / 3 | editorial; bounded by `max_audit_pages_per_domain` (§3.3) | 2026-05 |
