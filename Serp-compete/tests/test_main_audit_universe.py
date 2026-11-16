@@ -353,3 +353,122 @@ def test_cc16_the_orchestrator_passes_the_selected_handoff():
     rendered = [ast.unparse(node) for node in cmd_lists]
     assert any("--handoff" in r and "selected_handoff_path" in r for r in rendered), \
         f"orchestrator must pass the selected handoff to main.py; got {rendered}"
+
+
+# ── 2026-11-16: the data-source fallback chain, which nothing exercised ──────
+#
+# `docs/handoff_contract.md` describes this precedence as the contract's entry
+# point: handoff, then the deprecated `market_analysis_*.json`, then
+# `manual_targets.json`. The ordering carries the weight — a corrupt or
+# unreadable handoff must HARD FAIL rather than fall through to a stale legacy
+# file, because the fall-through would produce a plausible briefing about the
+# wrong market with nothing saying so.
+
+def _ingest(tmp_path, monkeypatch, handoff_path=None):
+    """`get_latest_market_data` with the repo's own files out of reach."""
+    import src.main as main
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(main, "KEYWORD_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(main, "MANUAL_TARGETS_PATH",
+                        str(tmp_path / "manual_targets.json"))
+    monkeypatch.setattr(main, "find_latest_handoff_file",
+                        lambda: handoff_path)
+    return main.get_latest_market_data()
+
+
+def test_a_handoff_that_fails_the_schema_does_not_fall_through(tmp_path, monkeypatch):
+    """It must exit, not quietly audit the legacy file instead."""
+    broken = tmp_path / "competitor_handoff_broken_20261116_0900.json"
+    bad = _handoff()
+    bad["targets"][0].pop("rank")          # required by handoff_schema.json
+    broken.write_text(json.dumps(bad))
+    # A legacy file IS available, so a fall-through would silently succeed.
+    (tmp_path / "market_analysis_old.json").write_text(json.dumps(
+        {"organic_results": [{"Link": "https://stale.ca/a",
+                              "Source_Keyword": "stale keyword"}]}))
+
+    with pytest.raises(SystemExit):
+        _ingest(tmp_path, monkeypatch, handoff_path=str(broken))
+
+
+def test_an_unreadable_handoff_does_not_fall_through(tmp_path, monkeypatch):
+    corrupt = tmp_path / "competitor_handoff_corrupt_20261116_0900.json"
+    corrupt.write_text("{ this is not json")
+    (tmp_path / "market_analysis_old.json").write_text(json.dumps(
+        {"organic_results": [{"Link": "https://stale.ca/a",
+                              "Source_Keyword": "stale"}]}))
+
+    with pytest.raises(SystemExit):
+        _ingest(tmp_path, monkeypatch, handoff_path=str(corrupt))
+
+
+def test_the_legacy_path_is_used_only_when_there_is_no_handoff(tmp_path, monkeypatch):
+    (tmp_path / "market_analysis_run.json").write_text(json.dumps({
+        "organic_results": [{"Link": "https://legacy.ca/page",
+                             "Source_Keyword": "couples counselling",
+                             "Word_Count": 1500}],
+        "paa_questions": [{"Source_Keyword": "couples counselling",
+                           "Question": "How does it work?"}],
+    }))
+    targets, paa, brands, used = _ingest(tmp_path, monkeypatch, handoff_path=None)
+
+    assert used.endswith("market_analysis_run.json")
+    assert targets[0]["domain"] == "legacy.ca"
+    # The legacy format DOES carry PAA; the handoff does not. That asymmetry is
+    # why FEATURE_GUIDE §6.1's PAA promise was dropped for handoff runs.
+    assert paa == {"couples counselling": ["How does it work?"]}
+    # …and it carries no client brand names, so the caller falls back to config.
+    assert brands == []
+
+
+def test_manual_targets_are_the_last_resort(tmp_path, monkeypatch):
+    (tmp_path / "manual_targets.json").write_text(json.dumps(
+        {"competitors": ["rival-one.ca", "rival-two.ca"]}))
+    targets, paa, brands, used = _ingest(tmp_path, monkeypatch, handoff_path=None)
+
+    assert used.endswith("manual_targets.json")
+    assert [t["domain"] for t in targets] == ["rival-one.ca", "rival-two.ca"]
+    assert [t["primary_keyword"] for t in targets] == ["manual_audit"] * 2
+    assert paa == {} and brands == []
+
+
+def test_no_source_at_all_returns_empty_and_names_itself_none(tmp_path, monkeypatch):
+    """`run_audit` prints "No competitors identified. Aborting." on this, which
+    is correct — but the source label must not read like a file."""
+    targets, paa, brands, used = _ingest(tmp_path, monkeypatch, handoff_path=None)
+    assert (targets, paa, brands, used) == ([], {}, [], "none")
+
+
+def test_a_broken_legacy_file_falls_through_to_manual(tmp_path, monkeypatch):
+    """The legacy path is already deprecated, so a corrupt one degrades rather
+    than exits — the opposite of the handoff path, deliberately."""
+    (tmp_path / "market_analysis_bad.json").write_text("{ not json")
+    (tmp_path / "manual_targets.json").write_text(json.dumps(
+        {"competitors": ["rival.ca"]}))
+    targets, _paa, _brands, used = _ingest(tmp_path, monkeypatch, handoff_path=None)
+    assert used.endswith("manual_targets.json")
+    assert [t["domain"] for t in targets] == ["rival.ca"]
+
+
+def test_a_second_ingestion_does_not_inherit_the_first_handoffs_moz_block(
+        tmp_path, monkeypatch):
+    """P8. The legacy and manual paths set no Moz block, so a run after a
+    handoff run in the same process would have attributed the handoff's anchor
+    texts to it."""
+    from src.handoff_moz import validated_moz_block
+
+    handoff = tmp_path / "competitor_handoff_with_moz_20261116_0900.json"
+    data = _handoff()
+    data["schema_version"] = "1.1"
+    data["moz"] = {"generated_at": "2026-11-16T09:00:00+00:00",
+                   "domains": {"x.ca": {"data_available": True, "status": "ok"}}}
+    handoff.write_text(json.dumps(data))
+
+    _ingest(tmp_path, monkeypatch, handoff_path=str(handoff))
+    assert validated_moz_block().get("domains"), "the block was not retained"
+
+    (tmp_path / "manual_targets.json").write_text(json.dumps(
+        {"competitors": ["rival.ca"]}))
+    _ingest(tmp_path, monkeypatch, handoff_path=None)
+    assert validated_moz_block() == {}, "the previous handoff's block survived"
