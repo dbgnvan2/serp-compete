@@ -7,6 +7,54 @@ import datetime
 from src.risk_radar import anchor_caveat_lines, anchor_data_unreadable
 
 
+#: What an unknown value reads as in a rendered markdown table. An em dash,
+#: not an empty cell: a blank is indistinguishable from a rendering fault, and
+#: the briefing's whole convention is that absence is stated.
+UNKNOWN_CELL = "—"
+
+
+def md_table(df, **kwargs) -> str:
+    """`df.to_markdown` with missing values rendered as `—` rather than `nan`.
+
+    Purpose: stop a float artefact appearing in the owner's tables.
+    Tests:   Serp-compete/tests/test_report_rendering.py
+
+    Found by rendering a briefing and reading it (2026-11-16): the Competitor
+    Ranking Summary printed `pages_audited` as `nan` for the two domains whose
+    pages errored or were blocked, and the Barbell table printed `focus_score`
+    as `nan` for the three domains whose focus was deliberately WITHHELD for
+    too small a sample. The withholding was correct and the `quadrant` column
+    said `insufficient_data` beside it — but the number next to it read as a
+    broken calculation, which is the opposite of the point: this report's
+    convention is that an unmeasured thing says so.
+
+    Only display is affected. The Excel sheets keep the real NaN/None so the
+    columns stay numeric and sortable, and nothing downstream parses this
+    string.
+    """
+    if df is None:
+        return ""
+    # Work on a copy: filling in place would put the em dash into the frame the
+    # Excel writer gets, where it must stay a real NULL so the column keeps its
+    # type.
+    out = df.copy()
+    for column in out.columns:
+        series = out[column]
+        if not pd.api.types.is_float_dtype(series):
+            continue
+        present = series.dropna()
+        # A count column holding one NULL becomes float64, so `pages_audited`
+        # rendered as "1.0" and "2.0" once the NULLs were filled. Whole numbers
+        # are printed as whole numbers; genuinely fractional columns
+        # (medical_per_1000, shares) are left alone.
+        if not present.empty and (present == present.round()).all():
+            out[column] = series.map(
+                lambda v: UNKNOWN_CELL if pd.isna(v) else str(int(v)))
+    # `fillna` on a numeric column upcasts to object, which is what we want for
+    # display.
+    return out.fillna(UNKNOWN_CELL).to_markdown(**kwargs)
+
+
 def gsc_pull_note(config) -> str:
     """The line that states which Google Search Console pull a section used.
 
@@ -259,19 +307,22 @@ class ReportGenerator:
             if target_gaps is not None and not target_gaps.empty:
                 report.append("\n### High Impression / Low CTR Gaps")
                 report.append("These internal keywords are being seen but not clicked. Reframe the Meta Titles with systemic depth.")
-                report.append(target_gaps[['query', 'impressions', 'ctr', 'tier']].to_markdown(index=False))
+                report.append(md_table(target_gaps[['query', 'impressions', 'ctr', 'tier']],
+                                       index=False))
 
             low_hanging = gsc_findings.get("low_hanging")
             if low_hanging is not None and not low_hanging.empty:
                 report.append("\n### Low-Hanging Fruit (Page 2 Targets)")
                 report.append("Internal pages ranking in positions 11-20. A systemic boost could push them to Page 1.")
-                report.append(low_hanging[['query', 'page', 'position', 'impressions']].to_markdown(index=False))
+                report.append(md_table(
+                    low_hanging[['query', 'page', 'position', 'impressions']],
+                    index=False))
 
             mismatches = gsc_findings.get("mismatches")
             if mismatches:
                 report.append("\n### Clinical Mismatches")
                 report.append("Detected instances where our Systems-heavy pages are being found via Medical Model queries.")
-                report.append(pd.DataFrame(mismatches).to_markdown(index=False))
+                report.append(md_table(pd.DataFrame(mismatches), index=False))
 
         if token_usage:
             report.append("\n## 💰 AI Token Usage")
@@ -291,7 +342,7 @@ class ReportGenerator:
                               "DOWN** (worse), negative = moved up. Averaged over the "
                               "keywords both runs measured._")
                 df_vol = pd.DataFrame(volatility)
-                report.append(df_vol.to_markdown(index=False))
+                report.append(md_table(df_vol, index=False))
 
             # Spec 4: Fragile Magnets — ONE authority-drift detector (C-C-05 / C-M-06).
             # There used to be two, under two headings, for the same event:
@@ -416,10 +467,13 @@ class ReportGenerator:
                     "ranks for in total. `pages_audited` is how many of its pages were "
                     "scored (capped by `technical.max_audit_pages_per_domain`). "
                     "`avg_pos` averages whatever each keyword's source measured: the "
-                    "handoff rank for a handoff keyword, DataForSEO's `rank_absolute` "
+                    # C-C-17 changed the enrichment rank to `rank_group`, the
+                    # organic position; this caveat still named `rank_absolute`,
+                    # so the report described a scale it had stopped using.
+                    "handoff rank for a handoff keyword, DataForSEO's `rank_group` "
                     "for an enrichment one. `systemic_depth` reads the Tier-2/Tier-3 "
                     "counts; `Not recorded` means a cached page predates those counts._")
-                report.append(df_metrics.to_markdown(index=False))
+                report.append(md_table(df_metrics, index=False))
                 # C-M-01: say where this run's keywords came from. `handoff` =
                 # Tool 1 measured the URL ranking for it; `ranked_keywords` = a
                 # DataForSEO enrichment keyword that passed the relevance filter;
@@ -473,7 +527,7 @@ class ReportGenerator:
                 disp_eeat, eeat_note = self._capped(df_eeat, self.markdown_row_cap,
                                                     "scored page(s)")
                 report.append(eeat_note)
-                report.append(disp_eeat.to_markdown(index=False))
+                report.append(md_table(disp_eeat, index=False))
                 report.append("\n_Note: These scores are heuristic proxies based on SEO industry conventions, not Google's proprietary EEAT model._")
 
             # 2c. Cluster Analysis (Gap 4 enhancement)
@@ -488,7 +542,7 @@ class ReportGenerator:
                 report.append("\n## Internal Linking Cluster Analysis")
                 report.append("Detection of hub pages and linking patterns within competitor sites.")
                 df_clusters['avg_in_degree'] = df_clusters['avg_in_degree'].apply(lambda x: f"{x:.2f}" if x is not None else "—")
-                report.append(df_clusters.to_markdown(index=False))
+                report.append(md_table(df_clusters, index=False))
                 report.append("\n_Note: Analysis based on N≤3 scraped pages per domain. Full site structure not visible._")
 
             # 3. Traffic Magnets with Systemic Label.
@@ -532,7 +586,7 @@ class ReportGenerator:
                 report.append(f"{len(df_magnets)} of {audited_pages} audited page(s) "
                               f"meet the magnet definition. {magnet_note}")
                 report.append(magnet_filter_note)
-                report.append(disp_magnets.to_markdown(index=False))
+                report.append(md_table(disp_magnets, index=False))
 
                 # Spec 2: Highlight Systemic Vacuums — the magnets with no systemic
                 # language. Same predicate as the reframe targets, by construction.
@@ -660,7 +714,7 @@ class ReportGenerator:
                               "the Domain Authority gap (feasible when client DA + 5 ≥ competitor DA).")
                 df_feasibility['feasible'] = df_feasibility['feasible'].apply(
                     lambda x: "✅" if x else "❌")
-                report.append(df_feasibility.to_markdown(index=False))
+                report.append(md_table(df_feasibility, index=False))
 
             # 3e. Barbell Positioning Diagnostic (C2 / SC-4)
             df_positioning = pd.read_sql_query('''
@@ -705,9 +759,10 @@ class ReportGenerator:
                     lambda r: _rationale(r, 'top10_count'), axis=1)
                 disp['authority_basis'] = df_positioning.apply(
                     lambda r: _rationale(r, 'authority_basis', 'unknown'), axis=1)
-                report.append(disp[['domain', 'authority_score', 'focus_score',
-                                    'quadrant', 'top10_count', 'tier_tokens',
-                                    'authority_basis']].to_markdown(index=False))
+                report.append(md_table(
+                    disp[['domain', 'authority_score', 'focus_score',
+                          'quadrant', 'top10_count', 'tier_tokens',
+                          'authority_basis']], index=False))
                 floors = {str(_rationale(r, 'min_focus_tokens', '')) for _, r in
                           df_positioning.iterrows()} - {''}
                 if floors:
@@ -851,7 +906,7 @@ class ReportGenerator:
                                else r['brand']), axis=1)   # own row identifiable regardless of anchor
                 # `queries` is Excel-only: one row can carry seven query strings, which
                 # would make the markdown table unreadable.
-                report.append(disp.drop(columns=['queries']).to_markdown(index=False))
+                report.append(md_table(disp.drop(columns=['queries']), index=False))
 
             # 3h. Reputation-Risk Radar (C6 / SC-8)
             df_risk = pd.read_sql_query('''
@@ -904,7 +959,8 @@ class ReportGenerator:
                 comp = df_risk[df_risk['is_own_site'] == 0]
                 if not comp.empty:
                     report.append("\n### 🔎 Competitor risk signals (opportunity intel)")
-                    report.append(comp[['domain', 'signal_type', 'severity']].to_markdown(index=False))
+                    report.append(md_table(comp[['domain', 'signal_type', 'severity']],
+                                           index=False))
                     for _, r in comp[comp['signal_type'] == 'anchor_text_spam'].iterrows():
                         report.append(f"- **{r['domain']}** anchor-text evidence: "
                                       f"{r['evidence_json']}")
@@ -937,7 +993,7 @@ class ReportGenerator:
                     lambda d: f"⭐ {d} (you)" if d == client_domain else d)
                 cols = ['domain', 'channel?', 'handle', 'channel_title', 'subscriber_count',
                         'last_upload_date', 'uploads_recent', 'match_confidence', 'check_status']
-                report.append(disp[cols].to_markdown(index=False))
+                report.append(md_table(disp[cols], index=False))
                 n_cand = int((df_yt['check_status'] == 'candidate').sum())
                 if n_cand:
                     report.append(f"\n> ℹ️ **{n_cand} candidate channel(s)** matched by name only — "

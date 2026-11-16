@@ -87,6 +87,36 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The briefing printed `nan` in the owner's tables, in the two places where a value was deliberately withheld.**
+- **Root cause (P16 / P25):** chunk C2 made the data layer honest about NULL — an unmeasured
+  Page Authority, a withheld focus score, a page count for a domain whose scrapes all failed.
+  The rendering layer was never taught the same thing: `DataFrame.to_markdown` prints a missing
+  float as `nan`, so the Competitor Ranking Summary showed `pages_audited` as `nan` for the two
+  domains blocked by the 429 circuit breaker, and the Barbell table showed `focus_score` as
+  `nan` for the three domains whose focus was withheld for too small a sample. Both were CORRECT
+  absences — the `quadrant` column said `insufficient_data` right beside the `nan` — rendered in
+  a way that reads as a broken calculation. A float artefact in a client-facing table is the
+  exact inverse of this report's convention that an unmeasured thing says so.
+- **What would have caught it:** rendering a briefing and reading it. No test asserted on a
+  rendered table's *cells*, and none would have: the defect is invisible unless you look at the
+  artifact. The review protocol's step 4 ("regenerate the report and diff the markdown") is
+  exactly this check, and it is the step a cloud session cannot do for real — no `.env`, no
+  history DB, no reference handoff. What it CAN do is drive the end-to-end test fakes and read
+  the markdown they produce, which is how this was found, along with two stale sentences in the
+  report's own caveats (`rank_absolute` after C-C-17 had moved to `rank_group`).
+- **Fix:** one `reporting.md_table` helper that every table render now goes through, filling
+  missing values with an em dash; a test asserts no `.to_markdown` call survives outside it,
+  because a single raw one reintroduces the defect in a briefing nobody reads until after it is
+  sent. It fills a COPY, so the Excel sheets keep real NULLs and their columns stay numeric.
+- **And the fix had its own cosmetic bug, found the same way:** a count column with one NULL in
+  it is float64, so filling the NULLs left the rest as "1.0" and "2.0". Whole-numbered columns
+  are now printed as whole numbers, with a test for the negative case because `int()` truncates
+  toward zero and drift columns are signed.
+- **Rule:** read the artifact. A test suite asserts what someone thought to assert; the rendered
+  report shows what the owner will actually see, and `nan` in a table is the kind of thing that
+  survives a green suite indefinitely. Where the real artifact cannot be produced, drive the
+  end-to-end fakes and read THAT — it is not the protocol's step 4, but it is not nothing.
+
 **The schema document pointed at an empty table and called the live one deprecated, and two tables are created on every run that nothing uses.**
 - **Root cause (P21 / P19):** `docs/DATA_PERSISTENCE_MAP_v3.md` was written on 2026-05-02 as a
   *design* doc and no chunk since updated it, although the repo's own rule is that contract docs

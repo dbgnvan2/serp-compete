@@ -37,9 +37,17 @@ EXCLUDED_DIRS = {
     os.path.join("docs", "tool2_review_bundle"),
 }
 
-#: Files that describe a design as it was proposed, not as it shipped. They
-#: carry their own "this is not the current schema" banners.
+#: Files that describe a design as it was proposed, not as it shipped, or that
+#: are a record of past state. They carry their own banners.
+#:
+#: `LEARNINGS.md` is here for the same reason as the review directory: its fix
+#: log exists to record what a value USED to be and why it was wrong, so it
+#: quotes stale figures on purpose ("`\"vacuum_min_medical\": 10` in its config
+#: example, 24 lines above a paragraph correctly explaining…" is the entry
+#: describing this very guard's first find). A line-keyed exception would not
+#: hold: the log is newest-first, so every new entry shifts the line numbers.
 EXCLUDED_FILES = {
+    "LEARNINGS.md",
     os.path.join("docs", "IMPLEMENTATION_PLAN_v3.md"),
     "RECONCILIATION_CHANGES.md",
     "sc7-yt-spec.md",

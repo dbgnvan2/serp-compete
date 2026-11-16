@@ -536,7 +536,10 @@ Table showing:
 - `pages_audited` — how many of its pages were scored this run (capped by
   `technical.max_audit_pages_per_domain`)
 - Average position — over whatever each keyword's source measured: the handoff rank
-  for a handoff keyword, DataForSEO's `rank_absolute` for an enrichment one
+  for a handoff keyword, DataForSEO's `rank_group` (its ORGANIC position) for an
+  enrichment one. It read `rank_absolute` until 2026-11-15; that counts every SERP
+  element, so a competitor sitting organically at #8 below three SERP features
+  reported as 11 (C-C-17)
 - `systemic_depth` — from the **Tier-2 / Tier-3 term counts**:
   `Bowen (Tier 3 present)` → `Systems (Tier 2 only)` → `Surface-Level` →
   `Trace (1-2 Tier 2 terms)` → `None detected`, and **`Not recorded`** when a
