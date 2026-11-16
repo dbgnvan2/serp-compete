@@ -59,6 +59,39 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The schema document pointed at an empty table and called the live one deprecated, and two tables are created on every run that nothing uses.**
+- **Root cause (P21 / P19):** `docs/DATA_PERSISTENCE_MAP_v3.md` was written on 2026-05-02 as a
+  *design* doc and no chunk since updated it, although the repo's own rule is that contract docs
+  change in the same push as the thing they describe. It listed 10 of the 22 tables that exist,
+  omitting every table added for the C1–C6 comparison features. Its §3 proposed renaming
+  `semantic_audits` to `semantic_audit_results` "for clarity"; what actually happened is that the
+  new table was created — with two indexes and three JSON `*_terms_found` columns — and never
+  written, while `semantic_audits` kept taking every write and was later extended by chunk C3. So
+  the document described the empty table as a live v3 feature and the live table as "Deprecated;
+  use traffic_magnets". `market_gaps` was likewise marked "Active" with no writer anywhere.
+- **What would have caught it:** nothing in the suite looked at the document at all. Building a
+  fresh database, listing `sqlite_master` and diffing it against the doc takes 40 lines and finds
+  all of it at once — which is now `Serp-compete/tests/test_persistence_map.py`.
+- **Fix:** §1 regenerated from the live schema: all 22 tables with purpose, key columns, writer
+  module → reader module, and status, including which columns each review chunk added and why.
+  §1.4 declares `market_gaps` and `semantic_audit_results` as created-but-never-used instead of
+  omitting them, since a documented table implies a place to look for data. The original design
+  section is kept behind a banner saying where each proposal actually landed. Dropping the two
+  dead tables is left to the owner: neither holds data, so the only cost of keeping them is one
+  paragraph, and `semantic_audit_results`' richer shape would make the scores auditable if
+  anyone wants to build it deliberately.
+- **Also caught by the guard, in my own first draft of it:** the phantom-table check matched every
+  backticked identifier in a row, so it flagged 35 column names as phantom tables — useless
+  noise that would have been deleted within a week. It now reads the row's first cell only. And
+  the §1.4 check split the document on `---`, which is also the markdown table separator, so it
+  was asserting against three lines of prose that stopped before the table it meant to read: a
+  guard that passed on text it had never seen. Both have explicit can-this-fail cases now.
+- **Rule:** a schema or contract document needs a test, not a convention. "Update the docs in the
+  same push" is a rule people follow until the push is urgent; a guard that diffs the document
+  against the thing it describes is what actually holds. And when a guard is written, write the
+  case that proves it can fail — a guard asserting against the wrong slice of a file looks
+  identical to a guard that is passing.
+
 **The handoff contract was enforced where it could be machine-checked and assumed everywhere else (Chunk X: canonical domains, rank semantics, zero-answer engines, cached Moz errors, the GSC pull).**
 - **Root cause (P6 / P19 / P21):** `handoff_schema.json` validates shape, so everything the
   schema *can* check was checked and everything it cannot was taken on trust. Tool 1 writes
