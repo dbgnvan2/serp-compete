@@ -94,8 +94,13 @@ def _config_values():
 
 def _markdown_files():
     for dirpath, dirnames, filenames in os.walk(ROOT):
+        # `.claude` holds git worktrees on a developer machine — whole stale
+        # checkouts of this repo, whose old docs are not ours to keep current.
+        # Scanning them made this guard pass in CI and fail on the owner's Mac.
         dirnames[:] = [d for d in dirnames
-                       if d not in {".git", "node_modules", "__pycache__", "venv"}]
+                       if d not in {".git", ".claude", "node_modules",
+                                    "__pycache__", "venv", ".venv",
+                                    ".pytest_cache"}]
         relative_dir = os.path.relpath(dirpath, ROOT)
         if any(relative_dir == d or relative_dir.startswith(d + os.sep)
                for d in EXCLUDED_DIRS):

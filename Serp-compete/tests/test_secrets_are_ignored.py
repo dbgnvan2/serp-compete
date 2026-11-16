@@ -174,9 +174,25 @@ class TestTheClientSecretPathIsNotPinnedToOneMachine(unittest.TestCase):
                 f.write("{}")
             config = {"auth": {"gsc_client_secrets":
                                "/Users/someone-else/serp-compete/client_secret_gone.json"}}
-            with patch("src.gsc_performance.PROJECT_ROOT", tmp):
-                found = find_client_secrets(config)
-        self.assertEqual(found, planted,
+            # find_client_secrets globs the WORKING directory as well as
+            # PROJECT_ROOT (gsc_performance.py:49), so patching the root alone
+            # left the repo root in the search path and the owner's own
+            # client_secret_*.json won. Passed in CI, which has none.
+            previous_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with patch("src.gsc_performance.PROJECT_ROOT", tmp):
+                    found = find_client_secrets(config)
+                # Resolve while tmp is still the working directory: the
+                # working-directory glob returns a RELATIVE name, which would
+                # otherwise resolve against the restored cwd.
+                found = os.path.realpath(found) if found else None
+            finally:
+                os.chdir(previous_cwd)
+        # The working-directory glob yields a RELATIVE path, the PROJECT_ROOT
+        # one an absolute path. The contract is "a path that exists", not "an
+        # absolute path", so compare what they resolve to.
+        self.assertEqual(found, os.path.realpath(planted),
                          "a configured path that does not exist must fall "
                          "through to discovery, not be returned")
 
