@@ -127,6 +127,23 @@ Newest first. Format:
   80 today — was replaced with the two suite totals and the command that produces them: a
   hand-maintained count is wrong the moment anyone adds a test, so the document should carry the
   command, not the number.
+- **The third sweep: thresholds quoted in prose, 2026-11-16.** `USER_MANUAL.md` told the owner a
+  Traffic Magnet needs `medical_score >= technical.vacuum_min_medical (10)` and showed
+  `"vacuum_min_medical": 10` in its config example, 24 lines above a paragraph correctly
+  explaining the value had been re-set to **6**. One document, three statements, two wrong — and
+  this is the floor that decides which competitor pages become magnets, vacuums and gpt-4o
+  reframe targets, so an owner tuning against the documented 10 would be reasoning about a
+  filter that admits a different set of pages. `FEATURE_GUIDE.md` had the same stale 10 in its
+  Traffic Magnet table; I had edited that file twice the same evening without noticing, and only
+  the guard found it.
+  `Serp-compete/tests/test_documented_values.py` now diffs every threshold figure quoted in the
+  docs against `shared_config.json`. Its two false positives are instructive: "see the §3.3
+  caveat" and "open decision 8" both read as quoted values, because these documents cite
+  themselves constantly. Both are excluded by pattern, with a test asserting that a *stale*
+  figure beside a citation is still caught — an exclusion that lets a wrong number hide behind
+  a cross-reference would be worse than no guard.
+  The review directory is excluded entirely: those files quote pre-fix values on purpose, and
+  "correcting" them would destroy the audit trail they exist to be.
 - **Rule:** a schema or contract document needs a test, not a convention. "Update the docs in the
   same push" is a rule people follow until the push is urgent; a guard that diffs the document
   against the thing it describes is what actually holds. And when a guard is written, write the

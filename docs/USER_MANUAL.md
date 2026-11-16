@@ -302,7 +302,7 @@ instead of being hard-coded at 90 (C-C-17, C-M-11, C-C-14).
 Competitor pages that meet **all three** parts of the definition — the filter is applied
 in the briefing, and the section states how many of the audited pages qualified:
 - **Rank well** — the handoff rank Serp-Discover measured is ≤ `technical.magnet_max_position` (10)
-- **Use medical model language** — `medical_score` ≥ `technical.vacuum_min_medical` (10)
+- **Use medical model language** — `medical_score` ≥ `technical.vacuum_min_medical` (6)
 - **On a keyword that matters** — the keyword is in the handoff set or carries a clinical
   term, and is not the competitor's own brand token
 - Represent unmet systems-approach demand
@@ -346,7 +346,7 @@ All behavior is controlled via `shared_config.json`:
 ### **technical** (magnet / vacuum definition)
 ```json
 "technical": {
-  "vacuum_min_medical": 10,
+  "vacuum_min_medical": 6,
   "magnet_max_position": 10,
   "max_audit_pages_per_domain": 3
 }

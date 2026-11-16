@@ -326,7 +326,7 @@ parts of the magnet definition, richest estimated traffic first:
 | Part of the definition | How it is tested |
 |---|---|
 | **Ranks well** | the handoff `rank` Serp-Discover measured is ≤ `technical.magnet_max_position` (10) |
-| **Uses medical language** | `medical_score` ≥ `technical.vacuum_min_medical` (10) |
+| **Uses medical language** | `medical_score` ≥ `technical.vacuum_min_medical` (6) |
 | **On a keyword that matters** | the keyword is in the handoff set or carries a clinical term, and is not the competitor's own brand token |
 
 The section header states how many of the audited pages qualified ("Showing 3 of 97"),
