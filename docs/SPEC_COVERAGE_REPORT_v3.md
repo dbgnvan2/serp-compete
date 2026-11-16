@@ -1,20 +1,55 @@
 # Spec Coverage Report — Tool 2 v3
 
-**Date:** 2026-05-02  
-**Spec Version:** 3.0  
-**Implementation Status:** ✅ COMPLETE
+**Date:** 2026-05-02
+**Spec Version:** 3.0
+**Implementation Status:** v3 scope delivered, with two of the three
+"technical debt" items corrected below — see the verification note.
+
+> **Verification note, 2026-11-16.** The claims in this report were checked
+> against the code. Three corrections, all in Part 3:
+>
+> - **Debt 2 (legacy tables) was wrong in a way that would break the tool if
+>   acted on.** It lists `competitor_metrics` and `semantic_audits` as
+>   "Deprecated — retained for backwards compat", with a plan to remove them in
+>   v4. Both are **live**: `semantic_audits` is the 7-day scoring cache every run
+>   reads and writes, and `competitor_metrics` carries the per-run ranking rows
+>   that the visibility series and the barbell's top-10 counts are computed from.
+>   Chunks C1, C3 and C4 all added columns to them. Removing them on that plan
+>   would delete the audit's own working tables.
+> - **Debt 3 (step DAG) claims a remediation that never took effect.** Its
+>   "After" column describes the orchestrator executing a topologically sorted
+>   DAG. `src/step_dag.py` exists and is correct, but it is imported by nothing
+>   except its own test, the orchestrator still sequences its steps directly,
+>   and the `step_dag` config section it reads was deleted in November 2026 as a
+>   documented key with no reader (C-C-14).
+> - **The test counts were stale.** They are now, by exit code:
+>   `pytest tests` → **162**, `pytest Serp-compete/tests` → **539**, both
+>   suites in one run (`pytest -q`, which `pytest.ini` configures) → **701**.
+>
+> **Line-number references in this report are as of 2026-05-02 and are not
+> maintained.** Four review chunks have edited these files since. Use the
+> function and class names, which are stable; where a line number and a name
+> disagree, the name is right.
 
 ---
 
 ## Executive Summary
 
-All specification requirements for Tool 2 v3 have been implemented and tested:
+The v3 specification requirements were implemented and tested. Corrected
+2026-11-16 where the original claims did not match the code:
 
 - ✅ **5/5 Gap Refinements** (improved from v2)
 - ✅ **3/3 Feature Authorizations** (new features approved and integrated)
-- ✅ **3/3 Technical Debt Remediation** (hardcoded content, legacy tables, DAG)
-- ✅ **4/4 Third-Party Integration Skeleton** (Ahrefs, Moz placeholders)
-- ✅ **158/158 Tests Passing** (100% pass rate)
+- ⚠️ **1/3 Technical Debt Remediation** — hardcoded editorial content **was**
+  moved to config (verified: 20 `clinical_pivots` entries read at
+  `reframe_engine.py:58`, with a `DEFAULT_CLINICAL_PIVOTS` fallback). The
+  "legacy tables" item describes live tables as deprecated, and the step-DAG
+  item describes an execution model the orchestrator does not use. See Part 3.
+- ⚠️ **4/4 Third-Party Integration Skeleton** (Ahrefs, Moz placeholders) — the
+  skeleton exists as intended, but it is imported by nothing and has **no
+  tests**, despite `IMPLEMENTATION_PLAN_v3.md` having named a
+  `test_third_party_crawlers.py` that does not exist (corrected 2026-11-16).
+- ✅ **Tests passing** — 701 by exit code, 2026-11-16 (was "158/158" in 2026-05)
 
 > **Post-v3 enhancements** (tracked in `suite_enhancement_spec_SERPCOMPETE_v1.md`, not
 > counted in the v3 totals above): **SC-1** — competitor GEO / extractability (shipped);
@@ -25,8 +60,17 @@ All specification requirements for Tool 2 v3 have been implemented and tested:
 > also wires competitor-DA persistence, which repairs C4 feasibility); **SC-3** — AI Answer
 > Share-of-Voice (consumes serp-discover's AI-visibility export; `sov_daily`); **SC-5** —
 > Branded-Demand Benchmark (`brand_demand_bench`); **SC-8** — Reputation-Risk Radar
-> (`risk_signal`). The core suite beside the source is now **135 passing**; this v3 root
-> suite (`tests/`) remains **158/158**.
+> (`risk_signal`); **SC-7-YT Phase 1** — YouTube presence check
+> (`yt_channel_presence`). Suite sizes as of 2026-11-16: the suite beside the
+> source is **539 passing**, the root `tests/` suite **162**, and `pytest -q`
+> runs both for **701**. (This note previously said 135 and 158.)
+>
+> Since then, the 2026-11-04 review's chunks C1–C4 and the compete half of chunk
+> X have landed — see `docs/review_2026-11-04/REVIEW_WORKPLAN_2026-11-04.md` §6
+> for the per-finding status, and `docs/handoff_contract.md` for the cross-tool
+> contract. Several behaviours this report describes were corrected by them;
+> `docs/FEATURE_GUIDE.md` §9 is the authoritative list of what each number means
+> and what it cannot support.
 
 ---
 
@@ -184,31 +228,53 @@ All specification requirements for Tool 2 v3 have been implemented and tested:
 
 ---
 
-### Debt 2: Legacy Database Tables ✅
+### Debt 2: Legacy Database Tables — ❌ **the premise was wrong**
 
-| Table | Status | Action | Timeline |
-|-------|--------|--------|----------|
-| competitor_metrics | Deprecated | Retained for backwards compat | No deletion yet |
-| semantic_audits | Deprecated | Retained for backwards compat | No deletion yet |
-| Plan | Set explicit deprecation | v4 or 2027-01-01 | Documented |
+**Corrected 2026-11-16. Do not act on the original plan below.** Neither table
+is legacy. Both are read and written on every run, and three review chunks have
+added columns to them:
 
-**Implementation:** src/database.py:77–101 (legacy table preservation)  
-**Future:** Plan recommends v4 removal with migration period
+| Table | What it actually is | Written by | Read by |
+|---|---|---|---|
+| `semantic_audits` | The 7-day scrape/score cache. C3 added `t2_count`, `t3_count`, `scoring_window_words` so a cache-served page no longer has its tiers estimated (C-C-08) | `database.save_semantic_audit` | `database.was_audited_recently`, `gsc_performance` |
+| `competitor_metrics` | The per-(run, domain, keyword) ranking rows. C1 added `keyword_source`; the run-keyed visibility series (C-C-06) and the barbell's top-10 counts are computed from it | `database.save_competitor_metrics` | `reporting`, `database.get_visibility_series` |
+
+Removing them "in v4 or 2027-01-01" as the original table proposed would delete
+the audit's own working storage. The two tables that genuinely have no writer
+are `market_gaps` and `semantic_audit_results` — see
+`docs/DATA_PERSISTENCE_MAP_v3.md` §1.4, which also explains how this inversion
+arose (a rename that was designed, half-applied, and never reconciled).
+
+**Still open:** nothing here is deprecated, so there is no deprecation to plan.
 
 ---
 
-### Debt 3: Step Dependency Management ✅
+### Debt 3: Step Dependency Management — ⚠️ **built, never wired**
 
-| Requirement | Before | After | Status |
-|-------------|--------|-------|--------|
-| Hardcoded dependencies | orchestrator.py:37 note "Step 3 includes Step 2" | shared_config.json step_dag section | ✅ Done |
-| DAG validation | None | src/step_dag.py (StepDAG class) | ✅ Done |
-| Execution order | Manual if/success chain | TopologicalSort (get_execution_order) | ✅ Done |
-| Cycle detection | None | DFS-based validation | ✅ Done |
+**Corrected 2026-11-16.** `src/step_dag.py` exists, is correct, and is covered
+by 13 passing tests. What the original table's "After" column described —
+the orchestrator executing a topologically sorted DAG instead of a manual
+chain — **did not happen**:
 
-**Implementation:** src/step_dag.py:1–167  
-**Test:** tests/test_step_dag.py (13 tests, 100% pass)  
-**Config:** shared_config.json step_dag (5 steps with depends_on, optional flags)
+| Requirement | Claimed | Actual |
+|---|---|---|
+| Hardcoded dependencies | moved to `shared_config.json → step_dag` | the `step_dag` section was **deleted** in Nov 2026 as a documented key with no reader (C-C-14) |
+| DAG validation | `src/step_dag.py` (`StepDAG`) | exists and works — imported by nothing but its own test |
+| Execution order | `get_execution_order` topological sort | the orchestrator sequences its steps directly; nothing calls this |
+| Cycle detection | DFS-based validation | exists, unreached |
+
+So `StepDAG` can now only be fed by a test fixture: the module reads a config
+key that no longer exists, and `tests/test_config_provenance.py` asserts the key
+stays gone.
+
+**This is a decision, not a cleanup.** Wiring it means deciding that step order
+should be owner-configurable — a feature, with a failure mode of its own (a bad
+config stops the audit). Deleting it means removing the module, its test and the
+mention in `compete-spec.md`. Recorded in `LEARNINGS.md` → "Open risks" and
+guarded by `Serp-compete/tests/test_no_new_dead_code.py` so it cannot quietly
+grow companions.
+
+**Test:** `tests/test_step_dag.py` (13 tests, passing — against a fixture-supplied config)
 
 ---
 
@@ -280,23 +346,31 @@ All specification requirements for Tool 2 v3 have been implemented and tested:
 
 ## Test Coverage Summary
 
-| Module | Test File | Tests | Pass Rate |
-|--------|-----------|-------|-----------|
-| reframe_engine.py | test_reframe_engine.py | 5 | 100% |
-| eeat_scorer.py | test_eeat_scorer.py | 54 | 100% |
-| semantic.py | test_page_structure.py | 18 | 100% |
-| step_dag.py | test_step_dag.py | 13 | 100% |
-| handoff ingestion | test_handoff_ingestion.py | 14 | 100% |
-| main.py | test_main.py | 7 | 100% |
-| database | test_database.py | 2 | 100% |
-| config integrity | test_config_integrity.py | 2 | 100% |
-| API clients | test_api_clients.py | 6 | 100% |
-| velocity tracking | test_velocity.py | 6 | 100% |
-| GSC | test_gsc.py | 18 | 100% |
-| New logic | test_new_logic.py | 8 | 100% |
-| Analysis | test_analysis.py | 3 | 100% |
+**Rewritten 2026-11-16.** This was a per-file table of test counts dated
+2026-05-02. It had rotted twice over (it listed `test_eeat_scorer.py` at 54
+tests against 80 today, and mixed the root `tests/` files with the ones beside
+the source), and a hand-maintained count is wrong the moment anyone adds a test.
+The live numbers, by exit code:
 
-**Total:** 158 tests, 158 passing (100%)
+| Suite | Command | Count (2026-11-16) |
+|---|---|---|
+| Beside the source | `python3 -m pytest Serp-compete/tests -q` | 539 |
+| Root (v3-era) | `python3 -m pytest tests -q` | 162 |
+| **Both, as configured** | `python3 -m pytest -q` | **701** |
+
+`pytest.ini` runs both suites in one invocation with `--import-mode=importlib`
+and `pythonpath = Serp-compete`, so `pytest -q` is the number that matters.
+**Judge it by exit code, never by grepping the summary line.**
+
+Standing guard tests, which exist to fail when a document or a config drifts
+from the code rather than to cover a feature:
+
+| Guard | What it catches |
+|---|---|
+| `Serp-compete/tests/test_config_provenance.py` | a threshold added to `shared_config.json` with no `_<key>_source` note (owner decision 7), and a documented key whose reader was deleted |
+| `Serp-compete/tests/test_persistence_map.py` | `docs/DATA_PERSISTENCE_MAP_v3.md` disagreeing with the real schema |
+| `Serp-compete/tests/test_no_new_dead_code.py` | a function added to `src/` that nothing references |
+| `Serp-compete/tests/test_handoff_contract.py` | the handoff semantics in `docs/handoff_contract.md` |
 
 ---
 
@@ -345,13 +419,28 @@ All specification requirements for Tool 2 v3 have been implemented and tested:
 
 ## Sign-Off
 
-**Specification v3 Implementation:** ✅ COMPLETE  
-**Test Coverage:** ✅ 158/158 PASSING (100%)  
-**Backwards Compatibility:** ✅ VERIFIED  
-**Technical Debt Remediation:** ✅ 3/3 ADDRESSED  
-**Feature Authorization:** ✅ 3/3 INTEGRATED  
-**Database Schema:** ✅ 3 NEW TABLES CREATED  
+**As signed off 2026-05-02:**
 
-**Ready for:** Spec writing session → Implementation by coding agent  
-**Date Generated:** 2026-05-02  
-**Document:** `/Users/davemini2/ProjectsLocal/serp-compete/docs/SPEC_COVERAGE_REPORT_v3.md`
+**Specification v3 Implementation:** ✅ COMPLETE
+**Test Coverage:** ✅ 158/158 PASSING (100%)
+**Backwards Compatibility:** ✅ VERIFIED
+**Technical Debt Remediation:** ✅ 3/3 ADDRESSED
+**Feature Authorization:** ✅ 3/3 INTEGRATED
+**Database Schema:** ✅ 3 NEW TABLES CREATED
+
+**Ready for:** Spec writing session → Implementation by coding agent
+**Date Generated:** 2026-05-02
+
+**As verified against the code 2026-11-16:**
+
+| Claim | Verified |
+|---|---|
+| v3 implementation complete | Yes for the Gap Refinements and Feature Authorizations |
+| Test coverage | **701** by exit code (`pytest -q`, both suites), not 158 |
+| Technical debt 3/3 addressed | **1/3.** Debt 1 (hardcoded editorial content) is done. Debt 2 describes two live tables as deprecated. Debt 3's DAG is built but unwired, and the config it reads has since been deleted. See Part 3 |
+| 3 new tables created | **22 tables exist**, of which 2 (`market_gaps`, `semantic_audit_results`) have no writer. See `docs/DATA_PERSISTENCE_MAP_v3.md` §1 |
+| Third-party skeleton 4/4 | The skeleton exists as declared future work, but has no tests and no caller; `IMPLEMENTATION_PLAN_v3.md` had named a test file that does not exist |
+
+Since this sign-off, the 2026-11-04 review's chunks C1–C4 and the compete half
+of chunk X have changed behaviour described in Parts 1 and 2. Where this report
+and `docs/FEATURE_GUIDE.md` §9 disagree, **the FEATURE_GUIDE is current**.

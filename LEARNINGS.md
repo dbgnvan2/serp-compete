@@ -114,11 +114,27 @@ Newest first. Format:
   the §1.4 check split the document on `---`, which is also the markdown table separator, so it
   was asserting against three lines of prose that stopped before the table it meant to read: a
   guard that passed on text it had never seen. Both have explicit can-this-fail cases now.
+- **The same sweep over the two status documents, 2026-11-16.** `SPEC_COVERAGE_REPORT_v3.md`
+  claimed "3/3 Technical Debt Remediation". One of the three was real (editorial content moved
+  to config — verified, 20 `clinical_pivots` entries with a fallback). The second listed
+  `competitor_metrics` and `semantic_audits` as deprecated with a plan to remove them "in v4 or
+  2027-01-01", which would delete the audit's own working storage. The third described the
+  orchestrator executing a topologically sorted DAG; `step_dag.py` was built, never wired, and
+  its config section has since been deleted. `IMPLEMENTATION_PLAN_v3.md` separately marked the
+  third-party skeleton "✅ Done" with a test file that has never existed. All corrected in place
+  rather than deleted, because the original claims are evidence of how the drift happened.
+  Its per-file test-count table — stale twice over, listing `test_eeat_scorer.py` at 54 against
+  80 today — was replaced with the two suite totals and the command that produces them: a
+  hand-maintained count is wrong the moment anyone adds a test, so the document should carry the
+  command, not the number.
 - **Rule:** a schema or contract document needs a test, not a convention. "Update the docs in the
   same push" is a rule people follow until the push is urgent; a guard that diffs the document
   against the thing it describes is what actually holds. And when a guard is written, write the
   case that proves it can fail — a guard asserting against the wrong slice of a file looks
-  identical to a guard that is passing.
+  identical to a guard that is passing. Corollary for the figures a document quotes: if a number
+  can be computed, print the command instead of the number, and date any number you do print.
+  A "✅ COMPLETE" with a count beside it is the form this rots into — it reads as verified long
+  after it stopped being true, and nobody re-derives it because it looks already checked.
 
 **The handoff contract was enforced where it could be machine-checked and assumed everywhere else (Chunk X: canonical domains, rank semantics, zero-answer engines, cached Moz errors, the GSC pull).**
 - **Root cause (P6 / P19 / P21):** `handoff_schema.json` validates shape, so everything the
