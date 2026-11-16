@@ -260,3 +260,114 @@ class TestTheEeatDashesAreDashesNotNan(unittest.TestCase):
                         "Extractability signals",
                         "Internal Linking Cluster Analysis"):
             self.assertIn(heading, content, f"{heading} did not render")
+
+
+class TestTheExcelWorkbookIsNotTheMarkdown(unittest.TestCase):
+    """USER_MANUAL: "**The Excel sheets always carry every row**".
+
+    Nothing had ever opened the workbook. Checking it found that the EEAT
+    display formatting ran **in place on the frame the Excel writer gets**, so
+    four float64 columns were exported as TEXT — "0.6" and "—" — and the
+    workbook's scores could not be sorted, charted or averaged, with an em dash
+    sitting in a numeric column. The markdown wants strings; the sheet wants
+    numbers and real NULLs.
+    """
+
+    @staticmethod
+    def _workbook_and_markdown():
+        import glob
+        import os
+        import sys
+        import tempfile
+
+        tool_dir = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "..", "tools"))
+        if tool_dir not in sys.path:
+            sys.path.insert(0, tool_dir)
+        import render_sample_briefing
+
+        # The renderer runs the audit inside a temp working directory and the
+        # workbook lands there, so it is captured on the way past.
+        captured = {}
+        original = render_sample_briefing._render_in
+
+        def _spy(fakes, scenario, out_dir, work):
+            captured["work"] = work
+            return original(fakes, scenario, out_dir, work)
+
+        start = os.getcwd()
+        render_sample_briefing._render_in = _spy
+        try:
+            with tempfile.TemporaryDirectory() as out:
+                written = render_sample_briefing.render("deep", out)
+                with open(written[-1], encoding="utf-8") as f:
+                    markdown = f.read()
+                books = glob.glob(os.path.join(captured["work"], "*.xlsx"))
+                frames = {}
+                path = None
+                if books:
+                    # Copied out: `work` is a temp directory that goes away.
+                    path = os.path.join(out, os.path.basename(books[0]))
+                    import shutil
+                    shutil.copy(books[0], path)
+                    book = pd.ExcelFile(path)
+                    for sheet in book.sheet_names:
+                        frames[sheet] = book.parse(sheet)
+                    # …and again, outside the `with`, so the file survives.
+                    kept = tempfile.mkdtemp()
+                    path = os.path.join(kept, os.path.basename(books[0]))
+                    shutil.copy(books[0], path)
+                return frames, markdown, path
+        finally:
+            render_sample_briefing._render_in = original
+            os.chdir(start)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.frames, cls.markdown, cls.workbook_path = cls._workbook_and_markdown()
+
+    def test_the_workbook_was_written_with_its_sheets(self):
+        self.assertTrue(self.frames, "no workbook was produced")
+        for sheet in ("Competitor Summary", "Traffic Magnets", "EEAT Scores"):
+            self.assertIn(sheet, self.frames)
+
+    def test_the_eeat_scores_reach_excel_as_numbers(self):
+        """The defect: formatted in place, so the sheet got text.
+
+        Checked on the RAW CELL TYPES, not on a pandas frame. The first version
+        of this test asserted `is_numeric_dtype` on `read_excel`'s output and
+        passed even with the defect restored, because pandas parses the string
+        "0.6" back into a float on the way in — the stored cell is text, and
+        the reader hides it. openpyxl reports what is actually in the file.
+        """
+        from openpyxl import load_workbook
+
+        book = load_workbook(self.workbook_path)
+        sheet = book["EEAT Scores"]
+        headers = [cell.value for cell in next(sheet.iter_rows(max_row=1))]
+        wanted = ("experience_score", "expertise_score",
+                  "authoritativeness_score", "trustworthiness_score")
+        for column in wanted:
+            self.assertIn(column, headers)
+            index = headers.index(column)
+            cells = [row[index] for row in
+                     sheet.iter_rows(min_row=2, max_row=sheet.max_row)]
+            self.assertTrue(cells, f"no data rows for {column}")
+            for cell in cells:
+                self.assertIn(
+                    cell.data_type, ("n",),
+                    f"{column} row {cell.row} is stored as "
+                    f"{cell.data_type!r} ({cell.value!r}) rather than a number "
+                    f"— the owner cannot sort, chart or average the column")
+
+    def test_the_em_dash_is_not_in_the_workbook(self):
+        """It is a rendering marker for the markdown, not data."""
+        for sheet, frame in self.frames.items():
+            as_text = frame.astype(str)
+            self.assertFalse(
+                (as_text == UNKNOWN_CELL).any().any(),
+                f"the '{UNKNOWN_CELL}' display marker reached the {sheet} sheet")
+
+    def test_the_markdown_still_shows_the_dash(self):
+        """The fix must not have removed the marker from the report."""
+        self.assertIn("EEAT Competitive Analysis", self.markdown)

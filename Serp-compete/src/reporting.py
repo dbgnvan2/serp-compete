@@ -521,8 +521,17 @@ class ReportGenerator:
                 # competitor's Domain Authority unmeasured, the realistic one —
                 # was the broken one. Same defect as the SoV presence_rate
                 # line, found the same day by rendering the section.
+                #
+                # Formatted on a COPY. `df_eeat` is the frame the Excel writer
+                # gets (line ~1096), and formatting in place turned four
+                # float64 columns into TEXT — "0.6" and "—" — so the workbook's
+                # EEAT scores could not be sorted, charted or averaged, and the
+                # em dash sat in a numeric column. The markdown wants strings;
+                # the sheet wants numbers and real NULLs. Same reason `md_table`
+                # fills a copy.
+                display_eeat = df_eeat.copy()
                 for col in ['experience_score', 'expertise_score', 'authoritativeness_score', 'trustworthiness_score']:
-                    df_eeat[col] = df_eeat[col].apply(
+                    display_eeat[col] = display_eeat[col].apply(
                         lambda x: f"{x:.1f}" if pd.notna(x) else UNKNOWN_CELL)
                 # A table of dashes with no stated cause is the failure mode
                 # this report exists to avoid. The usual cause is an absent
@@ -530,7 +539,8 @@ class ReportGenerator:
                 # with and correctly computes nothing, silently.
                 _dimensions = ['experience_score', 'expertise_score',
                                'authoritativeness_score', 'trustworthiness_score']
-                if all((df_eeat[col] == UNKNOWN_CELL).all() for col in _dimensions):
+                if all((display_eeat[col] == UNKNOWN_CELL).all()
+                       for col in _dimensions):
                     report.append(
                         "> ⚠️ **No EEAT composite could be computed for any page.** The "
                         "signals below were read, but the scores were not: check that "
@@ -548,7 +558,7 @@ class ReportGenerator:
                     "not be computed — it used to read `high` for every page that "
                     "loaded. Authoritativeness uses the domain's Moz Domain Authority; "
                     "it was being given the individual URL's Page Authority._")
-                disp_eeat, eeat_note = self._capped(df_eeat, self.markdown_row_cap,
+                disp_eeat, eeat_note = self._capped(display_eeat, self.markdown_row_cap,
                                                     "scored page(s)")
                 report.append(eeat_note)
                 report.append(md_table(disp_eeat, index=False))

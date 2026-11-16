@@ -87,6 +87,27 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The Excel workbook's EEAT scores were text, because the display formatting ran in place on the frame the exporter gets.**
+- **Root cause (P16):** `USER_MANUAL.md` promises "**the Excel sheets always carry every row**",
+  and structurally they do — the exporter writes the full `df_*` frames, not the capped `disp_*`
+  ones. But the EEAT section formatted its four dimensions with
+  `df_eeat[col] = df_eeat[col].apply(...)`, in place, on `df_eeat` — which is the frame
+  `to_excel` receives 600 lines later. Four float64 columns were exported as **strings**: "0.6",
+  and "—" where a value was unknown. The owner could not sort, chart or average the EEAT scores,
+  and a display marker sat in a numeric column. My own `md_table` fills a copy for exactly this
+  reason, two hundred lines above.
+- **What would have caught it:** opening the workbook. Nothing ever had — the suite asserted on
+  the markdown only, so the second half of every briefing was unexamined.
+- **And my first attempt at the test was vacuous.** It asserted `is_numeric_dtype` on
+  `pd.read_excel`'s output and **passed with the defect restored**, because pandas parses the
+  string "0.6" back into a float on the way in: the stored cell is text and the reader hides it.
+  The test now reads the raw cell types with `openpyxl` (`cell.data_type == "n"`), and I verified
+  it fails when the in-place formatting is put back.
+- **Rule:** a reader that is helpful enough to coerce types will hide the bug you are testing
+  for. When the artifact is a file format, assert on the file, not on what your library makes of
+  it. And when a frame is both displayed and exported, format a copy — the two consumers want
+  different things, and the one that wants numbers is the one nobody looks at.
+
 **Three owner-facing report sections had never been rendered, because the test fixture mocks the components that fill them.**
 - **Root cause (P19):** the end-to-end harness MagicMocks `GeoProfiler`, `EEATScorer` and
   `ClusterDetector`, so no rendered briefing — in any test, or in any of the renderer's
