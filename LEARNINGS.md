@@ -87,6 +87,40 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The keyword-gap miner mined run 4 forever, could not apply the filter it claimed to apply, and its whole config block had been specified in 2026-05 and never built.**
+- **Root cause (P4 / P14 / P19):** `src/competitor_mining.py`, at 19% coverage, held a literal
+  for every value `docs/serp_tools_upgrade_spec_v3.md` had specified as a config key in May —
+  seven of them. `AUDIT_XLSX` pinned `audit_results_run_4.xlsx` (the spec's own default), so an
+  owner eleven audits later was ranking competitors from the fourth run; with no such workbook
+  in the repo it printed an error and wrote an EMPTY gap report that read like a finding.
+  `KEYWORDS_CSV` points into gitignored `serp-keyword/`, so the "we already target this" filter
+  returned an empty set and every competitor keyword read as a gap — while the report listed
+  "Filters Applied: … Target CSV: …", naming a file it had never opened. The brand filter was
+  `if brand in kw_lower`, the substring test `audit_universe.contains_brand_token` was written to
+  replace in C1. `search_volume` defaulted to 0 and was compared `< 10`, so an unmeasured volume
+  was dropped as a small one. And it had its own raw `requests.post` to the same
+  `ranked_keywords/live` endpoint `DataForSEOClient` already calls — no timeout, no retry,
+  unguarded `['tasks'][0]['result'][0]` indexing, a second copy of the payload.
+- **What would have caught the config half:** the guard I had written four hours earlier.
+  `test_documented_values` failed the moment I added my own `keywords_per_domain: 100`, because
+  the spec said 20 — which is how I found that the block had been designed and abandoned rather
+  than never conceived. I had been about to invent key names for knobs that already had
+  specified ones.
+- **Fix:** the spec's key names, wired. Two departures, surfaced rather than resolved quietly:
+  `keywords_per_domain` stays at the module's 100 rather than the spec's 20, because 100 is what
+  has been running and each keyword is billed, so the depth is the owner's call; and
+  `audit_xlsx_path` becomes an optional override, empty by default, because pinning a run number
+  is the defect — the latest workbook is now chosen **by run number, not mtime**, so a re-saved
+  old workbook cannot become "the latest audit". `brand_suffix_removal` and `enabled` were
+  deliberately NOT added, with reasons recorded in both the config and the spec. The report now
+  states whether the gap filter was applied at all, and names any domain the provider would not
+  answer for as unmeasured rather than gap-free.
+- **Rule:** before adding a config key, grep the specs for its name. A knob specified and never
+  built looks identical to a knob nobody thought of — until you add a second one beside it with
+  a different name and a different default, and now the owner has two. The guard that catches
+  this is the one that compares documents with the config, which is why it is worth having even
+  though its first week was mostly false positives.
+
 **I shipped a regression in C4a that silently zeroed seven signals across two composites, and found it a day later by writing the tests that chunk never had.**
 - **Root cause (P22 / P19):** C-M-19 (commit `7c98967`, 2026-11-15) added
   `SemanticAuditor._strip_boilerplate` so that nav, footer, `<header>`, menu divs, `<style>`

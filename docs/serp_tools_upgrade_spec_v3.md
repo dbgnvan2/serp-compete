@@ -373,6 +373,20 @@ Extract top keywords from competitors discovered in audit results. Identify keyw
 }
 ```
 
+> **Implemented 2026-11-16, and not as written above.** None of this block
+> existed in `shared_config.json` until then: the module held a literal for
+> every value. What landed, and why it differs:
+>
+> | Spec key | Status |
+> |---|---|
+> | `keywords_per_domain: 20` | **Wired as 100.** The module's literal was `limit: 100`, which is what has actually been running; each keyword is billed, so changing the depth is the owner's call rather than a side effect of wiring the key. The discrepancy is recorded in the config comment |
+> | `audit_xlsx_path: audit_results_run_4.xlsx` | **Wired as an optional override, empty by default.** Pinning a run number meant an owner eleven audits later was still ranking competitors from the fourth; the module now mines the latest `audit_results_run_*.xlsx` **by run number** (not mtime, so a re-saved old workbook cannot become "the latest audit") |
+> | `top_domains_limit: 5` | Wired as specified |
+> | `existing_keywords_csv` | Wired as specified. Note the file is in gitignored `serp-keyword/` and is absent here, so the gap filter cannot fire — the report now says so instead of listing the filter as applied |
+> | `output_markdown` | Wired as specified |
+> | `brand_suffix_removal` | **Deliberately not added.** `brand.name_suffixes` already serves it through `derive_brand_name`, and a second copy of that vocabulary would drift from the first |
+> | `enabled: true` | **Deliberately not added.** A flag nothing reads is the C-C-14 defect this review spent a chunk removing |
+
 **Success Criteria:**
 - ✅ Extracts top domains from audit results
 - ✅ Fetches keywords for each domain

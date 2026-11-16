@@ -439,6 +439,19 @@
     "_fragility_min_traffic_source": "editorial, uncalibrated, 2026-04 (moved to config 2026-11-16) — the estimated monthly visits a systems-free page must draw before it is worth reframing. Not derived from any outcome.",
     "fragility_min_traffic": 500
   },
+  "_competitor_mining_comment": "Serp-compete/src/competitor_mining.py — the standalone keyword-gap miner (competitor_keyword_gap.md). docs/serp_tools_upgrade_spec_v3.md specified this block in 2026-05 and NONE of it was implemented: the module held a literal for every value. The key names here are the spec's. Two deliberate departures, both surfaced rather than resolved quietly: (1) the spec's `keywords_per_domain: 20` against the module's literal `limit: 100` — 100 is kept because it is what has actually been running and each keyword is billed, so changing the depth is the owner's call, not a side effect of wiring the key; (2) the spec's `audit_xlsx_path: audit_results_run_4.xlsx` pinned one run forever, so the module now mines the LATEST audit_results_run_*.xlsx by run number and this key is an optional override, empty by default. The spec's `brand_suffix_removal` is NOT added: `brand.name_suffixes` already serves it through derive_brand_name, and a second copy of that vocabulary would drift. The spec's `enabled` flag is not added either — a flag nothing reads is the C-C-14 defect.",
+  "competitor_mining": {
+    "_keywords_per_domain_source": "operational, 2026-04 (moved to config 2026-11-16) — ranked keywords requested per competitor; each is billed by DataForSEO. The spec said 20; the code has been doing 100. See the comment above.",
+    "keywords_per_domain": 100,
+    "_min_search_volume_source": "editorial, uncalibrated, 2026-04 (moved to config 2026-11-16) — below this monthly search volume a gap keyword is not worth a brief.",
+    "min_search_volume": 10,
+    "_top_domains_limit_source": "spec default, 2026-05 (wired 2026-11-16)",
+    "top_domains_limit": 5,
+    "_audit_xlsx_path_comment": "Optional override. Empty means 'the latest audit_results_run_*.xlsx by run number', which is what the module now does; the spec's value pinned run 4.",
+    "audit_xlsx_path": "",
+    "existing_keywords_csv": "serp-keyword/keywords_Couple_Marriage_RelationshipLocal.csv",
+    "output_markdown": "competitor_keyword_gap.md"
+  },
   "handoff": {
     "supported_versions": [
       "1.0",

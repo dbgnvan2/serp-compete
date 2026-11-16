@@ -55,7 +55,8 @@ class DataForSEOClient:
         self.password = os.getenv("DATAFORSEO_PASSWORD")
         self.base_url = "https://api.dataforseo.com/v3"
 
-    def get_relevant_pages(self, domain: str) -> List[Dict[str, Any]]:
+    def get_relevant_pages(self, domain: str,
+                           limit: int = 10) -> List[Dict[str, Any]]:
         """
         POST https://api.dataforseo.com/v3/dataforseo_labs/google/ranked_keywords/live
 
@@ -64,6 +65,11 @@ class DataForSEOClient:
         (timeout + retry + backoff, 429/5xx retried, other 4xx terminal) and it never
         raises: `self.last_error` carries the reason so `run_audit` can name the
         domain in the report instead of dropping it silently (C-C-12).
+
+        `limit` defaults to the audit path's 10. It exists because
+        `competitor_mining` wanted 100 and had its own raw `requests.post` to the
+        same endpoint — no timeout, no retry, and a second definition of the
+        payload to drift from this one.
         """
         self.last_error = None
         url = f"{self.base_url}/dataforseo_labs/google/ranked_keywords/live"
@@ -71,7 +77,7 @@ class DataForSEOClient:
             "target": domain,
             "location_code": 2124, # Canada
             "language_code": "en",
-            "limit": 10
+            "limit": int(limit)
         }]
 
         response, error = post_with_retries(

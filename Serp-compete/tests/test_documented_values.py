@@ -48,6 +48,12 @@ EXCLUDED_DIRS = {
 #: hold: the log is newest-first, so every new entry shifts the line numbers.
 EXCLUDED_FILES = {
     "LEARNINGS.md",
+    # A 2026-05 proposal document. Its `competitor_mining` block was specified
+    # and never implemented; when it was finally wired on 2026-11-16 two values
+    # deliberately differed, and the spec now carries a table saying which and
+    # why. Its original figures are the record of what was proposed, so they
+    # must stay as written — exactly like IMPLEMENTATION_PLAN_v3.md below.
+    os.path.join("docs", "serp_tools_upgrade_spec_v3.md"),
     os.path.join("docs", "IMPLEMENTATION_PLAN_v3.md"),
     "RECONCILIATION_CHANGES.md",
     "sc7-yt-spec.md",
