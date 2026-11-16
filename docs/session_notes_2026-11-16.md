@@ -1,7 +1,7 @@
 # Session notes — 2026-11-16
 
-One overnight session on `main`, 19 commits, `77df7df`…`8580a0f`.
-Suite **641 → 892 passing, exit 0**. Coverage across `src/` **85%**.
+One overnight session on `main`, 25 commits, `77df7df`…`286d9f8`.
+Suite **641 → 920 passing, exit 0**. Coverage across `src/` **86%**.
 
 The assigned work was chunk X of the 2026-11-04 review (the compete half). The
 rest came from applying the same question to the places nothing had looked:
@@ -105,8 +105,21 @@ are invented — read the wording, the caveats and the N-of-M lines.
 - **Two caveats describing behaviour the code no longer had** (`rank_absolute`
   after C-C-17 moved to `rank_group`).
 
-All six were found by rendering a briefing and reading it. None is visible from
-a test suite, because a test asserts what someone thought to assert.
+- **`nan` again, in the EEAT table** — same `is not None` versus NaN confusion,
+  in a section that had **never been rendered at all**: the test harness
+  MagicMocks `GeoProfiler`, `EEATScorer` and `ClusterDetector`, so the EEAT,
+  Extractability and Cluster tables had never appeared in any briefing, in any
+  test. It only looked right when *every* value was NULL; the realistic case —
+  one competitor's Domain Authority unmeasured — printed "nan" beside the real
+  scores. The renderer's new `deep` scenario uses the real components over
+  fabricated HTML, and all fourteen sections now render.
+- **A table of unknowns with no stated cause.** An absent `eeat_weights` block
+  makes the scorer correctly compute nothing, silently. The section now names
+  the block to check.
+
+All of these were found by rendering a briefing and reading it. None is visible
+from a test suite, because a test asserts what someone thought to assert — and
+a mocked component is a section of the artifact nobody has ever seen.
 
 ### 2.2 Unknown collapsed into zero, or into a negative
 
@@ -167,12 +180,28 @@ Both replaced with behavioural equivalents.
 
 ---
 
+### 2.6 Two things I broke and caught in the same session
+
+Recorded because the commit log would otherwise read as if the work went
+straight through:
+
+- Extracting `load_config`/`save_config` left the orchestrator importing
+  `src.config_io`, which does not resolve under
+  `streamlit run Serp-compete/src/orchestrator.py` — **the GUI would have failed
+  at startup**. Fixed in `8a9ab97` with the dual-mode import
+  `competitor_mining` already uses, and guarded by a test that executes the
+  orchestrator's real import statements under a simulated `streamlit run` path.
+- The first `deep` render showed four columns of dashes and I spent a while
+  hunting a product bug that was a property of my own fixture: the test
+  `CONFIG` has no `eeat_weights`. The renderer now starts from the repo's own
+  `shared_config.json`.
+
 ## 3. New capabilities
 
 | | |
 |---|---|
 | `docs/handoff_contract.md` | What the Tool 1 handoff and exports *mean*, as opposed to `handoff_schema.json`, which says only whether a file is well-formed. Chunk X's deliverable |
-| `tools/render_sample_briefing.py` | A full briefing from fabricated data, four scenarios, no credentials. Found six of the defects above in one evening |
+| `tools/render_sample_briefing.py` | A full briefing from fabricated data, **five** scenarios, no credentials. Found eight of the defects above in one evening. `deep` uses the real scraper and the real three enrichment components, so the sections the test fixture mocks away actually render; `total-outage` has every provider down |
 | `tests/test_secrets_are_ignored.py` | CLAUDE.md's one CRITICAL rule, enforced by test rather than by attention |
 | `tests/test_persistence_map.py` | The schema doc cannot drift from the schema |
 | `tests/test_documented_values.py` | A threshold quoted in the docs must be the configured value |
