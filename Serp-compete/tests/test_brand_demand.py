@@ -239,3 +239,95 @@ def test_cc11_a_measured_zero_is_still_a_zero():
     assert by_domain["a.com"]["branded_search_volume"] == 0
     assert by_domain["a.com"]["estimation_basis"] == "volume_estimated"
     assert by_domain["b.com"]["branded_volume_share"] == 100.0
+
+
+# ── 2026-11-16: an absent volume figure is not a volume of zero ──────────────
+#
+# `get_search_volume` is careful at every level except the row: a transport
+# failure, an unparseable body and an empty result all return None — with a
+# comment saying "treated as unavailable, not as zero" — while a row whose
+# `search_volume` is null became 0. DataForSEO also reports a genuine 0 for a
+# keyword nobody searches, so the consumer could not tell the two apart. And
+# `compute_branded_demand` summed with `or 0`, re-coercing it a layer later.
+
+def _vols(*volumes):
+    """A provider result: one query per volume, None meaning "no figure"."""
+    return {f"brand query {n}": {"search_volume": v, "monthly_searches": []}
+            for n, v in enumerate(volumes)}
+
+
+def test_a_brand_whose_queries_carry_no_figures_is_unmeasured():
+    """Not "no branded demand" at a 0.00% share."""
+    from src.brand_demand import compute_branded_demand
+
+    rows = compute_branded_demand(
+        {"rival.ca": "Rival Counselling", "other.ca": "Other Counselling"},
+        lambda kws: _vols(None, None) if "rival" in " ".join(kws).lower()
+        else _vols(400),
+        config={}, period="2026-11")
+    by_domain = {r["domain"]: r for r in rows}
+    assert by_domain["rival.ca"]["estimation_basis"] == "volume_unavailable"
+    assert by_domain["rival.ca"]["branded_search_volume"] is None
+    assert by_domain["rival.ca"]["branded_volume_share"] is None
+    # …and the brand that WAS measured is unaffected.
+    assert by_domain["other.ca"]["branded_search_volume"] == 400
+
+
+def test_a_partial_total_is_labelled_partial_not_estimated():
+    """Two queries answered, one with a figure: the total is a lower bound, and
+    the share built from it understates this brand against the others."""
+    from src.brand_demand import compute_branded_demand
+
+    rows = compute_branded_demand(
+        {"rival.ca": "Rival Counselling"},
+        lambda kws: _vols(300, None),
+        config={}, period="2026-11")
+    assert rows[0]["estimation_basis"] == "volume_estimated_partial"
+    assert rows[0]["branded_search_volume"] == 300
+
+
+def test_a_complete_total_is_still_plain_estimated():
+    from src.brand_demand import compute_branded_demand
+
+    rows = compute_branded_demand(
+        {"rival.ca": "Rival Counselling"},
+        lambda kws: _vols(300, 100),
+        config={}, period="2026-11")
+    assert rows[0]["estimation_basis"] == "volume_estimated"
+    assert rows[0]["branded_search_volume"] == 400
+
+
+def test_a_measured_zero_is_still_a_measurement():
+    """DataForSEO reporting 0 searches is data, and must not become unknown."""
+    from src.brand_demand import compute_branded_demand
+
+    rows = compute_branded_demand(
+        {"rival.ca": "Rival Counselling"},
+        lambda kws: _vols(0),
+        config={}, period="2026-11")
+    assert rows[0]["branded_search_volume"] == 0
+    # The whole-market zero check (`volume_unavailable`) still fires here,
+    # because this single brand IS the whole market in this fixture and a
+    # market-wide zero really does mean the provider is down. The point of the
+    # test is the VALUE: a measured 0 must survive as 0, not become None.
+    assert rows[0]["branded_search_volume"] is not None
+    assert rows[0]["estimation_basis"] == "volume_unavailable"
+
+
+def test_the_api_client_preserves_an_absent_volume(requests_mock):
+    """The layer below: it used to coerce before the consumer ever saw it, so
+    competitor_mining's own unmeasured branch could never be reached."""
+    from src.api_clients import DataForSEOClient
+
+    requests_mock.post(
+        "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live",
+        json={"tasks": [{"result": [
+            {"keyword": "has a figure", "search_volume": 250},
+            {"keyword": "has none", "search_volume": None},
+            {"keyword": "measured zero", "search_volume": 0},
+        ]}]})
+    out = DataForSEOClient().get_search_volume(
+        ["has a figure", "has none", "measured zero"])
+    assert out["has a figure"]["search_volume"] == 250
+    assert out["has none"]["search_volume"] is None
+    assert out["measured zero"]["search_volume"] == 0

@@ -87,6 +87,33 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**`get_search_volume` was careful at every level except the one its own comment did not cover, and the consumer re-coerced what I had just fixed.**
+- **Root cause (H2, two layers):** `DataForSEOClient.get_search_volume` returns None on a
+  transport failure, None on an unparseable body, and None on an empty result — the last with
+  the comment *"treated as unavailable, not as zero"*. A ROW whose `search_volume` was null
+  became **0**. DataForSEO also reports a genuine 0 for a keyword nobody searches, so no consumer
+  could tell "no figure" from "no searches". And `compute_branded_demand` summed the rows with
+  `or 0`, so even a preserved None would have been flattened a layer later. A brand whose
+  queries were answered without volumes was published as having **no branded demand, at a
+  0.00% share, with basis `volume_estimated`** — the exact sentence C-C-11's own comment
+  describes as the thing it fixed, three lines above the line that still did it.
+- **It also defeated a fix I had made four hours earlier.** `competitor_mining` now counts a
+  keyword with no volume figure as unmeasured rather than dropping it as small — a branch that
+  could never be reached, because the client coerced to 0 before the consumer ever saw it. A
+  consumer-side null check is worthless unless the producer preserves the null.
+- **What would have caught it:** grepping the PATTERN (`or 0`, `get(…, 0)`) across `src/` rather
+  than trusting the chunk that fixed the class. That sweep took one command and surfaced this
+  plus `client_da` defaulting to 0.
+- **Fix:** the client preserves None (and a measured 0 stays 0). `compute_branded_demand` sums
+  only the rows with figures, treats "answered, no figure for any query" as unmeasured, and
+  labels a partial total `volume_estimated_partial` — a lower bound, which understates that
+  brand's share against the others. The ambiguity probe no longer compares against a summed-up
+  0, which had been letting every ambiguous brand through the gate.
+- **Rule:** a function that handles absence at three levels and coerces at the fourth reads as
+  careful, and the comment explaining the three is what stops anyone checking the fourth. When
+  fixing a null-handling class, fix it at the producer FIRST — otherwise every consumer-side
+  guard is dead code that looks like diligence.
+
 **The SERP-overlap top-10 test is asymmetric, so a keyword nobody wins is reported as "your clearest content gap". Four consumers of H1 in total, each distorted differently.**
 - **Root cause (H1, consumed a fourth time):** `build_overlap_rows` filters competitor
   positions on `p <= top_n` and the client's on `raw_self <= top_n`. The competitor side comes

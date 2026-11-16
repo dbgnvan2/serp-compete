@@ -119,6 +119,10 @@ def compute_branded_demand(brand_by_domain: Dict[str, str],
     queries_used: Dict[str, List[str]] = {}
     ambiguous: Dict[str, bool] = {}
     unmeasured: Dict[str, bool] = {}
+    #: domain -> (queries with a volume figure, queries asked). A partial
+    #: total is a LOWER BOUND on the brand's demand, and the share built
+    #: from it understates that brand against the others.
+    partial: Dict[str, tuple] = {}
     for domain, brand in brand_by_domain.items():
         if not brand or is_generic_brand(brand, generic):
             pruned[domain] = True
@@ -135,7 +139,21 @@ def compute_branded_demand(brand_by_domain: Dict[str, str],
         if vols is None:
             unmeasured[domain] = True
             continue
-        volume[domain] = sum(int(v.get("search_volume") or 0) for v in vols.values())
+        # Sum only the rows that carry a figure, and remember how many did.
+        # `or 0` here re-coerced what api_clients had just been fixed to
+        # preserve: a brand whose queries DataForSEO answered without volumes
+        # summed to 0 and was published as having no branded demand, at a 0.00%
+        # share, with basis `volume_estimated` — the same defect C-C-11 fixed
+        # one layer up, in the layer below it.
+        measured = [int(v["search_volume"]) for v in vols.values()
+                    if v.get("search_volume") is not None]
+        if vols and not measured:
+            # Answered, but with no figure for any query: not measured.
+            unmeasured[domain] = True
+            continue
+        if len(measured) < len(vols):
+            partial[domain] = (len(measured), len(vols))
+        volume[domain] = sum(measured)
         growth[domain] = compute_growth(
             _aggregate_monthly([v.get("monthly_searches", []) for v in vols.values()]), window)
 
@@ -144,8 +162,14 @@ def compute_branded_demand(brand_by_domain: Dict[str, str],
         token = str(tokens.get(domain) or "").strip()
         if token and token.lower() != str(brand).strip().lower():
             probe = volume_provider([token]) or {}   # None (outage) → no probe, no gate
-            token_volume = sum(int(v.get("search_volume") or 0) for v in probe.values())
-            if is_ambiguous_brand(volume[domain], token_volume, ratio):
+            # Only real figures gate the ambiguity test. Summing absent ones
+            # as 0 made the bare stem look un-searched, so the gate silently
+            # passed every ambiguous brand through.
+            probe_values = [int(v["search_volume"]) for v in probe.values()
+                            if v.get("search_volume") is not None]
+            token_volume = sum(probe_values) if probe_values else None
+            if (token_volume is not None
+                    and is_ambiguous_brand(volume[domain], token_volume, ratio)):
                 ambiguous[domain] = True
                 queries_used[domain].append(f"[ambiguity probe] {token}")
 
@@ -179,6 +203,8 @@ def compute_branded_demand(brand_by_domain: Dict[str, str],
             basis = "volume_unavailable"
         elif ambiguous.get(domain):
             basis = "ambiguous_brand"
+        elif partial.get(domain):
+            basis = "volume_estimated_partial"
         elif is_own and own_anchor is not None:
             basis = "gsc_anchored"
         else:

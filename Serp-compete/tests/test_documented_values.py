@@ -127,8 +127,19 @@ def _numbers_after(text, key):
     tail = re.sub(
         r"\b(?:decision|decisions|chunk|chunks|finding|findings|section|sections"
         r"|step|steps|gap|gaps|part|parts|phase|phases|task|tasks|revision"
-        r"|table|figure|rev|v)\s+[A-Za-z-]*\d+(?:\.\d+)*",
+        r"|table|figure|rev|v"
+        # "page 2 or 3" is prose about SERP pages, and the whole H1 discussion
+        # is about them, so it recurs beside `magnet_max_position` constantly.
+        r"|page|pages)\s+[A-Za-z-]*\d+(?:\.\d+)*"
+        # …and the continuation of a list: "page 2 or 3",
+        # "decisions 4 and 8", "steps 7-9". Stripping only the first
+        # number left the rest behind, which is how "page 2 or 3" still
+        # tripped the guard.
+        r"(?:\s*(?:or|and|to|through|[-\u2013])\s*\d+(?:\.\d+)*)*",
         " ", tail, flags=re.IGNORECASE)
+    # A multiplier is not a threshold: "~3\u00d7 its own definition", and the
+    # "\u00d71.0 / \u00d70.5 / \u00d72.0" scoring weights already in these docs.
+    tail = re.sub(r"\u00d7\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*\u00d7", " ", tail)
     return {float(n) for n in re.findall(r"(?<![\w.\-])(\d+(?:\.\d+)?)(?![\w.\-])", tail)}
 
 
@@ -266,4 +277,63 @@ class TestNumberedCrossReferencesAreNotValues(unittest.TestCase):
         self.assertEqual(
             _numbers_after("`vacuum_min_medical` is 10, per decision 3",
                            "vacuum_min_medical"),
+            {10.0})
+
+
+class TestSerpPageNumbersAreNotValues(unittest.TestCase):
+    """"page 2 or 3" is prose, not a threshold — false positive #3.
+
+    It arose beside `magnet_max_position`, in a sentence explaining that the
+    filter admits results from the second and third SERP pages. The whole H1
+    discussion is about SERP pages, so the phrasing recurs.
+    """
+
+    def test_a_serp_page_reference_is_ignored(self):
+        self.assertEqual(
+            _numbers_after("`magnet_max_position`: some of these pages are on "
+                           "page 2 or 3 of the SERP", "magnet_max_position"),
+            set())
+
+    def test_a_real_value_beside_a_page_reference_still_counts(self):
+        self.assertEqual(
+            _numbers_after("`magnet_max_position` is 10, and page 3 results pass",
+                           "magnet_max_position"),
+            {10.0})
+
+    def test_a_stale_value_beside_a_page_reference_is_still_caught(self):
+        self.assertEqual(
+            _numbers_after("`magnet_max_position` is 20, and page 3 results pass",
+                           "magnet_max_position"),
+            {20.0})
+
+    def test_a_list_continuation_is_ignored_too(self):
+        """Stripping only the first number left "or 3" behind."""
+        for phrase in ("page 2 or 3", "pages 2 and 3", "page 2-3",
+                       "pages 2 through 4"):
+            self.assertEqual(
+                _numbers_after(f"`magnet_max_position`: results on {phrase}",
+                               "magnet_max_position"),
+                set(), phrase)
+
+    def test_a_decision_list_is_ignored(self):
+        self.assertEqual(
+            _numbers_after("`magnet_max_position`, per decisions 4 and 8",
+                           "magnet_max_position"),
+            set())
+
+    def test_a_multiplier_is_not_a_value(self):
+        """"~3× its own definition", and the ×1.0 / ×0.5 / ×2.0 weights."""
+        self.assertEqual(
+            _numbers_after("`magnet_max_position`: the list is ~3× its definition",
+                           "magnet_max_position"),
+            set())
+        self.assertEqual(
+            _numbers_after("`magnet_max_position` weighted ×2.0 then ×0.5",
+                           "magnet_max_position"),
+            set())
+
+    def test_a_real_value_beside_a_multiplier_still_counts(self):
+        self.assertEqual(
+            _numbers_after("`magnet_max_position` is 10, giving ~3× the rows",
+                           "magnet_max_position"),
             {10.0})

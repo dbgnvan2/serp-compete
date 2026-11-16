@@ -861,7 +861,10 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
   samples, so the signal is often withheld; that is deliberate (§5.3).
 - **AI-era comparison features are consumed/estimated, honestly labelled.** AI Share-of-Voice
   is a rolling snapshot consumed from serp-discover (absent when there's no export, never
-  zero); Branded-Demand competitor figures are search-volume estimates (only your own can be
+  zero); Branded-Demand competitor figures are search-volume estimates, labelled
+  `volume_unavailable` when the provider gave no figure for any of a brand's queries and
+  `volume_estimated_partial` when it gave one for only some — a partial total is a LOWER bound
+  and understates that brand's share against the others (2026-11-16); only your own can be
   GSC-anchored) and say so when the source is down; Reputation-Risk items are *pattern
   detections, not confirmed Google penalties*.
 - **One site is one competitor, whichever spelling the handoff used** (since

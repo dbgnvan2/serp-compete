@@ -151,7 +151,18 @@ class DataForSEOClient:
         for item in result:
             kw = str(item.get('keyword') or '').lower()
             if kw:
-                out[kw] = {'search_volume': item.get('search_volume') or 0,
+                # `None`, not 0, when the row carries no figure. This function
+                # is careful at every other level — a transport failure, an
+                # unparseable body and an empty result all return None, with a
+                # comment below saying "treated as unavailable, not as zero" —
+                # and coerced at the one level that comment does not cover.
+                # DataForSEO also reports a genuine 0 for a keyword nobody
+                # searches, so a consumer could not tell "no figure" from "no
+                # searches", and `competitor_mining`'s own unmeasured-volume
+                # branch could never be reached (C-C-11, one layer in).
+                volume = item.get('search_volume')
+                out[kw] = {'search_volume': (None if volume is None
+                                             else int(volume)),
                            'monthly_searches': item.get('monthly_searches') or []}
         if not out:
             print("DataForSEO search_volume returned no rows for "
