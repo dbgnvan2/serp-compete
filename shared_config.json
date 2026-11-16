@@ -434,6 +434,11 @@
       "relationship counselling north vancouver": "Tracing the Reciprocity in Relationship Anxiety"
     }
   },
+  "_infiltrator_comment": "Serp-compete/src/infiltrator.py — the standalone fragility list (competitor pages with traffic and no Bowen systemic language). `fragility_min_traffic` was the literal `est_traffic > 500` in that module until 2026-11-16.",
+  "infiltrator": {
+    "_fragility_min_traffic_source": "editorial, uncalibrated, 2026-04 (moved to config 2026-11-16) — the estimated monthly visits a systems-free page must draw before it is worth reframing. Not derived from any outcome.",
+    "fragility_min_traffic": 500
+  },
   "handoff": {
     "supported_versions": [
       "1.0",

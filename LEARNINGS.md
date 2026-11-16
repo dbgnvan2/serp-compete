@@ -87,6 +87,34 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The fragility list scored pages it had never read, because the guard was `if not content:` on a dataclass.**
+- **Root cause (P16 / P14):** `src/infiltrator.py` (documented in `compete-spec.md`#C3 as a live
+  implementation, 0% coverage until 2026-11-16) scrapes a competitor page and scores it. The
+  guard was `if not content: continue` — and `scrape_content` has returned a `ScrapedPage`
+  dataclass since chunk C2. A dataclass with no `__bool__` is ALWAYS truthy, so a page whose
+  fetch was blocked or errored passed the guard and had its 403 body counted as prose.
+  `main.py` has branched on `extraction_status` since C-C-09; this module never did, and the
+  change that made the old guard meaningless was in a different file.
+- **Same module, second defect:** `est_traffic` fell back to 0 and 0 was then compared with
+  `> 500`, so a page whose traffic DataForSEO did not report was classified "Standard" — not
+  fragile — on the strength of a number nobody measured. `page_traffic` now returns None for
+  unmeasured, a measured 0 stays 0, and there is a third verdict ("Traffic not measured")
+  instead of folding the unknown into the negative.
+- **What would have caught it:** `coverage report --sort=cover`. It took one command to find
+  four modules at 0%, two of which — this and `strike_mapper` — were documented as done and
+  carried defects of exactly the class the 2026-11-04 review was commissioned to find.
+- **Fix:** `_readable()` branches on `extraction_status` (and still accepts a plain string, which
+  was the pre-dataclass contract); the threshold moved to
+  `shared_config.json → infiltrator.fragility_min_traffic`; the report leads with its coverage so
+  an empty table cannot read as "nothing is fragile"; clients are injectable so the thing is
+  testable at all; and running it with no arguments no longer scrapes two hard-coded real
+  competitor domains by default. 26 tests.
+- **Rule:** when a function's return type changes, every truthiness test on it elsewhere becomes
+  a silent always-true. `if not x` on an object is a bug waiting for someone to change what `x`
+  is, and the change will be in a file the author of the `if` never opens. And run coverage
+  occasionally: a module at 0% is not untested code, it is unexamined code, and the two defects
+  above had been live for months behind a "✅ Done".
+
 **A content tool wrote five invented keywords into the owner's pillar draft, and the docs said it was tested.**
 - **Root cause (P14 / P8 / P4):** `src/strike_mapper.py` maps the GSC strike list onto the pillar
   draft's H2s. `gsc_strike_list.md` in this repo holds exactly one row — `| No data | - | - | - |
