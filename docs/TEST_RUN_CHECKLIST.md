@@ -66,6 +66,25 @@ Outputs: `strategic_briefing_run_N.md` + `audit_results_run_N.xlsx`, in
 - [ ] Each long section that was capped says "Showing the first N of M" — and the Excel
   sheet for it has **all M rows** (C-C-07). Spot-check one: *GEO Extractability*.
 
+## 0. Before a live run — read a rendered briefing for free
+
+```bash
+python3 tools/render_sample_briefing.py full -o sample_briefings
+```
+
+Renders a complete briefing from fabricated data: no API keys, no GSC property,
+no Moz token, no handoff. **The numbers are invented — read the wording, the
+caveats and the N-of-M lines, not the figures.** `--list` describes the three
+scenarios; `authority-drop` runs twice so the Fragile Magnet section fires.
+
+This is not §4 of the review protocol (which diffs a real regenerated briefing
+against the previous one, and needs the artifacts only a developer machine
+has). It is the cheap version, and in one evening it caught `nan` printed where
+a value had been deliberately withheld, a timestamp printed among the failure
+counts, `–` in the owner's report, and two caveats describing behaviour the
+code no longer had. Run it after any change to `reporting.py`,
+`comparison_features.py` or a caveat string, and skim the output.
+
 ## 2c. Handoff contract (chunk X) — the cross-tool checks
 - [ ] **One site, one competitor.** If the handoff carries both `www.x.com` and `x.com`
   for one site (grep the targets), the briefing must list that domain **once** and the

@@ -13,3 +13,7 @@ token.json
 venv/
 __pycache__/
 serp-keyword/
+
+# Output of tools/render_sample_briefing.py — fabricated briefings for reading,
+# never a deliverable.
+sample_briefings/
