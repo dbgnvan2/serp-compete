@@ -87,6 +87,37 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The GUI's config write was not atomic, and a truncated `shared_config.json` is silently catastrophic rather than loudly broken.**
+- **Root cause (P16):** `orchestrator.save_config` was
+  `open(SHARED_CONFIG_PATH, 'w')` then `json.dump`. The open truncates
+  immediately, so a process killed mid-write, a full disk, or two GUI interactions racing leaves
+  the file half-written. That is not a loud failure: `scoring_logic.load_shared_config` swallows
+  every exception and returns `{}` — which I had asserted earlier the same day as deliberate for
+  the scoring path — so the next audit runs with **every threshold at its Python default and an
+  EMPTY clinical vocabulary**, scoring every page 0 and reporting nothing wrong. Two reasonable
+  decisions in two files compose into a silent catastrophe.
+- **Same function, second defect:** `json.dump` defaults to `ensure_ascii=True`. The config is
+  now full of provenance notes containing em dashes and arrows, so the first time anyone changed
+  the reports directory in the GUI, every comment in the file would have been rewritten as
+  `\u2014` and `\u2192`. Valid JSON, identical values, and the whole file unreadable in a diff.
+- **What would have caught it:** nothing could. The orchestrator is a Streamlit script —
+  importing it runs the UI — so it sits at 0% coverage and none of it is reachable from a test.
+  The two functions that could do damage are now `src/config_io.py`, which is importable.
+- **Fix:** write to a temporary file in the **same directory** (`os.replace` is only atomic
+  within one filesystem, and `/tmp` is usually another), fsync, then replace; on any exception
+  the original is untouched and the temporary is removed. `ensure_ascii=False`. It refuses an
+  empty mapping over a non-empty file, because every caller arrives having loaded the file and
+  changed one key, so an empty config means an upstream failure — and the one thing worse than
+  losing a setting is erasing the config the audit reads. `load_config` RAISES on a corrupt
+  file, unlike its scoring-path cousin: treating a corrupt file as `{}` and then saving would
+  overwrite it with the single key the GUI changed.
+  The strongest test is the simplest: the repo's own `shared_config.json` must round-trip
+  byte-for-byte.
+- **Rule:** a config file that a UI writes and a pipeline reads needs an atomic write, and the
+  reason is not the write — it is the reader. Ask what the consumer does with a corrupt file
+  before deciding how careful the producer has to be. Here the consumer was deliberately
+  forgiving, which is exactly what made the producer's carelessness invisible.
+
 **A committed config file carried the path to a developer's machine, published their username and the OAuth client ID, broke GSC auth everywhere else — and a test required it to be that way.**
 - **Root cause (P4 / P19):** `shared_config.json` is committed and pushed. Its
   `auth.gsc_client_secrets` held

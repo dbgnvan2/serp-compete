@@ -10,16 +10,14 @@ ST_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SERP_COMPETE_DIR = os.path.join(ST_ROOT, "Serp-compete")
 SHARED_CONFIG_PATH = os.path.join(ST_ROOT, "shared_config.json")
 
-# Load shared config
-def load_config():
-    if os.path.exists(SHARED_CONFIG_PATH):
-        with open(SHARED_CONFIG_PATH, 'r') as f:
-            return json.load(f)
-    return {}
-
-def save_config(config):
-    with open(SHARED_CONFIG_PATH, 'w') as f:
-        json.dump(config, f, indent=2)
+# Load shared config. The read/write pair lives in src/config_io.py, which is
+# importable and therefore testable — this module is a Streamlit script, so
+# importing it runs the UI. Both functions had a defect worth not repeating:
+# the write was not atomic (a half-written shared_config.json makes
+# load_shared_config return {} and the next audit score every page with an
+# empty vocabulary), and json.dump's default escaped every em dash in the
+# config's provenance notes.
+from src.config_io import load_config, save_config, set_orchestrator_setting  # noqa: E402
 
 shared_config = load_config()
 default_handoff_dir = shared_config.get("orchestrator", {}).get("handoff_source_dir",
@@ -61,11 +59,7 @@ with config_tab1:
 
     # Save as default if different
     if handoff_dir != default_handoff_dir:
-        config = load_config()
-        if "orchestrator" not in config:
-            config["orchestrator"] = {}
-        config["orchestrator"]["handoff_source_dir"] = handoff_dir
-        save_config(config)
+        set_orchestrator_setting("handoff_source_dir", handoff_dir)
 
     # Find handoff files in selected directory
     if os.path.exists(handoff_dir):
@@ -103,11 +97,7 @@ with config_tab2:
     )
 
     if reports_dir != default_reports_dir:
-        config = load_config()
-        if "orchestrator" not in config:
-            config["orchestrator"] = {}
-        config["orchestrator"]["reports_dir"] = reports_dir
-        save_config(config)
+        set_orchestrator_setting("reports_dir", reports_dir)
 
 st.sidebar.markdown("---")
 
