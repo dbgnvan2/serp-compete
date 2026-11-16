@@ -1,7 +1,7 @@
 # Session notes — 2026-11-16
 
-One overnight session on `main`, 28 commits, `77df7df`…`HEAD`.
-Suite **641 → 924 passing, exit 0**. Coverage across `src/` **87%**.
+One overnight session on `main`, 32 commits, `77df7df`…`HEAD`.
+Suite **641 → 931 passing, exit 0**. Coverage across `src/` **87%**.
 Verified under three random test orderings and two sequential runs, with no
 files created in the repo and the real audit database untouched.
 
@@ -59,18 +59,46 @@ vocabulary — but they are **not evidence of search demand**, and nothing in th
 draft says so. Your call whether to keep them. The tool now refuses to invent
 them (`1a075e8`).
 
-### 1.4 Decisions still waiting on you
+### 1.4 H1 has four consumers here, and two of them invert a verdict
+
+Found by enumerating every read of the rank column rather than trusting that
+"H1 is a serp-discover finding". Each is distorted differently, all four are
+driven by `handoff.absolute_rank_versions`, and D1 retires all four warnings at
+once:
+
+| Consumer | What a page-relative rank does to it |
+|---|---|
+| **Traffic Magnets / Vacuums / reframes** | `rank ≤ 10` admits **29 of 29** results on the reference run's distribution. The criterion the docs call "ranks well" is vacuous, `magnet_max_position` has no effect, and the list is ~3× its own definition — some pages are on page 2 or 3 |
+| **Barbell authority** | every handoff keyword counts as a top-10 ranking, so ten of them saturate the component. **+21 to +27 points**, across `authority_threshold` (50): DA 30 with *no* genuine top-10 ranking reads **51** instead of 30, i.e. `authoritative` instead of `emerging` |
+| **SERP Overlap** | **asymmetric.** Rivals pass the top-10 test at any true position (handoff rank); you pass only if genuinely top-10 (absolute GSC). Rivals at 14/22/27 with you at **12** → `exclusive_competitor`, "your clearest content gaps", for a keyword nobody wins and you are closest on. `exclusive_self` is suppressed |
+| **Visibility cliff** | `ranked == attempted`, so the series is a constant 1.0. It could not fire **even with a large sample** |
+
+Every one is now stated in the section where you act, with its arithmetic.
+Nothing was silently corrected: reconstructing an absolute rank from the
+sequence's resets is inferable in principle and silently wrong the moment Tool 1
+reorders its targets.
+
+**This changes the basis of decision 5.** You kept the visibility cliff because
+the sample is usually too small. The stronger reason is that its input is
+degenerate — constant 1.0 — so sample size is not what is stopping it. Worth
+revisiting on that footing.
+
+**And it is the case for D1 being next.** One upstream defect, four distinct
+distortions in the owner-facing output, two of them inverting a verdict.
+
+### 1.5 Decisions still waiting on you
 
 | | |
 |---|---|
 | **Decision 4** | Which side canonicalises domains. Compete is defensive either way, so nothing is blocked — see `docs/handoff_contract.md` §1.3 |
+| **Decision 5** | You kept the visibility cliff on the grounds that the sample is usually too small. §1.4 shows its input is a constant 1.0, so sample size is not what stops it — worth revisiting on that footing |
 | **Decision 8** | Raise `technical.max_audit_pages_per_domain`, or demote the barbell/EEAT/cluster sections at N≤3. Chunks C4b/C4c and chunk X deliberately did not pre-empt this |
 | **`step_dag.py`** | Built, correct, 13 passing tests, and reachable from nothing. Its config key was deleted as having no reader. Wire it into the orchestrator (a feature: step order becomes owner-configurable, with a bad config able to stop the audit) or delete it with its test. Not a cleanup decision |
 | **`market_gaps`, `semantic_audit_results`** | Two tables created on every run that nothing writes. Neither holds data. Drop them or build the richer `semantic_audit_results` deliberately — `docs/DATA_PERSISTENCE_MAP_v3.md` §1.4 |
 | **`competitor_mining.keywords_per_domain`** | The 2026-05 spec said 20; the code has been doing 100, and that is what I wired. Each keyword is billed — your call |
 | **C-C-04** | One Moz client shape for both tools still needs a live call to settle. `docs/TEST_RUN_CHECKLIST.md` §1b carries the check |
 
-### 1.5 Before your next live run
+### 1.6 Before your next live run
 
 `docs/TEST_RUN_CHECKLIST.md` gained **§0** (render a briefing for free and read
 it) and **§2c** (the chunk X cross-tool checks). §0 is the cheap stand-in for
