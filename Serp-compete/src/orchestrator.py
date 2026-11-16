@@ -17,7 +17,18 @@ SHARED_CONFIG_PATH = os.path.join(ST_ROOT, "shared_config.json")
 # load_shared_config return {} and the next audit score every page with an
 # empty vocabulary), and json.dump's default escaped every em dash in the
 # config's provenance notes.
-from src.config_io import load_config, save_config, set_orchestrator_setting  # noqa: E402
+#
+# Dual-mode, like `competitor_mining`: `run_gui.sh` does
+# `streamlit run Serp-compete/src/orchestrator.py`, which puts the SCRIPT's
+# directory (`src/`) on sys.path — not `Serp-compete/` — so `src.config_io` is
+# not importable there. The package-qualified form is tried first so the module
+# still resolves when something imports it as `src.orchestrator`.
+try:
+    from src.config_io import (load_config, save_config,  # noqa: F401
+                               set_orchestrator_setting)
+except ImportError:  # pragma: no cover - the `streamlit run` path
+    from config_io import (load_config, save_config,  # noqa: F401
+                           set_orchestrator_setting)
 
 shared_config = load_config()
 default_handoff_dir = shared_config.get("orchestrator", {}).get("handoff_source_dir",

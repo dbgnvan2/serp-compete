@@ -217,3 +217,84 @@ class TestTheRealConfigSurvivesARoundTrip(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheOrchestratorCanActuallyImportThis(unittest.TestCase):
+    """`run_gui.sh` does `streamlit run Serp-compete/src/orchestrator.py`.
+
+    That puts the SCRIPT's directory (`src/`) on `sys.path`, not
+    `Serp-compete/` — so `from src.config_io import …` raises
+    `ModuleNotFoundError: No module named 'src'` there. Extracting these
+    functions introduced exactly that break, and nothing in the suite could
+    have caught it: importing `orchestrator` runs the Streamlit UI, so no test
+    imports it.
+
+    This executes the orchestrator's REAL import statements, read from the
+    file, under the `streamlit run` path — without running the UI body. It is
+    the lesson from `competitor_mining`'s dual-mode imports, which the repo's
+    own LEARNINGS records as "assert the import in a test, don't trust that the
+    class merely exists".
+    """
+
+    ORCHESTRATOR = os.path.abspath(os.path.join(
+        os.path.dirname(__file__), "..", "src", "orchestrator.py"))
+
+    def _import_statements(self):
+        """Every top-level `import` / `from … import` in the orchestrator."""
+        import ast
+
+        with open(self.ORCHESTRATOR, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+        out = []
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                out.append(node)
+            elif isinstance(node, ast.Try):
+                # The dual-mode guard is a Try at module level.
+                if all(isinstance(inner, (ast.Import, ast.ImportFrom))
+                       for inner in node.body):
+                    out.append(node)
+        return out
+
+    def test_the_imports_resolve_with_only_src_on_the_path(self):
+        import ast
+        import subprocess
+        import sys
+
+        statements = self._import_statements()
+        self.assertTrue(statements, "no import statements found")
+        source = "\n".join(ast.unparse(node) for node in statements)
+
+        # `streamlit` is a GUI-only dependency that `run_gui.sh` installs on
+        # demand, so it is not in this environment. Stubbed, because what is
+        # under test is whether the REPO's own imports resolve — not whether
+        # Streamlit is installed.
+        script = "\n".join([
+            "import sys, types",
+            'sys.modules.setdefault("streamlit", types.ModuleType("streamlit"))',
+            # Exactly what `streamlit run <path>` does: the script's directory
+            # goes on sys.path, and nothing else from this repo.
+            f"sys.path.insert(0, {os.path.dirname(self.ORCHESTRATOR)!r})",
+            source,
+            'print("ok")',
+        ])
+
+        result = subprocess.run([sys.executable, "-c", script],
+                                capture_output=True, text=True,
+                                cwd=os.path.dirname(os.path.dirname(
+                                    os.path.dirname(self.ORCHESTRATOR))))
+        self.assertEqual(result.returncode, 0, (
+            "the orchestrator's imports do not resolve under `streamlit run`, "
+            "so the GUI would fail at startup:\n" + result.stderr))
+
+    def test_the_helpers_are_among_what_it_imports(self):
+        """So the test above is actually exercising them."""
+        import ast
+
+        names = set()
+        for node in self._import_statements():
+            for inner in (node.body if isinstance(node, ast.Try) else [node]):
+                if isinstance(inner, ast.ImportFrom):
+                    names.update(alias.name for alias in inner.names)
+        self.assertIn("load_config", names)
+        self.assertIn("set_orchestrator_setting", names)
