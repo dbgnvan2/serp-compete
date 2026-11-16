@@ -181,6 +181,18 @@ Newest first. Format:
   `shared_config.json` again — the second read resolves relative to `src/`, so an
   orchestrator- or test-supplied config was ignored and the report could have described a rank
   convention the run was not using.
+- **Caught on an adversarial re-read of this chunk's own diff, same day:** the SoV engine gate
+  I had just written was two-valued, and so stored a row contradicting itself. An engine listed
+  in the export with no brand-mention rows at all was recorded as `measured = 1,
+  questions_total = 0` — "we asked nothing and that counts as measured". From the export alone
+  that case is genuinely ambiguous: the questions may have been asked with no tracked brand
+  coming back, or the engine may never have run. `measured` is now three-valued (1 / 0 / NULL)
+  with its own report wording, and the same re-read found that a zero-question engine's
+  *citations* were still being published, which would have put a citation share in the report
+  for a run that did not happen. The lesson is about the shape of the fix, not the bug: I
+  replaced a two-state coercion (`or 0`) with a different two-state coercion, which is how the
+  null-is-not-zero class keeps coming back — the question to ask is how many states the SOURCE
+  can distinguish, not how many the consumer finds convenient.
 - **Rule:** a contract test must call the thing it is a contract for. If a test re-implements the
   code it covers, it tests the copy. And when two modules compare the same identifier — a
   domain, a key, an id — normalise it in ONE place and make every comparison go through that

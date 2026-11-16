@@ -879,9 +879,13 @@ class DatabaseManager:
             cursor.executemany(
                 'INSERT INTO sov_coverage (run_id, engine, questions_total, measured) '
                 'VALUES (?,?,?,?)',
+                # `measured` is deliberately three-valued: True, False, or NULL
+                # for "the export does not say". Coercing NULL to 0 would turn
+                # "we cannot tell" into "we checked and it was not measured".
                 [(run_id, r.get("engine"),
                   None if r.get("questions_total") is None else int(r["questions_total"]),
-                  int(bool(r.get("measured")))) for r in (rows or [])])
+                  None if r.get("measured") is None else int(bool(r["measured"])))
+                 for r in (rows or [])])
             conn.commit()
 
     def get_sov_coverage(self, run_id: int) -> List[Dict[str, Any]]:
@@ -901,7 +905,8 @@ class DatabaseManager:
                     raise
                 logging.warning("sov_coverage schema behind: %s", exc)
                 return []
-        return [{"engine": r[0], "questions_total": r[1], "measured": bool(r[2])}
+        return [{"engine": r[0], "questions_total": r[1],
+                 "measured": None if r[2] is None else bool(r[2])}
                 for r in rows]
 
     def save_risk_signals(self, run_id: int, rows: List[Dict[str, Any]], detected_at: str = None):

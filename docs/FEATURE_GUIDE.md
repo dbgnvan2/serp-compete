@@ -869,7 +869,10 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
   than printed at "0% mention share, named in 0% of answers" — which asserted a
   measured absence. An engine that was asked and found nothing keeps its row: that
   is a finding. The per-engine counts are stored, so an old report can still say
-  which engines were unmeasured.
+  which engines were unmeasured. A third case is reported separately as
+  **coverage unknown**: an engine the export lists but carries no brand mentions
+  for, which from the export alone could be "asked, nothing matched" or "never
+  ran" — the file does not say, so neither does the briefing.
 - **A repeated Moz anchor error may be one old outage, not many** (since
   2026-11-16). Tool 1 caches a competitor's Moz block for up to 30 days and can
   cache it with the failure inside, so the same error is re-served every run. The

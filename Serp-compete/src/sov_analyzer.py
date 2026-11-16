@@ -165,14 +165,28 @@ def compute_sov(export: Optional[Dict[str, Any]], competitor_domains: List[str],
         # An engine is measured only if it reports a positive question count.
         # An engine with a positive count and no mentions keeps its rows: that
         # IS a measured absence, and it is a finding.
-        engine_questions = max(
-            [int(m.get("questions_total") or 0) for m in eng_mentions] or [0])
-        measured = not (eng_mentions and engine_questions <= 0)
+        # Three states, not two. An engine with no brand-mention rows at all is
+        # NOT the same as one that reported answering nothing: from the export
+        # alone, "10 questions asked and no brand matched the gazetteer" and
+        # "this engine never ran" are indistinguishable. Recording that as
+        # measured-with-0-questions would be a row contradicting itself, so it
+        # is stored as unknown (NULL) and the report says coverage is unknown
+        # rather than naming the engine as unmeasured.
+        if not eng_mentions:
+            measured = None
+            engine_questions = None
+        else:
+            engine_questions = max(
+                int(m.get("questions_total") or 0) for m in eng_mentions)
+            measured = engine_questions > 0
         engine_coverage.append({"engine": engine,
                                 "questions_total": engine_questions,
                                 "measured": measured})
-        if not measured:
+        if measured is False:
             unmeasured.append(engine)
+            # Its citations go too: an engine that answered nothing cannot have
+            # cited anything, and publishing the citations alone would put a
+            # share in the report for a run that did not happen.
             continue
         eng_citations = [c for c in citations if c.get("engine") == engine]
         total_mentions = sum(int(m.get("mention_count") or 0) for m in eng_mentions)

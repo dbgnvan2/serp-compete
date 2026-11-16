@@ -319,11 +319,16 @@ class TestSovEngineCoverage(unittest.TestCase):
         self.assertTrue(coverage["gemini"]["measured"])
         self.assertFalse(coverage["perplexity"]["measured"])
 
-    def test_an_engine_with_no_rows_at_all_is_still_not_a_measured_zero(self):
-        """The pre-existing case (`test_sc32_missing_engine_does_not_block_others`):
-        an engine listed in `engines` with no rows produces no rows here. It is
-        left out of `unmeasured_engines` only because there is nothing to say
-        about it — no row claims anything either way."""
+    def test_an_engine_with_no_rows_at_all_is_recorded_as_unknown(self):
+        """Three states, not two.
+
+        From the export alone, an engine with no brand-mention rows could have
+        been asked 10 questions with no tracked brand coming back, or never have
+        run. Recording it as measured-with-0-questions would be a row
+        contradicting itself; recording it as *unmeasured* would claim knowledge
+        the file does not carry. So it is NULL, and the report says coverage is
+        unknown for it.
+        """
         res = compute_sov({
             "data_available": True, "engines": ["gemini", "openai"],
             "brand_mentions": [
@@ -332,6 +337,47 @@ class TestSovEngineCoverage(unittest.TestCase):
             "ai_citations": [], "answer_sentiment": [],
         }, [], "2026-11-16")
         self.assertEqual({r["engine"] for r in res["rows"]}, {"gemini"})
+        coverage = {c["engine"]: c for c in res["engine_coverage"]}
+        self.assertIsNone(coverage["openai"]["measured"])
+        self.assertIsNone(coverage["openai"]["questions_total"])
+        # …and it is NOT named as unmeasured, which would overstate what is known.
+        self.assertEqual(res["unmeasured_engines"], [])
+
+    def test_the_unknown_state_survives_the_database(self):
+        import os
+        import tempfile
+
+        from src.database import DatabaseManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = DatabaseManager(os.path.join(tmp, "t.db"))
+            run_id = db.create_run("livingsystems.ca")
+            db.save_sov_coverage(run_id, [
+                {"engine": "gemini", "questions_total": 4, "measured": True},
+                {"engine": "openai", "questions_total": None, "measured": None},
+                {"engine": "perplexity", "questions_total": 0, "measured": False},
+            ])
+            stored = {c["engine"]: c["measured"] for c in db.get_sov_coverage(run_id)}
+            self.assertEqual(stored, {"gemini": True, "openai": None,
+                                      "perplexity": False})
+
+    def test_a_zero_question_engines_citations_are_dropped_too(self):
+        """An engine that answered nothing cannot have cited anything, so
+        publishing its citations alone would put a citation share in the report
+        for a run that did not happen."""
+        res = compute_sov({
+            "data_available": True, "engines": ["perplexity"],
+            "brand_mentions": [
+                {"engine": "perplexity", "brand": "A", "mention_count": 0,
+                 "questions_total": 0, "is_client": True, "source": "g"}],
+            "ai_citations": [
+                {"engine": "perplexity", "domain": "theravive.com",
+                 "brand": "Theravive", "is_client": False, "cite_count": 3}],
+            "answer_sentiment": [],
+        }, ["theravive.com"], "2026-11-16")
+        self.assertEqual(res["rows"], [])
+        self.assertEqual(res["gaps"], [])
+        self.assertEqual(res["unmeasured_engines"], ["perplexity"])
 
     def test_the_coverage_round_trips_through_the_database(self):
         import os

@@ -155,12 +155,28 @@ share, named in 0% of answers" for an engine that was never asked — a claim of
 measured absence. So:
 
 - an engine whose rows report no answered questions is **excluded** from the
-  shares, and named in the report as *not measured*;
+  shares — its citations too, since an engine that answered nothing cannot have
+  cited anything — and named in the report as *not measured*;
 - an engine that answered questions and found nothing **keeps** its rows: a
   measured absence is a finding;
 - `presence_rate` is `None`, not `0.0`, when no question count is available;
 - the per-engine counts are persisted in `sov_coverage` so an **old** report can
   still say which engines were not measured.
+
+**Coverage is three-valued, because the export cannot distinguish two of the
+cases.** An engine listed in `engines` with no brand-mention rows at all may
+have been asked its questions with no tracked brand coming back, or may never
+have run. Nothing in the file separates those. So `sov_coverage.measured` is:
+
+| Value | Meaning | Report wording |
+|---|---|---|
+| `1` | the export reports answered questions for it | its shares are published |
+| `0` | the export reports zero answered questions | "Not measured this run" |
+| `NULL` | the export carries no mention rows for it | "Coverage unknown" |
+
+Recording the third case as `measured = 0` would claim knowledge the file does
+not carry; recording it as `measured = 1, questions_total = 0` would be a row
+contradicting itself.
 
 **Brand matching.** The export carries display names ("Jericho Counselling") while
 the run carries derived tokens ("jericho"). They are matched through

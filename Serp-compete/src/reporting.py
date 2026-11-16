@@ -212,7 +212,15 @@ class ReportGenerator:
             # without an offset, so the handoff's ranks restart at 1 on every
             # page. Until its chunk D1 lands and bumps `schema_version`, a
             # "rank 2" in this report may be the second result of page 3.
-            if run_coverage.get("rank_is_absolute") is False:
+            if run_coverage.get("rank_semantics_error"):
+                report.append(
+                    f"> ⚠️ **The handoff's rank convention could not be determined** "
+                    f"({run_coverage['rank_semantics_error']}), so whether the `rank` "
+                    f"column holds an absolute SERP position or serp-discover's "
+                    f"per-page one is unknown for this run. Treat it as page-relative "
+                    f"until checked — that is what every shipped handoff version "
+                    f"carries.")
+            elif run_coverage.get("rank_is_absolute") is False:
                 report.append(
                     f"> ⚠️ **Handoff ranks are page-relative.** This handoff is "
                     f"schema v{run_coverage.get('handoff_version') or '?'}, which "
@@ -730,7 +738,15 @@ class ReportGenerator:
             # than published at 0% share — and an engine missing from the table
             # has to be named, or "not measured" reads as "measured, absent".
             sov_coverage = self.db.get_sov_coverage(run_id)
-            sov_unmeasured = [c["engine"] for c in sov_coverage if not c["measured"]]
+            # `measured` is three-valued. False = the export says this engine
+            # answered nothing. None = the export carried no brand-mention rows
+            # for it, which could be "asked, nothing matched" or "never ran" —
+            # the two are indistinguishable from the file, so they get separate
+            # wording rather than being collapsed.
+            sov_unmeasured = [c["engine"] for c in sov_coverage
+                              if c["measured"] is False]
+            sov_unknown = [c["engine"] for c in sov_coverage
+                           if c["measured"] is None]
 
             if not df_sov.empty:
                 report.append("\n## Competitive AI Share-of-Voice")
@@ -745,6 +761,16 @@ class ReportGenerator:
                         f"{'they are' if len(sov_unmeasured) > 1 else 'it is'} excluded from "
                         f"the shares below rather than shown at 0%. Absence here is not "
                         f"evidence that the engine does not name these brands._")
+                if sov_unknown:
+                    report.append(
+                        f"\n_Coverage unknown: {', '.join(sorted(sov_unknown))} — the "
+                        f"export listed "
+                        f"{'these engines' if len(sov_unknown) > 1 else 'this engine'} "
+                        f"but carried no brand mentions for "
+                        f"{'them' if len(sov_unknown) > 1 else 'it'}, which from the "
+                        f"export alone could mean the questions were asked and no "
+                        f"tracked brand came back, or that the engine did not run. "
+                        f"Not counted either way._")
                 for engine in sorted(df_sov['engine'].dropna().unique()):
                     eng = df_sov[df_sov['engine'] == engine]
                     report.append(f"\n### {engine}")

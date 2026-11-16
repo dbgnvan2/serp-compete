@@ -841,7 +841,12 @@ def run_audit(handoff_path: str = None):
             absolute_versions=(shared_config.get("handoff", {}) or {}).get(
                 "absolute_rank_versions") or [])
     except Exception as exc:  # noqa: BLE001
+        # A caveat that fails silently is worse than no caveat: the rank column
+        # would print unqualified and the report would look as though the ranks
+        # had been checked. Record the failure so the coverage block says the
+        # convention is unknown (P2/P25).
         print(f"⚠️ Handoff rank semantics not determined: {exc}")
+        run_coverage["rank_semantics_error"] = str(exc)
     print(f"\n📋 Run coverage: audited {len(competitor_keywords)} of "
           f"{len(domain_groups)} handoff domain(s); "
           f"{len(skipped_domains)} skipped"
