@@ -1171,7 +1171,17 @@ class DatabaseManager:
                 d["medical_total"] = float(medical or 0)
                 d["systems_total"] = float(systems or 0)
                 d["tier_counts_known"] = bool(counts_known)
-            # top-10 ranking count over the SHARED (handoff) keyword universe
+            # top-10 ranking count over the SHARED (handoff) keyword universe.
+            #
+            # NOT a count of genuine top-10 rankings while the handoff's ranks
+            # are page-relative: `position` here IS the handoff rank, which
+            # restarts at 1 on every SERP page (H1 / D-C-01), so `mp <= 10`
+            # admits every handoff keyword. C-M-09 fixed the UNIVERSE asymmetry
+            # (both sides now count over the handoff's keywords); it did not
+            # fix the rank semantics, which inflate the authority axis by
+            # 21-27 points on realistic inputs — enough to cross
+            # `positioning.authority_threshold`. The briefing says so in the
+            # Barbell section, driven by `handoff.absolute_rank_versions`.
             cursor.execute('''SELECT domain, COUNT(*) FROM (
                                 SELECT domain, keyword, MIN(position) AS mp
                                 FROM competitor_metrics

@@ -825,6 +825,31 @@ class ReportGenerator:
                               "`insufficient_data` = too little signal to place, never silently "
                               "`middle`. Rivals with avg PA > 50 are filtered upstream, so an "
                               "empty `authoritative` quadrant does not mean none exist._")
+                # The authority axis is INFLATED while the handoff's ranks are
+                # page-relative, and by enough to move a domain across
+                # `positioning.authority_threshold` (50). `top10_count` is
+                # `MIN(position) <= 10` over the handoff keywords, and that
+                # position restarts at 1 on every SERP page — so every handoff
+                # keyword counts as a top-10 ranking. With the default weights
+                # (moz_da 0.7 / top10 0.3) and `top10_saturation` 10, a domain
+                # with ten or more handoff keywords saturates the component at
+                # 100 regardless of where it really ranks: DA 30 and NO genuine
+                # top-10 rankings scores 51 instead of 30. The quadrant is the
+                # verdict this section exists to give, so this cannot live in
+                # the coverage block.
+                if (run_coverage or {}).get("rank_is_absolute") is False:
+                    report.append(
+                        "\n> ⚠️ **The authority axis is overstated, and the quadrants "
+                        "with it.** `top10_count` counts handoff keywords whose rank is "
+                        "≤ 10, and this handoff's ranks restart at 1 on every SERP page "
+                        "(H1 / D-C-01, open on the serp-discover side) — so *every* "
+                        "handoff keyword counts as a top-10 ranking. A domain with ten "
+                        "or more of them saturates the component whatever its real "
+                        "positions: at Moz DA 30 with no genuine top-10 ranking at all, "
+                        "authority reads **51** instead of 30, which crosses "
+                        "`positioning.authority_threshold` (50). Treat `authority_score` "
+                        "and `quadrant` below as upper bounds, and `top10_count` as "
+                        "\"handoff keywords\", not \"top-10 rankings\".")
                 quad_counts = df_positioning['quadrant'].value_counts().to_dict()
                 report.append("\n**Quadrant distribution:** "
                               + ", ".join(f"{q}: {n}" for q, n in sorted(quad_counts.items())))

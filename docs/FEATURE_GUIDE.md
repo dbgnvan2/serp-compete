@@ -816,6 +816,15 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
 - **Extractability leaves two signals unmeasured** (answer-first placement,
   FAQ-answers-in-raw-HTML) and says so, rather than approximating them — and it
   measures no citations at all, which the section header now states (§3.4).
+- **The barbell's authority axis is overstated, and the quadrants with it**
+  (2026-11-16). `top10_count` counts handoff keywords whose rank is ≤ 10, and the
+  handoff's ranks restart at 1 on every SERP page (H1 / D-C-01, open on the
+  Serp-Discover side) — so *every* handoff keyword counts as a top-10 ranking. With
+  the default weights and `positioning.top10_saturation` 10, a domain holding ten or
+  more handoff keywords saturates the component whatever its real positions: at Moz
+  DA 30 with no genuine top-10 ranking, authority reads **51** instead of 30, which
+  crosses `positioning.authority_threshold` (50). Read `authority_score` and
+  `quadrant` as upper bounds until D1 lands. The briefing says so in the section.
 - **Barbell authority compares like with like since 2026-11-15.** The competitor
   figure is the domain's Moz **Domain** Authority (it was the average **Page**
   Authority of its sampled URLs), and both sides count top-10 rankings over the same

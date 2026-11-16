@@ -87,6 +87,30 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The barbell's authority axis is inflated by 21-27 points, which moves domains across the quadrant boundary — the same root cause, in the section that gives a verdict rather than a list.**
+- **Root cause (H1, consumed again):** `get_positioning_inputs` counts top-10 rankings as
+  `MIN(position) <= 10` over the handoff keywords. That `position` IS the handoff rank, which
+  restarts at 1 on every SERP page — so **every** handoff keyword counts as a top-10 ranking.
+  With the default weights (`moz_da` 0.7 / `top10` 0.3) and `top10_saturation` 10, a domain
+  holding ten or more handoff keywords saturates the component whatever its real positions.
+  Measured on the real formula: Moz DA 30 with **no genuine top-10 ranking at all** scores
+  **51** instead of 30. `positioning.authority_threshold` is 50, so the inflation moves it from
+  `emerging` to `authoritative` — it inverts the diagnostic the section exists to provide.
+- **Why C-M-09 did not catch it:** C-M-09 was about commensurability — the client's count came
+  from every GSC query it ranked for while competitors' came from the handoff, so the client was
+  `authoritative` by construction. Fixing the UNIVERSE (both sides now count over the handoff's
+  keywords) left the RANK SEMANTICS untouched, and the fix's own comment says "both sides count
+  top-10 rankings over the same keyword universe" — which is true, and not the problem.
+- **Fix:** the section states that the axis is an upper bound, with the arithmetic, and that
+  `top10_count` means "handoff keywords" and not "top-10 rankings". Noted at the query in
+  `database.py` where a code reader meets it, and in FEATURE_GUIDE §9. Driven by
+  `handoff.absolute_rank_versions` like the others, so D1 retires all three warnings at once.
+- **Rule:** one upstream data defect has as many consequences as it has consumers, and they do
+  not look alike: for the magnet filter H1 makes a criterion vacuous, for the barbell it
+  saturates a component, for the rank column it is a mislabel. Finding it in one consumer is not
+  finding it. Enumerate every read of the affected field — `grep` for the column, not for the
+  finding id — and ask of each one what the wrong semantics do to THAT calculation.
+
 **The Traffic Magnet filter's "ranks well" criterion admits everything, so the owner's primary action list is three times longer than its own definition.**
 - **Root cause (H1, consumed):** `_MAGNET_PREDICATE` is
   `… AND rank IS NOT NULL AND rank <= ?`, bound to

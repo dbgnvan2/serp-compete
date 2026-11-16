@@ -449,3 +449,40 @@ class TestTheMagnetFilterSaysWhenItIsNotInForce(unittest.TestCase):
 
         self.assertNotIn("criterion is not in force", content)
         self.assertNotIn("page-relative", content)
+
+
+class TestTheBarbellSaysItsAuthorityIsOverstated(unittest.TestCase):
+    """The same root cause as the magnet filter, in the section that gives a
+    verdict rather than a list.
+
+    `top10_count` is `MIN(position) <= 10` over the handoff keywords, and that
+    position restarts at 1 on every SERP page (H1 / D-C-01). So every handoff
+    keyword counts as a top-10 ranking, and with the default weights
+    (moz_da 0.7 / top10 0.3) and `top10_saturation` 10, a domain with ten or
+    more of them saturates the component whatever its real positions.
+    """
+
+    def test_the_inflation_crosses_the_quadrant_threshold(self):
+        """The arithmetic the warning asserts, so the claim is checkable."""
+        from src.positioning import compute_authority
+
+        config = {"authority_weights": {"moz_da": 0.7, "top10": 0.3},
+                  "top10_saturation": 10}
+        # A domain with Moz DA 30 and NO genuine top-10 ranking, holding 12
+        # handoff keywords.
+        honest = compute_authority(30, 0, config)
+        as_computed = compute_authority(30, 12, config)
+        self.assertEqual(honest, 30.0)
+        self.assertEqual(as_computed, 51.0)
+        # `positioning.authority_threshold` is 50, so the inflation moves it
+        # from one side of the quadrant boundary to the other.
+        self.assertLess(honest, 50)
+        self.assertGreater(as_computed, 50)
+
+    def test_the_section_carries_the_qualification(self):
+        content = TestNothingScoredStillSaysSo._briefing("deep")
+        self.assertIn("Barbell Positioning Diagnostic", content)
+        self.assertIn("authority axis is overstated", content)
+        self.assertIn("upper bounds", content)
+        # It must say what top10_count really counts.
+        self.assertIn('"handoff keywords", not "top-10 rankings"', content)
