@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import unittest
 
-import numpy as np
 import pandas as pd
 
 from src.reporting import UNKNOWN_CELL, md_table
@@ -33,7 +32,7 @@ from src.reporting import UNKNOWN_CELL, md_table
 class TestMissingValuesAreStatedNotPrintedAsNan(unittest.TestCase):
 
     def test_a_nan_renders_as_the_unknown_marker(self):
-        df = pd.DataFrame([{"domain": "blocked.ca", "pages_audited": np.nan}])
+        df = pd.DataFrame([{"domain": "blocked.ca", "pages_audited": float("nan")}])
         rendered = md_table(df, index=False)
         self.assertNotIn("nan", rendered)
         self.assertIn(UNKNOWN_CELL, rendered)
@@ -54,14 +53,14 @@ class TestMissingValuesAreStatedNotPrintedAsNan(unittest.TestCase):
     def test_a_zero_is_not_treated_as_missing(self):
         """The distinction the whole chunk-C2 effort was about: 0 is a measured
         value and must not render as unknown."""
-        df = pd.DataFrame([{"domain": "x.ca", "t2_count": 0, "t3_count": np.nan}])
+        df = pd.DataFrame([{"domain": "x.ca", "t2_count": 0, "t3_count": float("nan")}])
         rendered = md_table(df, index=False)
         self.assertRegex(rendered, r"\|\s*0\s*\|")
         self.assertIn(UNKNOWN_CELL, rendered)
 
     def test_a_mixed_column_renders_both(self):
         df = pd.DataFrame([{"domain": "a.ca", "pages_audited": 2},
-                           {"domain": "b.ca", "pages_audited": np.nan}])
+                           {"domain": "b.ca", "pages_audited": float("nan")}])
         rendered = md_table(df, index=False)
         self.assertNotIn("nan", rendered)
         self.assertIn("2", rendered)
@@ -95,7 +94,7 @@ class TestTheExcelPathKeepsRealNulls(unittest.TestCase):
     """Display-only. The workbook must keep NaN so its columns stay numeric."""
 
     def test_md_table_does_not_mutate_the_caller_s_frame(self):
-        df = pd.DataFrame([{"domain": "x.ca", "focus_score": np.nan}])
+        df = pd.DataFrame([{"domain": "x.ca", "focus_score": float("nan")}])
         md_table(df, index=False)
         self.assertTrue(pd.isna(df.loc[0, "focus_score"]),
                         "md_table filled the caller's frame in place, so the "
@@ -226,13 +225,13 @@ class TestTheEeatDashesAreDashesNotNan(unittest.TestCase):
     """
 
     def test_a_mixed_column_renders_the_unknown_marker(self):
-        series = pd.Series([0.55, np.nan])
+        series = pd.Series([0.55, float("nan")])
         rendered = series.apply(lambda x: f"{x:.1f}" if pd.notna(x) else UNKNOWN_CELL)
         self.assertEqual(list(rendered), ["0.6", UNKNOWN_CELL])
 
     def test_the_old_logic_is_what_produced_nan(self):
         """Kept as the evidence: `is not None` passes NaN straight through."""
-        series = pd.Series([0.55, np.nan])
+        series = pd.Series([0.55, float("nan")])
         old = series.apply(lambda x: f"{x:.1f}" if x is not None else UNKNOWN_CELL)
         self.assertEqual(list(old), ["0.6", "nan"])
 

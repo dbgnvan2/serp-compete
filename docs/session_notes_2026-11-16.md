@@ -1,7 +1,9 @@
 # Session notes — 2026-11-16
 
-One overnight session on `main`, 25 commits, `77df7df`…`286d9f8`.
-Suite **641 → 920 passing, exit 0**. Coverage across `src/` **86%**.
+One overnight session on `main`, 28 commits, `77df7df`…`HEAD`.
+Suite **641 → 924 passing, exit 0**. Coverage across `src/` **87%**.
+Verified under three random test orderings and two sequential runs, with no
+files created in the repo and the real audit database untouched.
 
 The assigned work was chunk X of the 2026-11-04 review (the compete half). The
 rest came from applying the same question to the places nothing had looked:
@@ -210,6 +212,20 @@ straight through:
 | `tests/test_handoff_contract.py` | The handoff semantics, against the real consumer (37 cases) |
 
 ---
+
+## 3.1 One caveat about tonight's verification
+
+`requirements.txt` pins `requests==2.33.1`; this container has **2.34.2**
+installed. Every "924 passed" in these notes was obtained on 2.34.2, not on the
+pinned version. Nothing here touches a changed API and the suite's HTTP is all
+`requests_mock`, so the risk is low — but the pin is your declared contract, so
+I have not bumped it to match a sandbox. Worth one run on your own machine to
+confirm, or a deliberate bump.
+
+Everything else in the file matches its pin exactly. The only undeclared import
+I introduced tonight was `numpy` (for `np.nan` in one test, relied on as a
+transitive dependency of pandas); it has been removed in favour of
+`float("nan")` rather than declared, since it was needed for one value.
 
 ## 4. Not done
 
