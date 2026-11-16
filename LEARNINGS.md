@@ -87,6 +87,30 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The console printed a timestamp as a failure count, and the risk evidence reached the owner with escaped unicode.**
+- **Root cause (P22 / P19):** the anchor-coverage console line built its breakdown by iterating
+  EVERY key of the coverage dict (`f"{v} {k}"` for anything truthy). That was correct when the
+  dict held only counts. Chunk C2 then added `collected_at`, `fetch_status` and `reason` to the
+  same dict, and the line started reading "Anchor coverage: 1 of 4 domain(s) had anchor data (3
+  errored, 2026-11-16T09:00:00+00:00 collected_at)." Adding a key to a dict changed the meaning
+  of a sentence three modules away. Separately, `save_risk_signals` dumped the evidence with
+  `json.dumps`' default `ensure_ascii=True`, and the briefing prints that string verbatim — so
+  the owner's report carried `\u2013` where an en dash belonged.
+- **What would have caught it:** nothing in the suite, because the line was inline in
+  `run_comparison_features`, which needs a database, a config and five fake clients to reach. It
+  surfaced by rendering a briefing through the end-to-end fakes and reading the console output
+  beside it.
+- **Fix:** `risk_radar.anchor_coverage_lines` — the breakdown filters on `isinstance(value, int)`
+  and the two sub-counts of `errored` get their own sentence, with tests for a timestamp, a
+  status string and a clean run. `ensure_ascii=False` on the evidence dump, with a test that a
+  dash survives the round trip unescaped. Both now sit beside `anchor_caveat_lines` and
+  `gsc_pull_note`, which exist for the same reason.
+- **Rule:** a loop over a dict's keys is a contract with everyone who ever adds a key to it, and
+  that contract is invisible at both ends. Name the keys you mean, or filter by type. And a
+  display string assembled inside a function that needs five fakes to call is a display string
+  with no tests — pull it out; the repo has three of these helpers now and each was extracted
+  after the inline version shipped something wrong.
+
 **The briefing printed `nan` in the owner's tables, in the two places where a value was deliberately withheld.**
 - **Root cause (P16 / P25):** chunk C2 made the data layer honest about NULL — an unmeasured
   Page Authority, a withheld focus score, a page count for a domain whose scrapes all failed.

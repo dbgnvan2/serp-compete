@@ -920,7 +920,12 @@ class DatabaseManager:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', [
                 (run_id, r.get("domain"), int(bool(r.get("is_own_site"))), detected_at,
-                 r.get("signal_type"), r.get("severity"), _json.dumps(r.get("evidence", {})))
+                 r.get("signal_type"), r.get("severity"),
+                 # ensure_ascii=False: this JSON is printed verbatim in the
+                 # briefing's risk section, and the default escaped the en dash
+                 # in the interpretation sentence to `–` in the owner's
+                 # report. SQLite stores TEXT as UTF-8 either way.
+                 _json.dumps(r.get("evidence", {}), ensure_ascii=False))
                 for r in rows
             ])
             conn.commit()

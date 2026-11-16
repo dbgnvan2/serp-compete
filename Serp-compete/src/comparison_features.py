@@ -196,7 +196,8 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
     except Exception as cov_err:  # noqa: BLE001
         print(f"⚠️ Anchor coverage not recorded: {cov_err}")
     try:
-        from src.risk_radar import compute_risk_signals, cliff_sample_shortfall
+        from src.risk_radar import (anchor_coverage_lines, cliff_sample_shortfall,
+                                    compute_risk_signals)
         series_by_domain = {d: db.get_visibility_series(d) for d in domains}
         series_by_domain[client_domain] = db.get_visibility_series(client_domain)
         # Scope to the domains this run INGESTED, not to `domains`
@@ -241,25 +242,8 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
                   f"{cliff_total} domain(s) with history — fewer than {floor} measured "
                   f"keywords in two or more runs (risk_signals.cliff_min_sample).")
         if anchor_coverage:
-            # "No anchor risks" must never be able to mean "every anchor fetch
-            # failed" — say how many domains were actually readable (P1/P2).
-            # `errored_cached` / `errored_age_unknown` are sub-counts OF
-            # `errored`, so listing them alongside it would read as extra
-            # failures ("3 errored, 1 errored_cached" is 3 domains, not 4).
-            # They get their own clause.
-            _sub = ("total", "with_anchors", "errored_cached",
-                    "errored_age_unknown")
-            breakdown = ", ".join(f"{v} {k}" for k, v in anchor_coverage.items()
-                                  if k not in _sub and v)
-            print(f"      Anchor coverage: {anchor_coverage.get('with_anchors', 0)} of "
-                  f"{anchor_coverage.get('total', 0)} domain(s) had anchor "
-                  f"data{f' ({breakdown})' if breakdown else ''}.")
-            cached = anchor_coverage.get("errored_cached", 0) or 0
-            unknown_age = anchor_coverage.get("errored_age_unknown", 0) or 0
-            if cached or unknown_age:
-                print(f"      Of the errored domains: {cached} re-served from "
-                      f"Tool 1's cache (an older outage, not this run's), "
-                      f"{unknown_age} with no collection date.")
+            for line in anchor_coverage_lines(anchor_coverage):
+                print(f"      {line}")
     except Exception as risk_err:  # noqa: BLE001
         print(f"⚠️ Reputation-risk radar skipped: {risk_err}")
 

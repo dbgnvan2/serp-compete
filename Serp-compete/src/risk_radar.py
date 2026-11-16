@@ -359,6 +359,53 @@ def anchor_data_unreadable(coverage) -> int:
             + coverage.get("unknown", 0))
 
 
+#: Keys of the anchor-coverage dict that are not standalone failure counts:
+#: the two totals, and the two sub-counts OF `errored`. Listing a sub-count
+#: beside `errored` reads as extra failures ("3 errored, 1 errored_cached" is
+#: 3 domains, not 4), so they get their own sentence.
+_COVERAGE_NOT_A_FAILURE_COUNT = ("total", "with_anchors", "errored_cached",
+                                 "errored_age_unknown")
+
+
+def anchor_coverage_lines(coverage) -> List[str]:
+    """The console lines reporting how the anchor fetch went.
+
+    Purpose: the same figures as the report's caveat, in the run's output.
+    Tests:   tests/test_risk_radar.py::TestConsoleCoverageLines
+
+    A function rather than two f-strings inline in `comparison_features` for
+    the reason that found this bug: the breakdown was built by iterating every
+    key of the coverage dict, and when chunk C2 added `collected_at`,
+    `fetch_status` and `reason` to that dict, the loop started printing
+    "2026-11-16T09:00:00+00:00 collected_at" in the middle of the counts.
+    Nothing could have caught it, because the line was unreachable from a test.
+    """
+    coverage = coverage or {}
+    if not coverage:
+        return []
+    breakdown = ", ".join(
+        f"{value} {key}" for key, value in coverage.items()
+        if key not in _COVERAGE_NOT_A_FAILURE_COUNT and value
+        # A count, not a timestamp or a status string. `bool` is an int
+        # subclass, but no key in this dict is a bool.
+        and isinstance(value, int))
+    lines = [
+        # "No anchor risks" must never be able to mean "every anchor fetch
+        # failed" — say how many domains were actually readable (P1/P2).
+        f"Anchor coverage: {coverage.get('with_anchors', 0)} of "
+        f"{coverage.get('total', 0)} domain(s) had anchor data"
+        + (f" ({breakdown})" if breakdown else "") + "."
+    ]
+    cached = coverage.get("errored_cached", 0) or 0
+    unknown_age = coverage.get("errored_age_unknown", 0) or 0
+    if cached or unknown_age:
+        lines.append(
+            f"Of the errored domains: {cached} re-served from Tool 1's cache "
+            f"(an older outage, not this run's), {unknown_age} with no "
+            f"collection date.")
+    return lines
+
+
 def anchor_caveat_lines(signal_types, coverage=None):
     """Return the anchor-text caveat lines a risk section must carry.
 

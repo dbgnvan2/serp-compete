@@ -1538,3 +1538,87 @@ class TestReportReadsTheAuditDatabase(unittest.TestCase):
         anchors = {"kept.example": {"items": []}, "omitted.example": {"items": []}}
         self.assertEqual(set(restrict_to_run(anchors, ["kept.example"], "")),
                          {"kept.example"})
+
+
+class TestConsoleCoverageLines(unittest.TestCase):
+    """The run's own output about the anchor fetch.
+
+    Added 2026-11-16 after rendering a briefing and watching the console print
+    "Anchor coverage: 1 of 4 domain(s) had anchor data (3 errored,
+    2026-11-16T09:00:00+00:00 collected_at)." The breakdown iterated every key
+    of the coverage dict, so the timestamp and status strings chunk C2 added to
+    that dict were printed as though they were failure counts. The line was
+    inline in `comparison_features`, unreachable from any test.
+    """
+
+    def _lines(self, coverage):
+        from src.risk_radar import anchor_coverage_lines
+        return anchor_coverage_lines(coverage)
+
+    def test_a_timestamp_in_the_dict_is_not_printed_as_a_count(self):
+        lines = self._lines({"total": 4, "with_anchors": 1, "errored": 3,
+                             "collected_at": "2026-11-16T09:00:00+00:00",
+                             "fetch_status": None, "reason": None})
+        self.assertIn("1 of 4", lines[0])
+        self.assertIn("3 errored", lines[0])
+        self.assertNotIn("collected_at", lines[0])
+        self.assertNotIn("2026", lines[0])
+
+    def test_a_status_string_is_not_printed_as_a_count(self):
+        lines = self._lines({"total": 2, "with_anchors": 0, "errored": 2,
+                             "fetch_status": "unavailable",
+                             "reason": "connection reset"})
+        self.assertNotIn("unavailable", lines[0])
+        self.assertNotIn("connection reset", lines[0])
+
+    def test_the_sub_counts_get_their_own_sentence(self):
+        """`errored_cached` beside `errored` would read as 4 failures, not 3."""
+        lines = self._lines({"total": 4, "with_anchors": 1, "errored": 3,
+                             "errored_cached": 1, "errored_age_unknown": 1})
+        self.assertNotIn("errored_cached", lines[0])
+        self.assertEqual(len(lines), 2)
+        self.assertIn("re-served from Tool 1's cache", lines[1])
+        self.assertIn("no collection date", lines[1])
+
+    def test_no_second_line_when_every_error_is_this_runs(self):
+        lines = self._lines({"total": 2, "with_anchors": 1, "errored": 1,
+                             "errored_cached": 0, "errored_age_unknown": 0})
+        self.assertEqual(len(lines), 1)
+
+    def test_a_clean_run_still_states_the_denominator(self):
+        lines = self._lines({"total": 3, "with_anchors": 3})
+        self.assertEqual(lines, ["Anchor coverage: 3 of 3 domain(s) had anchor data."])
+
+    def test_an_empty_dict_prints_nothing(self):
+        self.assertEqual(self._lines({}), [])
+        self.assertEqual(self._lines(None), [])
+
+
+class TestRiskEvidenceIsReadable(unittest.TestCase):
+    """The evidence JSON is printed verbatim in the briefing."""
+
+    def test_non_ascii_survives_the_round_trip_unescaped(self):
+        import json
+        import os
+        import tempfile
+
+        from src.database import DatabaseManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = DatabaseManager(os.path.join(tmp, "t.db"))
+            run_id = db.create_run("livingsystems.ca")
+            db.save_risk_signals(run_id, [{
+                "domain": "x.ca", "is_own_site": 0,
+                "signal_type": "anchor_text_spam", "severity": "high",
+                "evidence": {"interpretation": "links RECEIVED — not bought"},
+            }], detected_at="2026-11-16")
+            with db._get_connection() as conn:
+                stored = conn.execute(
+                    "SELECT evidence_json FROM risk_signal WHERE run_id=?",
+                    (run_id,)).fetchone()[0]
+        # The briefing prints this string as-is, so `—` in it is `—`
+        # in the owner's report.
+        self.assertIn("—", stored)
+        self.assertNotIn("\\u2014", stored)
+        self.assertEqual(json.loads(stored)["interpretation"],
+                         "links RECEIVED — not bought")
