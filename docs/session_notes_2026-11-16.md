@@ -78,10 +78,15 @@ Nothing was silently corrected: reconstructing an absolute rank from the
 sequence's resets is inferable in principle and silently wrong the moment Tool 1
 reorders its targets.
 
-**This changes the basis of decision 5.** You kept the visibility cliff because
-the sample is usually too small. The stronger reason is that its input is
-degenerate — constant 1.0 — so sample size is not what is stopping it. Worth
-revisiting on that footing.
+**This changes the basis of decision 5, which is still unanswered.**
+(Correction, 2026-11-16: these notes said the cliff had been kept by owner
+choice. It had not — decision 5 has never been answered. Chunk C2 left the
+signal emitting and added the `cliff_min_sample` floor precisely because
+removing it was the owner's call, not its own.) The decision was framed as
+keep-with-a-floor versus remove-until-a-real-source-exists, on the assumption
+that a small sample is what stops the signal. It is not: the input is
+degenerate — `ranked == attempted`, a constant 1.0 — so the signal could not
+fire even with a large sample. Decide it on that footing.
 
 **And it is the case for D1 being next.** One upstream defect, four distinct
 distortions in the owner-facing output, two of them inverting a verdict.
@@ -91,7 +96,7 @@ distortions in the owner-facing output, two of them inverting a verdict.
 | | |
 |---|---|
 | **Decision 4** | Which side canonicalises domains. Compete is defensive either way, so nothing is blocked — see `docs/handoff_contract.md` §1.3 |
-| **Decision 5** | You kept the visibility cliff on the grounds that the sample is usually too small. §1.4 shows its input is a constant 1.0, so sample size is not what stops it — worth revisiting on that footing |
+| **Decision 5** | Unanswered. It was framed as keep-with-a-floor versus remove, assuming a small sample is what stops the visibility cliff. §1.4 shows its input is a constant 1.0, so sample size is not what stops it — decide it on that footing |
 | **Decision 8** | Raise `technical.max_audit_pages_per_domain`, or demote the barbell/EEAT/cluster sections at N≤3. Chunks C4b/C4c and chunk X deliberately did not pre-empt this |
 | **`step_dag.py`** | Built, correct, 13 passing tests, and reachable from nothing. Its config key was deleted as having no reader. Wire it into the orchestrator (a feature: step order becomes owner-configurable, with a bad config able to stop the audit) or delete it with its test. Not a cleanup decision |
 | **`market_gaps`, `semantic_audit_results`** | Two tables created on every run that nothing writes. Neither holds data. Drop them or build the richer `semantic_audit_results` deliberately — `docs/DATA_PERSISTENCE_MAP_v3.md` §1.4 |
