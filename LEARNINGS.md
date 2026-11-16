@@ -87,6 +87,37 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**The Traffic Magnet filter's "ranks well" criterion admits everything, so the owner's primary action list is three times longer than its own definition.**
+- **Root cause (H1, consumed):** `_MAGNET_PREDICATE` is
+  `… AND rank IS NOT NULL AND rank <= ?`, bound to
+  `technical.magnet_max_position` (10) and compared against the HANDOFF's rank.
+  serp-discover stores SerpAPI's per-page `position` verbatim and concatenates paginated pages
+  without an offset (D-C-01), so in its 3-page mode the ranks run `1..9, 1..10, 1..10`. A result
+  at true position 25 carries a rank of 5 and passes. **Against the committed reference run's
+  distribution the filter admits 29 of 29 results** — true positions 1 through 29. The criterion
+  the README and the USER_MANUAL both describe as "ranks well" filters nothing, and
+  `magnet_max_position` is a knob with no effect.
+- **Which means** the Traffic Magnet list is not "competitor pages that rank well" but "handoff
+  pages that clear the medical floor and the relevance test", and the Systemic Vacuums and the
+  gpt-4o reframe targets share the predicate and inherit it. Some of the pages the owner is
+  being told to counter are on page 2 or 3 of the SERP.
+- **Why three chunks of review missed it:** C1 was about WHICH keywords enter the universe and
+  C3/C4 were about what the scores measure. Nobody asked whether the rank COMPARISON still means
+  anything once H1 is known — and H1 was filed as a serp-discover finding, so on this side it
+  read as "their bug", when half its consequences are here. Yesterday I added a caveat that the
+  rank COLUMN is page-relative, which is a weaker and much less useful statement than "the
+  filter is off".
+- **Fix:** the magnet section now says the criterion is not in force, with the arithmetic, what
+  the list actually is, and that the vacuums and reframes inherit it. The config key carries the
+  same, so changing it is not mistaken for tuning. `USER_MANUAL` and `FEATURE_GUIDE` corrected
+  where they described the filter as working. It is all driven by
+  `handoff.absolute_rank_versions`, so D1 retires it with no code change. Not fixed by
+  reconstructing an absolute rank from the rank sequence's resets: that is inferable in
+  principle, and silently wrong the moment Tool 1 reorders its targets.
+- **Rule:** when a finding is filed against the producer, list the consumer's own consequences
+  separately, by hand. "Open upstream" describes who fixes the cause, not who is affected — and
+  a caveat about a COLUMN is not a caveat about a FILTER that reads it.
+
 **The Excel workbook's EEAT scores were text, because the display formatting ran in place on the frame the exporter gets.**
 - **Root cause (P16):** `USER_MANUAL.md` promises "**the Excel sheets always carry every row**",
   and structurally they do — the exporter writes the full `df_*` frames, not the capped `disp_*`

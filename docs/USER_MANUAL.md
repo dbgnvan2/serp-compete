@@ -301,7 +301,7 @@ instead of being hard-coded at 90 (C-C-17, C-M-11, C-C-14).
 ### Traffic Magnets
 Competitor pages that meet **all three** parts of the definition — the filter is applied
 in the briefing, and the section states how many of the audited pages qualified:
-- **Rank well** — the handoff rank Serp-Discover measured is ≤ `technical.magnet_max_position` (10)
+- **Rank well** — the handoff rank Serp-Discover measured is ≤ `technical.magnet_max_position` (10). ⚠️ **This criterion is currently inoperative.** Serp-Discover stores SerpAPI's per-page `position` without a pagination offset (review finding H1), so in its 3-page mode the ranks run 1..9, 1..10, 1..10 — a result at true position 25 carries a rank of 5 and passes. On the reference run's distribution the filter admits 29 of 29 results. Until Serp-Discover's chunk D1 lands, read the Traffic Magnet list as "pages clearing the medical floor and the relevance test", not as "pages that rank well", and note that changing this number has no effect. The briefing says so in the section itself
 - **Use medical model language** — `medical_score` ≥ `technical.vacuum_min_medical` (6)
 - **On a keyword that matters** — the keyword is in the handoff set or carries a clinical
   term, and is not the competitor's own brand token

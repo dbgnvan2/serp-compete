@@ -370,3 +370,82 @@ class TestTheExcelWorkbookIsNotTheMarkdown(unittest.TestCase):
     def test_the_markdown_still_shows_the_dash(self):
         """The fix must not have removed the marker from the report."""
         self.assertIn("EEAT Competitive Analysis", self.markdown)
+
+
+class TestTheMagnetFilterSaysWhenItIsNotInForce(unittest.TestCase):
+    """The `rank ≤ 10` half of the magnet definition is currently a no-op.
+
+    `_MAGNET_PREDICATE` compares against the handoff's `rank`, and
+    serp-discover stores SerpAPI's per-page `position` without a pagination
+    offset (H1 / D-C-01). In its 3-page mode the ranks run 1..9, 1..10, 1..10,
+    so a result at true position 25 carries a rank of 5 and passes. Against the
+    committed reference run's distribution the filter admits **29 of 29**
+    results, true positions 1 through 29.
+
+    The coverage block already warned that the rank COLUMN is page-relative.
+    That is not the same statement: this is the list the owner acts on, it is
+    roughly three times longer than its own definition implies, and some of the
+    pages in it are on page 2 or 3 of the SERP. The Systemic Vacuums and the
+    gpt-4o reframe targets share the predicate and inherit it.
+    """
+
+    def test_the_reference_distribution_admits_everything(self):
+        """The arithmetic the warning asserts, so the claim is checkable."""
+        ranks = list(range(1, 10)) + list(range(1, 11)) + list(range(1, 11))
+        admitted = [position for position, rank
+                    in enumerate(ranks, start=1) if rank <= 10]
+        self.assertEqual(len(admitted), len(ranks))
+        self.assertEqual(max(admitted), 29)
+
+    def test_the_magnet_section_carries_the_qualification(self):
+        content = TestNothingScoredStillSaysSo._briefing("deep")
+        self.assertIn("Identified 'Traffic Magnets'", content)
+        self.assertIn("criterion is not in force", content)
+        self.assertIn("NOT as", content)
+        # It must name what the list actually is.
+        self.assertIn("clear the medical floor and the relevance test", content)
+        # …and that the vacuums and reframes inherit it.
+        self.assertIn("share this filter", content)
+
+    def test_the_warning_is_absent_once_the_ranks_are_absolute(self):
+        """It is driven by `handoff.absolute_rank_versions`, so listing the
+        version serp-discover ships after D1 retires it with no code change."""
+        import json
+        import os
+        import sys
+        import tempfile
+        from unittest.mock import patch
+
+        tool_dir = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "..", "tools"))
+        if tool_dir not in sys.path:
+            sys.path.insert(0, tool_dir)
+        import render_sample_briefing
+
+        original = render_sample_briefing._render_in
+
+        def _absolute(fakes, scenario, out_dir, work):
+            # Patch the config the run is given, after the tool assembles it.
+            real_json_dump = json.dump
+
+            def _spy(obj, handle, **kwargs):
+                if isinstance(obj, dict) and "handoff" in obj:
+                    obj["handoff"]["absolute_rank_versions"] = ["1.1"]
+                return real_json_dump(obj, handle, **kwargs)
+
+            with patch.object(json, "dump", side_effect=_spy):
+                return original(fakes, scenario, out_dir, work)
+
+        start = os.getcwd()
+        render_sample_briefing._render_in = _absolute
+        try:
+            with tempfile.TemporaryDirectory() as out:
+                written = render_sample_briefing.render("minimal", out)
+                with open(written[-1], encoding="utf-8") as f:
+                    content = f.read()
+        finally:
+            render_sample_briefing._render_in = original
+            os.chdir(start)
+
+        self.assertNotIn("criterion is not in force", content)
+        self.assertNotIn("page-relative", content)

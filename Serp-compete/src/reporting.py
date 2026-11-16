@@ -619,6 +619,36 @@ class ReportGenerator:
                 f"over) — the count alone meant different things in a short page and a "
                 f"long one._")
 
+            # The "rank ≤ N" half of that filter is INOPERATIVE while the
+            # handoff's ranks are page-relative, and saying so belongs here
+            # rather than only in the coverage block: this is the list the owner
+            # acts on.
+            #
+            # serp-discover stores SerpAPI's per-page `position` verbatim and
+            # concatenates paginated pages without an offset (H1 / D-C-01), so
+            # in its 3-page mode the ranks run 1..9, 1..10, 1..10. Against the
+            # committed reference run's distribution, `rank <= 10` admits 29 of
+            # 29 results — true positions 1 through 29. The criterion the README
+            # and the USER_MANUAL describe as "ranks well" therefore filters
+            # nothing at all, and `technical.magnet_max_position` is a knob with
+            # no effect until the producer is fixed.
+            if (run_coverage or {}).get("rank_is_absolute") is False:
+                magnet_filter_note += (
+                    f"\n\n> ⚠️ **The `rank ≤ {max_pos}` criterion is not in force.** "
+                    f"This handoff's ranks restart at 1 on every SERP page "
+                    f"(schema v{(run_coverage or {}).get('handoff_version') or '?'}; "
+                    f"review finding H1 / D-C-01, open on the serp-discover side), so a "
+                    f"result at true position 25 carries a rank of 5 and passes. On the "
+                    f"reference run's rank distribution the filter admits **every** "
+                    f"result, including true position 29. Read the list below as "
+                    f"\"handoff pages that clear the medical floor and the relevance "
+                    f"test\" — NOT as \"competitor pages that rank well\". It is longer "
+                    f"than the definition implies, and some of these pages are on page 2 "
+                    f"or 3 of the SERP. The Systemic Vacuums and the gpt-4o reframe "
+                    f"targets below share this filter and inherit the same "
+                    f"qualification."
+                )
+
             if not df_magnets.empty:
                 disp_magnets, magnet_note = self._capped(
                     df_magnets, self.magnet_row_cap, "qualifying page(s)")

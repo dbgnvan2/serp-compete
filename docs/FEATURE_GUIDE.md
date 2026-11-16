@@ -327,6 +327,7 @@ parts of the magnet definition, richest estimated traffic first:
 |---|---|
 | **Ranks well** | the handoff `rank` Serp-Discover measured is ≤ `technical.magnet_max_position` (10) |
 | **Uses medical language** | `medical_score` ≥ `technical.vacuum_min_medical` (6) |
+| ⚠️ **"Ranks well" is not enforced** | `rank ≤ technical.magnet_max_position` is compared against the handoff's rank, which restarts at 1 on every SERP page (H1 / D-C-01, open on the Serp-Discover side). On the reference run's distribution it admits 29 of 29 results, so the magnet, vacuum and reframe lists are filtered by the medical floor and the relevance test ALONE. `handoff.absolute_rank_versions` retires the warning when D1 ships |
 | **On a keyword that matters** | the keyword is in the handoff set or carries a clinical term, and is not the competitor's own brand token |
 
 The section header states how many of the audited pages qualified ("Showing 3 of 97"),
