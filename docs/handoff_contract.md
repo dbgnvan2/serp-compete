@@ -219,9 +219,23 @@ quietly satisfied from somewhere else. `convert_handoff_to_targets` returns an
 empty PAA map, and the reframe prompt carries the marker that it was generated
 from the keyword, URL and score with no page content supplied.
 
-Re-adding it is a **producer** change: Tool 1 has the questions, and the handoff
-would need `paa_questions` per target. Until then the empty map is correct and is
-asserted by a test, so it cannot be back-filled by accident.
+There are two ways to restore it, and they are not equivalent:
+
+1. **The producer sends them** (the Chunk X bullet's preference): Tool 1 already
+   has the questions, so the handoff gains `paa_questions` per target and this
+   tool reads them. No extra API spend, and the questions are the ones from the
+   SERP Tool 1 actually measured.
+2. **This tool fetches them itself.** `api_clients.DataForSEOClient.get_serp_data`
+   already exists for exactly this — its docstring says "To get People Also Ask
+   (PAA) data" — and **nothing calls it**. Wiring it would mean one
+   `serp/google/organic/live/advanced` call per keyword, billed per call, on top
+   of the per-domain `ranked_keywords` calls the run already makes. It would also
+   need hardening first: it posts with a bare `requests.post` and no retry or
+   backoff, predating `post_with_retries`, so it would reintroduce the failure
+   class C-C-12 fixed everywhere else.
+
+Until one of those is chosen the empty map is correct and is asserted by a test,
+so it cannot be back-filled by accident.
 
 (The legacy `market_analysis_*.json` path *does* carry `paa_questions`, which is
 why `convert_legacy_to_targets` returns a populated map. That path is deprecated.)

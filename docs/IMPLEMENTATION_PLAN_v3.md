@@ -1578,7 +1578,7 @@ tests/test_reporting.py::test_reframe_quality_scoring PASSED
 | Gap 3 v3 | Confidence scoring, signal breakdown, rationale | eeat_scorer.py (EEATScore) | test_eeat_scorer.py::test_eeat_confidence_scoring | ✅ Done |
 | Gap 3 v3 | Client messaging template | shared_config.json (eeat_client_messaging) | test_config_integrity.py | ✅ Done |
 | Gap 4 v3 | Signal confidence levels | cluster_detector.py (ClusterResult) | test_cluster_detector.py::test_cluster_signal_confidence | ✅ Done |
-| Gap 4 v3 | Third-party API skeleton | third_party_crawlers.py | test_third_party_crawlers.py | ✅ Done |
+| Gap 4 v3 | Third-party API skeleton | third_party_crawlers.py | *none — `test_third_party_crawlers.py` does not exist* | ⚠️ Skeleton only: the module is imported by nothing in `src/` and has no tests. That is what "skeleton for future" (Task 11) means, but the row read "✅ Done" with a test file named, so verified 2026-11-16 and corrected |
 | Gap 5 v3 | Competitive positioning matrix | reporting.py (new section in briefing) | test_reporting.py::test_reporting_competitive_positioning_matrix | ✅ Done |
 | Gap 5 v3 | Reframe quality scoring | reporting.py (score_reframe_quality) | test_reporting.py::test_reframe_quality_scoring | ✅ Done |
 | Gap 5 v3 | Implementation roadmap section | reporting.py (roadmap_items) | test_reporting.py::test_roadmap_generation | ✅ Done |

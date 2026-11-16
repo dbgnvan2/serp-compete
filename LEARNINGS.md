@@ -38,6 +38,34 @@ pattern). The high-frequency ones in this codebase:
   non-zero M means the shape or the endpoint is wrong and every Page Authority will be NULL.
   `docs/TEST_RUN_CHECKLIST.md` §1b carries the check. Then align the client with
   serp-discover's.
+- **Five capabilities exist in `src/` that nothing on the run path reaches** (swept 2026-11-16,
+  by parsing every `def` in `src/` and counting references outside its own definition). None is
+  a bug today; each is a thing a reader of the code or the docs would reasonably believe runs.
+  - `third_party_crawlers.py` (7 functions: Ahrefs/Moz backlinks, internal links, link
+    velocity, anchor text, top linking pages) — imported by nothing, and its own docstring says
+    its tests are "to be implemented". This is **intentional**: `IMPLEMENTATION_PLAN_v3.md`
+    Task 11 created it as a "skeleton for future". But that plan's coverage table claimed
+    `test_third_party_crawlers.py` ✅ Done, and no such file exists; corrected 2026-11-16.
+  - `step_dag.py` (`StepDAG`, with cycle detection and an execution-order solver) — imported
+    only by its own test. It reads `shared_config.json → step_dag`, and chunk C4c **deleted
+    that key** as having no reader: strictly the reader existed, but nothing reaches it, and
+    `test_config_provenance.py` now asserts the key is gone. So the module can only ever be fed
+    by a test fixture. Either wire it into the orchestrator (a feature: the orchestrator
+    currently sequences steps directly) or delete it with its test and the spec mention. Not a
+    cleanup decision — it is a choice about whether step ordering should be configurable.
+  - `api_clients.DataForSEOClient.get_serp_data` — a `serp/google/organic/live/advanced` call
+    whose docstring says "To get People Also Ask (PAA) data". Unreferenced. It matters because
+    FEATURE_GUIDE §6.1's PAA promise was dropped in C1 on the grounds that the handoff carries
+    no PAA, and this is the second way to restore it — at one billed call per keyword, and only
+    after hardening: it posts with a bare `requests.post`, predating `post_with_retries`, so
+    wiring it as-is reintroduces C-C-12. Recorded in `docs/handoff_contract.md` §4.
+  - `database.get_run_urls` and `database.update_traffic_magnet_scores` — unreferenced by `src/`
+    **and** by the tests. The second one writes to `semantic_audits` under the comment "legacy
+    table if applicable", which is doubly stale: that table is the live scoring cache (see the
+    persistence-map entry below), and the method updates only two of the six score columns
+    `traffic_magnets` now carries, so calling it today would leave `t2_count`,
+    `t3_count`, `scoring_window_words` and `keyword_source` describing a different scoring run.
+    If anything is deleted outright, these two are the candidates.
 - **The first run after the canonical-domain change has no history for a `www.` domain.**
   Competitor rows are now keyed on the canonical (`www.`-stripped) form, so a site that past
   runs stored as `www.example.com` will be stored as `example.com` from now on. Nothing
