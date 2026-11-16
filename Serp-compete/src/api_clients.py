@@ -163,7 +163,16 @@ class DataForSEOClient:
         """
         POST https://api.dataforseo.com/v3/dataforseo_labs/google/relevant_pages/live
         Fetches the top organic pages for a domain.
+
+        Hardened 2026-11-16, like every other call in this class. C-C-12's list
+        named `get_relevant_pages`, `get_url_metrics` and `scrape_content`
+        because those are the audit path; this one was left on a bare
+        `requests.post` — no retry, and a `ConnectionError` propagated out of
+        it — because nothing on the audit path called it. `infiltrator` does,
+        and `self.last_error` is what lets its report distinguish "this domain
+        has no pages" from "the provider did not answer".
         """
+        self.last_error = None
         url = f"{self.base_url}/dataforseo_labs/google/relevant_pages/live"
         payload = [{
             "target": domain,
@@ -171,23 +180,26 @@ class DataForSEOClient:
             "language_code": "en",
             "limit": limit
         }]
-        
-        response = requests.post(
-            url, 
-            auth=(self.login, self.password),
-            json=payload,
-            timeout=30
-        )
-        
-        if response.status_code != 200:
-            print(f"DataForSEO Relevant Pages API error: {response.status_code} - {response.text}")
+
+        response, error = post_with_retries(
+            url, f"DataForSEO relevant_pages({domain})",
+            auth=(self.login, self.password), json=payload)
+        if response is None:
+            self.last_error = error
+            print(f"DataForSEO Relevant Pages API error for {domain}: {error}")
             return []
-            
-        data = response.json()
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            self.last_error = f"unparseable response: {exc}"
+            print(f"DataForSEO Relevant Pages API error for {domain}: "
+                  f"{self.last_error}")
+            return []
         if not data.get('tasks') or not data['tasks'][0].get('result'):
             print(f"No relevant pages found for {domain}")
             return []
-            
+
         items = data['tasks'][0]['result'][0].get('items')
         if items:
             for item in items:

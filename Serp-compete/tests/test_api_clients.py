@@ -179,3 +179,110 @@ def test_cc03_a_result_without_any_authority_figure_is_omitted():
     got = page_authority_map([{"url": "https://example.com/a", "page_authority": None}],
                              ["https://example.com/a"])
     assert got == {}
+
+
+# ── get_top_pages: untested until 2026-11-16, and infiltrator depends on it ───
+
+RELEVANT_PAGES_URL = ("https://api.dataforseo.com/v3/dataforseo_labs/google/"
+                      "relevant_pages/live")
+
+
+def _pages_response(items):
+    return {"tasks": [{"result": [{"items": items}]}]}
+
+
+def test_get_top_pages_reads_page_address():
+    """`relevant_pages` carries the URL as `page_address`, not `url` — the
+    shape `infiltrator` reads its traffic figures out of."""
+    client = DataForSEOClient()
+    with requests_mock.Mocker() as m:
+        m.post(RELEVANT_PAGES_URL, json=_pages_response([
+            {"page_address": "https://example.com/couples",
+             "metrics": {"organic": {"etv": 1200}}},
+        ]))
+        results = client.get_top_pages("example.com")
+    assert len(results) == 1
+    assert results[0]["url"] == "https://example.com/couples"
+    assert results[0]["metrics"]["organic"]["etv"] == 1200
+
+
+def test_get_top_pages_falls_back_through_the_url_shapes():
+    client = DataForSEOClient()
+    with requests_mock.Mocker() as m:
+        m.post(RELEVANT_PAGES_URL, json=_pages_response([
+            {"url": "https://example.com/a"},
+            {"ranked_serp_element": {"serp_item": {"url": "https://example.com/b"}}},
+            {"relative_url": "/c"},
+        ]))
+        results = client.get_top_pages("example.com")
+    assert [r["url"] for r in results] == [
+        "https://example.com/a", "https://example.com/b", "https://example.com/c"]
+
+
+def test_get_top_pages_honours_the_limit_in_its_payload():
+    client = DataForSEOClient()
+    with requests_mock.Mocker() as m:
+        m.post(RELEVANT_PAGES_URL, json=_pages_response([]))
+        client.get_top_pages("example.com", limit=50)
+        assert m.last_request.json()[0]["limit"] == 50
+
+
+def test_get_top_pages_reports_a_failure_rather_than_raising():
+    """It was a bare `requests.post`: a ConnectionError propagated out of it,
+    and a non-200 returned [] with nothing on `last_error`, so a caller could
+    not tell an outage from a domain with no pages (C-C-12)."""
+    client = DataForSEOClient()
+    with requests_mock.Mocker() as m:
+        m.post(RELEVANT_PAGES_URL, status_code=403, text="forbidden")
+        results = client.get_top_pages("example.com")
+    assert results == []
+    assert client.last_error, "no last_error after a 403"
+
+
+def test_get_top_pages_survives_a_connection_error():
+    import requests as _requests
+
+    client = DataForSEOClient()
+    with requests_mock.Mocker() as m:
+        m.post(RELEVANT_PAGES_URL,
+               exc=_requests.exceptions.ConnectionError("reset"))
+        results = client.get_top_pages("example.com")
+    assert results == []
+    assert client.last_error
+
+
+def test_get_top_pages_survives_an_unparseable_body():
+    client = DataForSEOClient()
+    with requests_mock.Mocker() as m:
+        m.post(RELEVANT_PAGES_URL, text="<html>not json</html>")
+        results = client.get_top_pages("example.com")
+    assert results == []
+    assert "unparseable" in (client.last_error or "")
+
+
+def test_get_top_pages_handles_an_empty_result_without_indexerror():
+    client = DataForSEOClient()
+    with requests_mock.Mocker() as m:
+        m.post(RELEVANT_PAGES_URL, json={"tasks": [{"result": None}]})
+        assert client.get_top_pages("example.com") == []
+    with requests_mock.Mocker() as m:
+        m.post(RELEVANT_PAGES_URL, json={"tasks": []})
+        assert client.get_top_pages("example.com") == []
+    with requests_mock.Mocker() as m:
+        m.post(RELEVANT_PAGES_URL, json=_pages_response(None))
+        assert client.get_top_pages("example.com") == []
+
+
+def test_get_relevant_pages_limit_defaults_to_the_audit_depth():
+    """`limit` was added for competitor_mining; the audit path must not change."""
+    client = DataForSEOClient()
+    with requests_mock.Mocker() as m:
+        m.post("https://api.dataforseo.com/v3/dataforseo_labs/google/"
+               "ranked_keywords/live", json=_pages_response([]))
+        client.get_relevant_pages("example.com")
+        assert m.last_request.json()[0]["limit"] == 10
+    with requests_mock.Mocker() as m:
+        m.post("https://api.dataforseo.com/v3/dataforseo_labs/google/"
+               "ranked_keywords/live", json=_pages_response([]))
+        client.get_relevant_pages("example.com", limit=100)
+        assert m.last_request.json()[0]["limit"] == 100
