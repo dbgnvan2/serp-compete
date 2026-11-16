@@ -242,7 +242,9 @@ CREATE TABLE IF NOT EXISTS semantic_audit_results (
     tier_3_bowen_terms_found TEXT,  -- JSON: [term1, term2, ...]
     
     -- Classification
-    systemic_label TEXT,  -- "Bowen-Heavy" | "Systems-Moderate" | "Medical-Dominant" | "Standard"
+    systemic_label TEXT,  -- as written here: "Bowen-Heavy" | "Systems-Moderate" | "Medical-Dominant" | "Standard".
+                          -- None of those four exist in the code. The only labels any run produces are
+                          -- "Standard" and "Surface-Level" (`src/scoring_logic.py:112`).
     medical_model_indicator BOOLEAN,  -- Whether primarily medical terminology
     
     -- Audit quality
