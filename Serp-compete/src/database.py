@@ -391,6 +391,17 @@ class DatabaseManager:
             except sqlite3.OperationalError:
                 pass  # Already exists, or anchor_coverage not yet created
 
+            for _anchor_col in ("errored_cached", "errored_age_unknown"):
+                try:
+                    # Chunk X (D-C-10 downstream): sub-counts of `errored`
+                    # saying how many of this run's error blocks were Tool 1
+                    # cache hits rather than fresh outages. ALTER beside CREATE
+                    # for the same reason as `reason` above.
+                    cursor.execute("ALTER TABLE anchor_coverage ADD COLUMN "
+                                   f"{_anchor_col} INTEGER")
+                except sqlite3.OperationalError:
+                    pass  # Already exists, or anchor_coverage not yet created
+
             # SC-1: GEO / Extractability Profiles Table
             # (Spec: suite_enhancement_spec_v1.md#SC-1)
             cursor.execute('''
@@ -499,6 +510,23 @@ class DatabaseManager:
             ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_sov_daily_run ON sov_daily(run_id)')
 
+            # Chunk X: how many questions each engine actually answered behind
+            # this run's sov_daily rows. An engine serp-discover skipped is
+            # dropped from sov_daily rather than published at 0% share, so
+            # without this table "engine absent from the table" could not be
+            # told apart from "engine measured, nothing matched" afterwards —
+            # the same gap anchor_coverage was created to close.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS sov_coverage (
+                    run_id INTEGER NOT NULL,
+                    engine TEXT NOT NULL,
+                    questions_total INTEGER,
+                    measured BOOLEAN,
+                    PRIMARY KEY (run_id, engine),
+                    FOREIGN KEY(run_id) REFERENCES runs(id)
+                )
+            ''')
+
             # C3 / SC-5: Branded-Demand Competitive Benchmark. Domain-keyed.
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS brand_demand_bench (
@@ -554,6 +582,11 @@ class DatabaseManager:
                     errored INTEGER,
                     skipped INTEGER,
                     unknown INTEGER,
+                    -- Sub-counts of `errored`, not additions to it: how many
+                    -- of those error blocks Tool 1 re-served from its 30-day
+                    -- cache, and how many carried no date to judge by.
+                    errored_cached INTEGER,
+                    errored_age_unknown INTEGER,
                     FOREIGN KEY(run_id) REFERENCES runs(id)
                 )
             ''')
@@ -824,6 +857,53 @@ class DatabaseManager:
             ])
             conn.commit()
 
+    def save_sov_coverage(self, run_id: int, rows: List[Dict[str, Any]]):
+        """Chunk X: per-engine question counts behind this run's SoV rows.
+
+        Purpose: let an OLD report say which engines were not measured.
+        Tests:   tests/test_handoff_contract.py::TestSovEngineCoverage
+
+        serp-discover writes brand-mention rows for an engine that answered
+        nothing (D-C-05/11), so `compute_sov` now drops those engines rather
+        than publishing a 0% share for them. Dropping them silently would make
+        "openai is absent from the table" mean either "not measured" or "no
+        entities matched", so the counts are persisted beside the rows for the
+        same reason `anchor_coverage` is (P2/P25).
+
+        Idempotent per run: the run's rows are replaced, so re-running a run
+        does not double them.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM sov_coverage WHERE run_id = ?', (run_id,))
+            cursor.executemany(
+                'INSERT INTO sov_coverage (run_id, engine, questions_total, measured) '
+                'VALUES (?,?,?,?)',
+                [(run_id, r.get("engine"),
+                  None if r.get("questions_total") is None else int(r["questions_total"]),
+                  int(bool(r.get("measured")))) for r in (rows or [])])
+            conn.commit()
+
+    def get_sov_coverage(self, run_id: int) -> List[Dict[str, Any]]:
+        """Chunk X: this run's per-engine SoV coverage, or [] if unrecorded.
+
+        [] means the run predates the table — NOT that every engine was
+        measured. The caller must not render a complete-coverage claim from it.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                rows = cursor.execute(
+                    'SELECT engine, questions_total, measured FROM sov_coverage '
+                    'WHERE run_id = ? ORDER BY engine', (run_id,)).fetchall()
+            except sqlite3.OperationalError as exc:
+                if "no such table" not in str(exc).lower():
+                    raise
+                logging.warning("sov_coverage schema behind: %s", exc)
+                return []
+        return [{"engine": r[0], "questions_total": r[1], "measured": bool(r[2])}
+                for r in rows]
+
     def save_risk_signals(self, run_id: int, rows: List[Dict[str, Any]], detected_at: str = None):
         """C6/SC-8: persist reputation-risk signals (pattern detections)."""
         import json as _json
@@ -840,8 +920,11 @@ class DatabaseManager:
             ])
             conn.commit()
 
+    #: Appended to, never reordered: `save_anchor_coverage` and
+    #: `get_anchor_coverage` both bind positionally against this tuple.
     _ANCHOR_COVERAGE_COUNTS = ("total", "with_anchors", "read_no_anchors",
-                               "no_record", "errored", "skipped", "unknown")
+                               "no_record", "errored", "skipped", "unknown",
+                               "errored_cached", "errored_age_unknown")
 
     def save_anchor_coverage(self, run_id: int, coverage: Dict[str, Any],
                              detected_at: str = None):
@@ -854,11 +937,14 @@ class DatabaseManager:
         """
         coverage = coverage or {}
         with self._get_connection() as conn:
+            # Column list and placeholders are derived from the one tuple, so
+            # adding a count cannot leave the INSERT and the SELECT disagreeing
+            # about which column holds what.
+            columns = ("run_id", "detected_at", "collected_at", "fetch_status",
+                       "reason") + self._ANCHOR_COVERAGE_COUNTS
             conn.cursor().execute(
-                'INSERT OR REPLACE INTO anchor_coverage (run_id, detected_at, '
-                'collected_at, fetch_status, reason, total, with_anchors, '
-                'read_no_anchors, no_record, errored, skipped, unknown) '
-                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                f'INSERT OR REPLACE INTO anchor_coverage ({", ".join(columns)}) '
+                f'VALUES ({",".join("?" * len(columns))})',
                 (run_id, detected_at, coverage.get("collected_at"),
                  coverage.get("fetch_status"), coverage.get("reason"),
                  *[int(coverage.get(k, 0) or 0) for k in self._ANCHOR_COVERAGE_COUNTS]))
@@ -873,10 +959,10 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             try:
+                selected = ("collected_at", "fetch_status",
+                            "reason") + self._ANCHOR_COVERAGE_COUNTS
                 row = cursor.execute(
-                    'SELECT collected_at, fetch_status, reason, total, '
-                    'with_anchors, read_no_anchors, no_record, errored, '
-                    'skipped, unknown '
+                    f'SELECT {", ".join(selected)} '
                     'FROM anchor_coverage WHERE run_id = ?', (run_id,)).fetchone()
             except sqlite3.OperationalError as exc:
                 # Narrow: _create_tables() runs on every construction, so the

@@ -382,3 +382,64 @@ def test_cm19_the_scoring_window_is_persisted_with_the_scores(tmp_path, monkeypa
             (f"https://{ENRICHED}/couples",)).fetchone()
     assert magnet == (9, 1, 0, 480)
     assert audit == (1, 0, 480)
+
+
+# ── Chunk X: the handoff contract, end to end through the real report ───────
+
+def test_chunk_x_the_report_warns_that_handoff_ranks_are_page_relative(audited):
+    """H1 / D-C-01 is open on the serp-discover side, so this tool is consuming
+    per-page SERP positions as if they were absolute. It cannot fix the
+    producer; it must not print the number unqualified either."""
+    _db, markdown, _auditor = audited
+    assert "page-relative" in markdown
+    assert "1.1" in markdown                      # the version it actually read
+    assert "absolute_rank_versions" in markdown   # how the warning retires
+
+
+def test_chunk_x_the_warning_retires_when_the_producer_fixes_the_ranks(
+        tmp_path, monkeypatch):
+    """The caveat is driven by `handoff.absolute_rank_versions`, so listing the
+    version serp-discover will ship after D1 removes it — no code change."""
+    config, config_path, db_path, handoff_path = _prepare(tmp_path, monkeypatch)
+    config = dict(config)
+    config["handoff"] = {"supported_versions": ["1.1"],
+                         "absolute_rank_versions": ["1.1"]}
+    config_path.write_text(json.dumps(config))
+
+    markdowns = _run_audit_with_fakes(tmp_path, db_path, config, config_path,
+                                      handoff_path, _FakeAuditor())
+    assert markdowns
+    assert "page-relative" not in markdowns[-1]
+
+
+def test_chunk_x_one_site_in_two_spellings_is_one_audited_competitor(
+        tmp_path, monkeypatch):
+    """Tool 1 writes `domain` as `netloc.lower()` with `www.` kept while its own
+    brand and citation paths strip it, so a handoff can carry both spellings of
+    one site. Auditing them separately doubled the DataForSEO calls and split
+    the site's keyword count between two `competitors` rows."""
+    config, config_path, db_path, handoff_path = _prepare(tmp_path, monkeypatch)
+    handoff = _handoff()
+    handoff["targets"] = [
+        _target(ENRICHED, path="/couples", keyword="couples counselling"),
+        # Same site, the other spelling, a different page.
+        {**_target(ENRICHED, path="/anxiety", keyword="anxiety counselling"),
+         "domain": f"www.{ENRICHED}"},
+    ]
+    handoff_path.write_text(json.dumps(handoff))
+
+    markdowns = _run_audit_with_fakes(tmp_path, db_path, config, config_path,
+                                      handoff_path, _FakeAuditor())
+    db = DatabaseManager(db_path)
+    run_id = db.get_latest_run_id()
+
+    domains = [r[0] for r in _rows(
+        db, "SELECT DISTINCT domain FROM competitor_metrics WHERE run_id=?", (run_id,))]
+    assert domains == [ENRICHED], domains
+    # Both pages were still audited — the site is one competitor, not one page.
+    audited_urls = sorted(r[0] for r in _rows(
+        db, "SELECT url FROM traffic_magnets WHERE run_id=?", (run_id,)))
+    assert audited_urls == [f"https://{ENRICHED}/anxiety",
+                            f"https://{ENRICHED}/couples"]
+    # …and the coverage line counts one handoff domain, not two.
+    assert "1 of 1 handoff domain" in markdowns[-1]

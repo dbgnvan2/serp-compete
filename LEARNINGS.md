@@ -38,6 +38,16 @@ pattern). The high-frequency ones in this codebase:
   non-zero M means the shape or the endpoint is wrong and every Page Authority will be NULL.
   `docs/TEST_RUN_CHECKLIST.md` §1b carries the check. Then align the client with
   serp-discover's.
+- **The first run after the canonical-domain change has no history for a `www.` domain.**
+  Competitor rows are now keyed on the canonical (`www.`-stripped) form, so a site that past
+  runs stored as `www.example.com` will be stored as `example.com` from now on. Nothing
+  reports a false drop — velocity and volatility both null-guard a missing previous side, and
+  a domain with no prior row simply yields no comparison (chunk C2) — but that domain's
+  trend restarts, and the run-over-run sections will be quiet for it once. Historical rows
+  were deliberately **not** rewritten: a one-time `UPDATE competitor_metrics SET domain = …`
+  would preserve the trend and is idempotent, but it silently changes stored data the owner
+  may be comparing against already-delivered reports, which is the owner's call rather than a
+  side effect of a correctness fix.
 - **`visibility_cliff` is kept but will usually be withheld.** With the handoff universe a run
   samples well under `risk_signals.cliff_min_sample` (10) keywords per domain, so the signal
   rarely has a large enough sample to compute. Whether to keep it at all until a data source
@@ -48,6 +58,56 @@ pattern). The high-frequency ones in this codebase:
 
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
+
+**The handoff contract was enforced where it could be machine-checked and assumed everywhere else (Chunk X: canonical domains, rank semantics, zero-answer engines, cached Moz errors, the GSC pull).**
+- **Root cause (P6 / P19 / P21):** `handoff_schema.json` validates shape, so everything the
+  schema *can* check was checked and everything it cannot was taken on trust. Tool 1 writes
+  domains as `netloc.lower()` with `www.` kept while its own brand and citation paths strip it,
+  so one site arrived in two spellings; `run_audit` grouped on the raw string while the omit-list
+  test two lines below normalised, so the same site became two audited competitors with its
+  keyword count split between them — and an omitted `www.` host was skipped while its bare twin
+  was audited. The same mismatch silently emptied the Moz anchor scope: `moz.domains` keys keep
+  `www.`, the run's domain list does not, so a run whose anchor fetches all failed would have
+  reported neither findings nor unreadable domains. `targets[].rank` is serp-discover's
+  per-page SERP `position` with no offset applied across paginated pages (H1 / D-C-01, still
+  open upstream), and this tool printed it as a position with nothing saying so. The
+  AI-visibility export carries brand-mention rows for engines that answered nothing, and
+  computing shares over them published "0% mention share, named in 0% of answers" — a measured
+  absence for a question never asked. And an `anchor_texts.status == "error"` was counted as
+  this run's outage although Tool 1 can re-serve a cached failure for 30 days.
+- **What would have caught it:** a contract test that calls the real consumer. The one that
+  existed, `tests/test_handoff_ingestion.py::TestHandoffConversion`, carried its own copy of
+  `main.convert_handoff_to_targets` under the comment *"Simulate the conversion logic from
+  main.py"* — so the shipped function could drop a field with every assertion still green, and
+  one had: `client_brand_names` was in the schema, written by Tool 1, documented, and discarded
+  (C-C-13). The grouping loop had no test at all, because it was unreachable: inline in
+  `run_audit`, which needs live API clients.
+- **Fix:** `docs/handoff_contract.md` — the semantics the schema cannot express, with every open
+  cross-tool item named and attributed. The grouping became
+  `audit_universe.group_targets_by_domain`, canonical and callable, with both sides of
+  `handoff_moz`'s domain matching normalised to agree with it. `handoff.absolute_rank_versions`
+  records which schema versions carry absolute ranks (empty today), and the briefing warns on the
+  rank column until one does — so the warning retires itself when D1 ships, with no code change.
+  `compute_sov` drops engines with no answered questions, names them, returns `presence_rate`
+  `None` rather than `0.0` when there is no count, and persists the per-engine counts in a new
+  `sov_coverage` table so an *old* report can still say what was unmeasured. `anchor_coverage`
+  splits `errored` into `errored_cached` / `errored_age_unknown` sub-counts by comparing each
+  domain's `fetched_at` against the handoff's assembly time. `reporting.gsc_pull_note` states
+  the window, country and device scope from the keys the fetcher reads. The simulated conversion
+  tests now call the real functions, and `Serp-compete/tests/test_handoff_contract.py` (37 cases)
+  holds the semantics.
+- **Also fixed on the way:** the SoV report line tested `presence_rate is not None`, but a SQL
+  NULL arrives from pandas as NaN, which *is* not None — so the first NULL would have rendered
+  "named in nan% of answers". `anchor_data_unreadable` was left alone deliberately: the new
+  counters are sub-counts of `errored`, so adding them to it would have inflated the unreadable
+  total. And `handoff_rank_is_absolute` is passed the run's own config rather than reading
+  `shared_config.json` again — the second read resolves relative to `src/`, so an
+  orchestrator- or test-supplied config was ignored and the report could have described a rank
+  convention the run was not using.
+- **Rule:** a contract test must call the thing it is a contract for. If a test re-implements the
+  code it covers, it tests the copy. And when two modules compare the same identifier — a
+  domain, a key, an id — normalise it in ONE place and make every comparison go through that
+  place; two paths that disagree about what a domain is will each look correct in isolation.
 
 **The consumers read their inputs at the wrong scale, the wrong market and the wrong depth, and documented knobs controlled nothing (C-M-11, C-C-17, C-M-16, C-M-17, C-M-18, C-C-14).**
 - **Root cause (P2 / P4 / P6 / P21):** every one of these is a contract read loosely. GSC was

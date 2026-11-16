@@ -44,6 +44,46 @@ def _norm_keyword(keyword: Any) -> str:
     return " ".join(str(keyword or "").lower().split())
 
 
+def group_targets_by_domain(
+        targets: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """`{canonical domain: [its handoff targets]}` — one entry per SITE.
+
+    Purpose: one site must be one audited competitor.
+    Spec:    docs/review_2026-11-04/REVIEW_WORKPLAN_2026-11-04.md §3 Chunk X
+    Tests:   Serp-compete/tests/test_handoff_contract.py::TestDomainCanonicalForm
+
+    Tool 1 writes `targets[].domain` as `netloc.lower()` with `www.` kept, while
+    its own citation and brand paths strip it. Grouping on the raw string made
+    one site two competitors whenever a handoff carried both spellings: two
+    DataForSEO enrichment calls, two `competitors` rows, the site's keyword
+    count split in half for the barbell and positioning, and the same brand
+    token derived twice. `main.run_audit`'s omit-list test normalised while its
+    grouping did not, so an omitted `www.` host was skipped and its bare twin
+    audited.
+
+    A function rather than an inline loop in `main.run_audit` because a test
+    cannot reach that loop: `main` imports the whole application at module load
+    and `run_audit` needs live API clients, so the only coverage the grouping
+    ever had was a test that re-implemented it (the copy in
+    `tests/test_handoff_ingestion.py` could not have caught this).
+
+    Target URLs are untouched — the URL is what gets fetched, and
+    `https://www.x.com/a` is not necessarily `https://x.com/a`.
+    """
+    from src.brand_utils import normalise_domain
+
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for target in targets or []:
+        domain = normalise_domain((target or {}).get("domain"))
+        if not domain:
+            # A target with no domain cannot be attributed to a competitor.
+            # Dropping it silently is what the caller's N-of-M line reports on;
+            # keying it under "" would create a phantom domain in the report.
+            continue
+        groups.setdefault(domain, []).append(target)
+    return groups
+
+
 def handoff_keyword_set(targets: Iterable[Dict[str, Any]]) -> Set[str]:
     """Every keyword Tool 1 ranked: each target's primary keyword AND source keyword.
 

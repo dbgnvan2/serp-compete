@@ -391,6 +391,9 @@
     "_volatility_min_shift_source": "editorial, uncalibrated, 2026-03 (moved to config 2026-11-15)",
     "volatility_min_shift": 3,
     "_volatility_high_shift_source": "editorial, uncalibrated, 2026-05 (severity band only)",
+    "_moz_cache_tolerance_hours_comment": "Chunk X (D-C-10 downstream): how far a domain's `moz.domains[*].fetched_at` may trail the handoff's `moz.generated_at` and still count as collected during that Tool 1 run. Beyond it, an `anchor_texts.status == \"error\"` is a cache hit being re-served — Tool 1 caches a competitor's Moz block for up to 30 days and can cache it with the failure in it — so the report says so instead of presenting one old outage as this run's. Does not change `errored`; it splits it.",
+    "_moz_cache_tolerance_hours_source": "editorial, uncalibrated, 2026-11-16 — a Tool 1 run is assembled in one session, so a block collected more than a day before assembly came from the cache.",
+    "moz_cache_tolerance_hours": 24,
     "_cliff_drop_pct_source": "editorial, uncalibrated, 2026-05 — the share of its recent peak a domain's visibility must lose to read as a cliff. See _cliff_min_sample_comment for why the signal is usually withheld anyway (C-M-07).",
     "_cliff_lookback_source": "editorial, uncalibrated, 2026-05 — how many run snapshots the 'recent peak' is taken from, so an old collapse scrolls out of the window instead of re-flagging every run."
   },
@@ -421,6 +424,9 @@
       "1.0",
       "1.1"
     ],
+    "_absolute_rank_versions_comment": "Chunk X (rank semantics): the handoff schema_versions whose `targets[].rank` counts organic results across the whole SERP. serp-discover stores SerpAPI's per-page `position` verbatim and merges paginated pages without an offset (review finding H1 / D-C-01), so in its 3-page mode the ranks run 1..9, 1..10, 1..10 and three targets each claim rank 1. An empty list means no version produces absolute ranks yet, and the briefing carries a warning on the rank column. When serp-discover's chunk D1 lands it bumps schema_version: add that version here and to supported_versions, and the warning retires itself.",
+    "_absolute_rank_versions_source": "producer behaviour, not editorial — set from what serp-discover actually emits; empty as of 2026-11-16 because D1 has not shipped.",
+    "absolute_rank_versions": [],
     "schema_dir": ".",
     "_comment": "C-C-14: `supported_versions` is ENFORCED since 2026-11-15 (main._unsupported_handoff_version) — a handoff whose schema_version is not listed is a hard fail, not a silent audit. The values were 2.0/2.1 while every real handoff and handoff_schema.json carry 1.0 or 1.1, so enforcing the old list would have rejected every file; they are corrected here. An empty list means 'accept any version'. `minimum_version` and `legacy_fallback_enabled` still have no reader and are removed: the ordered fallback (handoff -> market_analysis -> manual_targets) is unconditional in get_latest_market_data, and there is no version ordering to compare against."
   },

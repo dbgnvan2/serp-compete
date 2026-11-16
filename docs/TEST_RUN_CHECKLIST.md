@@ -66,6 +66,25 @@ Outputs: `strategic_briefing_run_N.md` + `audit_results_run_N.xlsx`, in
 - [ ] Each long section that was capped says "Showing the first N of M" — and the Excel
   sheet for it has **all M rows** (C-C-07). Spot-check one: *GEO Extractability*.
 
+## 2c. Handoff contract (chunk X) — the cross-tool checks
+- [ ] **One site, one competitor.** If the handoff carries both `www.x.com` and `x.com`
+  for one site (grep the targets), the briefing must list that domain **once** and the
+  console's `📋 Run coverage` must count it as one handoff domain. Two rows for one site
+  means the canonical grouping regressed.
+- [ ] **The page-relative rank warning is present** while serp-discover's chunk D1 is
+  unshipped: the coverage block should carry *"Handoff ranks are page-relative"* naming the
+  schema version. If D1 **has** shipped, the warning must be **gone** — and if it is still
+  there, add the new version to `handoff.absolute_rank_versions` rather than editing code.
+- [ ] **AI Share-of-Voice names any unmeasured engine** ("Not measured this run: …") rather
+  than showing it at 0%. Cross-check the console's `Not measured (0 answers in the export)`
+  line. An engine that was asked and found nothing should still appear in the shares.
+- [ ] **Anchor coverage distinguishes cached errors.** If the caveat reports errored
+  domains, check for the follow-on clause saying how many came from Tool 1's cache. All of
+  them cached means one old outage, not a provider problem to chase today.
+- [ ] **The GSC section states its pull** — "last N days, country `can`, all devices". If
+  you are comparing a figure with a serp-discover report, confirm that report states the
+  same window and filter; they are otherwise not comparable.
+
 ## 3. Report sections — each new section renders, numbers look sane, caveat present
 - [ ] **SERP Overlap & Differentiation Gap** — cell distribution + "Volume by cell" + the two
   action queues (exclusive-competitor, shared-commodity). If GSC was unavailable this run, look

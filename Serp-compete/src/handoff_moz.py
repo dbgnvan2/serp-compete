@@ -1,7 +1,9 @@
 """
 handoff_moz.py
 ~~~~~~~~~~~~~~
-Read the optional Moz block from a Tool 1 competitor handoff.
+Read the optional Moz block from a Tool 1 competitor handoff, and hold the
+facts about the validated handoff that the run needs after ingestion has
+finished (its Moz block and its `schema_version`).
 
 Purpose: give the reputation-risk radar the anchor-text distribution Tool 1
          collects, without widening any existing contract.
@@ -23,9 +25,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
+
+try:  # brand_utils is dependency-free by design, so this import is safe here.
+    from src.brand_utils import normalise_domain
+except ImportError:  # pragma: no cover - standalone use without the package root
+    def normalise_domain(domain) -> str:  # type: ignore[misc]
+        return str(domain or "").strip().lower().removeprefix("www.")
 
 
 def load_moz_block(handoff_path: Optional[str]) -> Dict[str, Any]:
@@ -93,6 +102,77 @@ def validated_moz_block() -> Dict[str, Any]:
     return _VALIDATED_MOZ_BLOCK
 
 
+#: The `schema_version` of the handoff that was validated, retained for the
+#: same reason and by the same call as the Moz block above. It is needed late
+#: in the run — when the report's coverage block is assembled — and the
+#: alternative was either re-reading the handoff file unvalidated (which the
+#: caller's own comment warns against) or widening
+#: `get_latest_market_data`'s return tuple, which every caller unpacks
+#: positionally (P22).
+_VALIDATED_SCHEMA_VERSION: str = ""
+
+
+def remember_handoff_version(handoff: Any) -> None:
+    """Retain the validated handoff's `schema_version`. Never raises.
+
+    Call with `{}` at the start of each ingestion: the legacy and manual paths
+    carry no version, and a second run in one process must not inherit the
+    previous handoff's (P8).
+    """
+    global _VALIDATED_SCHEMA_VERSION
+    try:
+        version = (handoff or {}).get("schema_version") if isinstance(handoff, dict) else ""
+        _VALIDATED_SCHEMA_VERSION = str(version or "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Handoff version not retained: %s", exc)
+        _VALIDATED_SCHEMA_VERSION = ""
+
+
+def validated_handoff_version() -> str:
+    """The version retained by :func:`remember_handoff_version`, or `""`.
+
+    `""` means "no versioned handoff was ingested" — the legacy
+    `market_analysis_*.json` or `manual_targets.json` path, or no source at
+    all. It does not mean version 1.0.
+    """
+    return _VALIDATED_SCHEMA_VERSION
+
+
+def handoff_rank_is_absolute(version: str = None,
+                             absolute_versions: Optional[Iterable[Any]] = None) -> Optional[bool]:
+    """Does this handoff's `targets[].rank` count results across whole SERPs?
+
+    Purpose: stop a page-relative rank being printed as a SERP position.
+    Spec:    docs/review_2026-11-04/REVIEW_WORKPLAN_2026-11-04.md §3 Chunk X
+             ("Rank semantics"), §1 H1 / D-C-01.
+    Tests:   Serp-compete/tests/test_handoff_contract.py::TestRankSemantics
+
+    serp-discover stores SerpAPI's per-page `position` verbatim as `Rank` and
+    concatenates paginated pages without an offset, so in its 3-page mode the
+    handoff's ranks run `1..9, 1..10, 1..10` — three results claim rank 1 and a
+    page-3 result reports rank 2. Chunk D1 fixes the producer and bumps
+    `schema_version`; until a handoff carries one of the versions listed in
+    `handoff.absolute_rank_versions`, this tool is consuming page-relative
+    ranks and the report has to say so.
+
+    Returns None for `""` — the legacy and manual paths carry no version and
+    no rank either, so there is nothing to qualify.
+    """
+    if version is None:
+        version = validated_handoff_version()
+    version = str(version or "")
+    if not version:
+        return None
+    if absolute_versions is None:
+        try:
+            from src.database import load_shared_config
+            absolute_versions = (load_shared_config().get("handoff", {}) or {}).get(
+                "absolute_rank_versions") or []
+        except Exception:  # noqa: BLE001 - never block a run on a config read
+            absolute_versions = []
+    return version in {str(v) for v in absolute_versions}
+
+
 def moz_collected_at(moz_block: Dict[str, Any]) -> Optional[str]:
     """When the handoff was **assembled** (`moz.generated_at`).
 
@@ -119,7 +199,14 @@ def _domain_collected_at(block: Dict[str, Any], fallback: Optional[str]) -> Opti
 
 
 def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    """Extract `{domain: {items, truncated}}` from a handoff `moz` block.
+    """Extract `{canonical domain: {items, truncated}}` from a handoff `moz` block.
+
+    Keys are normalised (lower-cased, `www.` stripped) because this dict's keys
+    become the domain names the risk feed prints, and the rest of the run —
+    `competitor_metrics`, the brand tokens, the omit list — uses the canonical
+    form. A finding filed against `www.x.com` while every other section of the
+    report calls the same site `x.com` reads as a second competitor (Chunk X,
+    canonical domain form).
 
     Domains with no anchors are omitted rather than mapped to an empty block,
     so "no anchors were collected for this domain" cannot be read downstream as
@@ -159,7 +246,17 @@ def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any
         anchors = block.get("anchor_texts") or {}
         items = anchors.get("items") or []
         if items:
-            out[domain] = {
+            key = normalise_domain(domain)
+            # Two spellings of one site can both carry anchors. They are one
+            # link profile, so the richer sample wins rather than whichever the
+            # producer happened to serialise last — except that the client entry
+            # is appended last deliberately and must keep winning for its own
+            # domain (see the comment above).
+            existing = out.get(key)
+            if existing and len(existing.get("items") or []) > len(items) \
+                    and domain != (((moz_block or {}).get("client") or {}).get("domain")):
+                continue
+            out[key] = {
                 "items": items,
                 "truncated": bool(anchors.get("truncated")),
                 "collected_at": _domain_collected_at(block, assembled_at),
@@ -181,11 +278,77 @@ def restrict_to_run(anchors: Dict[str, Any], domains, client_domain: str = "") -
 
     The client is always kept when present: it is excluded from the competitor
     list by design but is exactly the domain the own-site check is for.
+
+    Both sides are compared in canonical form. Tool 1 writes `moz.domains` keys
+    as `netloc.lower()` with `www.` kept while this run's domain list is
+    canonical, so a plain lower-case comparison dropped every `www.` host —
+    filtering the anchors down to nothing and rendering a run with real
+    findings as one with none (Chunk X, canonical domain form).
     """
-    keep = {str(d).lower() for d in (domains or []) if d}
+    keep = {normalise_domain(d) for d in (domains or []) if d}
     if client_domain:
-        keep.add(client_domain.lower())
-    return {d: v for d, v in (anchors or {}).items() if str(d).lower() in keep}
+        keep.add(normalise_domain(client_domain))
+    return {d: v for d, v in (anchors or {}).items()
+            if normalise_domain(d) in keep}
+
+
+#: Hours by which a domain's `fetched_at` may trail the handoff's
+#: `generated_at` and still count as fetched during that run. Editorial and
+#: uncalibrated (2026-11-16, decision 7): a Tool 1 run is assembled in one
+#: session, so anything collected more than a day before assembly came out of
+#: its 30-day cache rather than off the wire. Overridden by
+#: `risk_signals.moz_cache_tolerance_hours`.
+DEFAULT_MOZ_CACHE_TOLERANCE_HOURS = 24.0
+
+
+def _cache_tolerance_hours() -> float:
+    try:
+        from src.database import load_shared_config
+    except ImportError:  # pragma: no cover - standalone use
+        return DEFAULT_MOZ_CACHE_TOLERANCE_HOURS
+    try:
+        signals = load_shared_config().get("risk_signals", {}) or {}
+        return float(signals.get("moz_cache_tolerance_hours",
+                                 DEFAULT_MOZ_CACHE_TOLERANCE_HOURS))
+    except Exception:  # noqa: BLE001 - an optional signal must not abort a run
+        return DEFAULT_MOZ_CACHE_TOLERANCE_HOURS
+
+
+def _parse_iso(value: Any) -> Optional[datetime]:
+    """A timezone-aware datetime from an ISO 8601 string, else None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def error_is_cached(block: Dict[str, Any], assembled_at: Any,
+                    tolerance_hours: Optional[float] = None) -> Optional[bool]:
+    """True when this domain's error block was re-served from Tool 1's cache.
+
+    Purpose: stop one Moz outage reading as N fresh ones.
+
+    Tool 1 caches a competitor's Moz block for up to 30 days and can cache it
+    with a failed sub-call in it (D-C-10), so the same error is re-served every
+    run until the cache expires. A consumer that counts `status == "error"`
+    without its age reports a month-old failure as today's outage, and reports
+    five such domains as five separate failures — the transient-as-permanent
+    collapse in reverse (P1).
+
+    Returns None when the age cannot be established: neither "fresh" nor
+    "cached" may be assumed from a missing timestamp.
+    """
+    if tolerance_hours is None:
+        tolerance_hours = _cache_tolerance_hours()
+    fetched = _parse_iso(block.get("fetched_at"))
+    assembled = _parse_iso(assembled_at)
+    if fetched is None or assembled is None:
+        return None
+    return (assembled - fetched).total_seconds() > tolerance_hours * 3600.0
 
 
 def anchor_coverage(moz_block: Dict[str, Any], domains=None,
@@ -200,9 +363,16 @@ def anchor_coverage(moz_block: Dict[str, Any], domains=None,
     both into an absent domain would let a run of 429s render as "no anchor
     risks found" (learnings P1/P2), so the counts are reported alongside the
     signals rather than inferred from what is missing.
+
+    `errored` stays the total number of error blocks. `errored_cached` and
+    `errored_age_unknown` are sub-counts of it, not additions to it, so an
+    existing reader of `errored` keeps its meaning (P22).
     """
     counts = {"total": 0, "with_anchors": 0, "read_no_anchors": 0,
-              "no_record": 0, "errored": 0, "skipped": 0, "unknown": 0}
+              "no_record": 0, "errored": 0, "skipped": 0, "unknown": 0,
+              "errored_cached": 0, "errored_age_unknown": 0}
+    assembled_at = moz_collected_at(moz_block)
+    tolerance = _cache_tolerance_hours()
     all_domains = ((moz_block or {}).get("domains") or {})
     # Scope ONLY on an explicit domain list. Triggering on client_domain alone
     # filtered every competitor out and returned all zeros, so a run where a
@@ -213,12 +383,18 @@ def anchor_coverage(moz_block: Dict[str, Any], domains=None,
         # counting the whole block made the report warn about ~30 domains this
         # run never looked at — a claim of blindness it does not have, which is
         # the same class of dishonesty as claiming a clean bill (P3/P6).
-        keep = {str(d).lower() for d in (domains or []) if d}
+        # Canonical form on both sides: Tool 1's keys keep `www.` and the run's
+        # domain list does not, so a lower-case-only comparison dropped every
+        # `www.` host and returned all zeros — a run where fetches errored then
+        # rendered as clean, which is the very thing this function exists to
+        # prevent (Chunk X, canonical domain form).
+        keep = {normalise_domain(d) for d in (domains or []) if d}
         if client_domain:
-            keep.add(client_domain.lower())
-        all_domains = {d: v for d, v in all_domains.items() if str(d).lower() in keep}
+            keep.add(normalise_domain(client_domain))
+        all_domains = {d: v for d, v in all_domains.items()
+                       if normalise_domain(d) in keep}
     client = (moz_block or {}).get("client")
-    client_domain_key = str((client or {}).get("domain", "")).lower()
+    client_domain_key = normalise_domain((client or {}).get("domain", ""))
     if isinstance(client, dict) and client.get("anchor_texts") and client_domain_key:
         # The client block WINS for its own domain, matching
         # anchor_texts_by_domain. Counting the `domains` block while extraction
@@ -226,7 +402,7 @@ def anchor_coverage(moz_block: Dict[str, Any], domains=None,
         # could not be read on the very run where they were read — and an
         # own-site signal may have been raised from them (P6).
         all_domains = {d: v for d, v in all_domains.items()
-                       if str(d).lower() != client_domain_key}
+                       if normalise_domain(d) != client_domain_key}
     blocks = list(all_domains.values())
     if isinstance(client, dict) and client.get("anchor_texts"):
         # A failed fetch of the client's own anchors must be as visible as any
@@ -248,6 +424,15 @@ def anchor_coverage(moz_block: Dict[str, Any], domains=None,
         status = anchors.get("status") or block.get("status")
         if status == "error":
             counts["errored"] += 1
+            # …and whether it is this run's outage or a cached one being
+            # re-served. Five domains carrying a month-old cached failure are
+            # one historical outage, not five fresh ones, and the report should
+            # not ask the owner to go and check Moz over them (D-C-10).
+            cached = error_is_cached(block, assembled_at, tolerance)
+            if cached is True:
+                counts["errored_cached"] += 1
+            elif cached is None:
+                counts["errored_age_unknown"] += 1
         elif status in ("skipped_run_cap", "skipped_quota"):
             counts["skipped"] += 1
         elif status == "no_record":

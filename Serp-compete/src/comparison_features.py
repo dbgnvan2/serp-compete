@@ -143,10 +143,19 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         summary["sov_available"] = sov["data_available"]
         if sov["data_available"]:
             db.save_sov(run_id, sov["rows"])
+            # Persisted beside the rows so an OLD report can still say which
+            # engines were not measured (Chunk X).
+            db.save_sov_coverage(run_id, sov.get("engine_coverage") or [])
             summary["sov_rows"] = len(sov["rows"])
             print(f"   📣 AI Share-of-Voice: {len(sov['rows'])} entity rows, "
                   f"{len(sov['gaps'])} cited-but-you're-not gaps "
                   f"(from {os.path.basename(export_path) if export_path else '?'}).")
+            unmeasured = sov.get("unmeasured_engines") or []
+            if unmeasured:
+                summary["sov_unmeasured_engines"] = unmeasured
+                print(f"      Not measured (0 answers in the export): "
+                      f"{', '.join(unmeasured)} — excluded from the shares "
+                      f"rather than published at 0%.")
         else:
             print("   ℹ️ AI Share-of-Voice: no serp-discover AI-visibility export found — skipped.")
     except Exception as sov_err:  # noqa: BLE001
@@ -234,11 +243,23 @@ def run_comparison_features(db: Any, run_id: int, shared_config: Dict[str, Any],
         if anchor_coverage:
             # "No anchor risks" must never be able to mean "every anchor fetch
             # failed" — say how many domains were actually readable (P1/P2).
+            # `errored_cached` / `errored_age_unknown` are sub-counts OF
+            # `errored`, so listing them alongside it would read as extra
+            # failures ("3 errored, 1 errored_cached" is 3 domains, not 4).
+            # They get their own clause.
+            _sub = ("total", "with_anchors", "errored_cached",
+                    "errored_age_unknown")
             breakdown = ", ".join(f"{v} {k}" for k, v in anchor_coverage.items()
-                                  if k not in ("total", "with_anchors") and v)
+                                  if k not in _sub and v)
             print(f"      Anchor coverage: {anchor_coverage.get('with_anchors', 0)} of "
                   f"{anchor_coverage.get('total', 0)} domain(s) had anchor "
                   f"data{f' ({breakdown})' if breakdown else ''}.")
+            cached = anchor_coverage.get("errored_cached", 0) or 0
+            unknown_age = anchor_coverage.get("errored_age_unknown", 0) or 0
+            if cached or unknown_age:
+                print(f"      Of the errored domains: {cached} re-served from "
+                      f"Tool 1's cache (an older outage, not this run's), "
+                      f"{unknown_age} with no collection date.")
     except Exception as risk_err:  # noqa: BLE001
         print(f"⚠️ Reputation-risk radar skipped: {risk_err}")
 

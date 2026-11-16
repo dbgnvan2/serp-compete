@@ -106,7 +106,8 @@ def compute_sov(export: Optional[Dict[str, Any]], competitor_domains: List[str],
     never cited is still classified 'competitor', not hidden in "other".
     """
     if not export or not export.get("data_available"):
-        return {"data_available": False, "rows": [], "gaps": []}
+        return {"data_available": False, "rows": [], "gaps": [],
+                "unmeasured_engines": [], "engine_coverage": []}
 
     competitor_set = {_norm_domain(d) for d in (competitor_domains or [])}
     competitor_brand_set = {_norm(b) for b in (competitor_brands or []) if _norm(b)}
@@ -152,8 +153,27 @@ def compute_sov(export: Optional[Dict[str, Any]], competitor_domains: List[str],
 
     rows: List[Dict[str, Any]] = []
     gaps: List[Dict[str, Any]] = []
+    unmeasured: List[str] = []
+    engine_coverage: List[Dict[str, Any]] = []
     for engine in engines:
         eng_mentions = [m for m in mentions if m.get("engine") == engine]
+        # Chunk X (D-C-05 / D-C-11 downstream): Tool 1 writes brand_mention rows
+        # for an engine that answered nothing — a skipped or failed engine — and
+        # those rows carry `questions_total: 0`. Computing shares over them
+        # published "0% mention share, presence 0.0" for that engine, which
+        # reads as "we asked and nobody mentioned you" when nothing was asked.
+        # An engine is measured only if it reports a positive question count.
+        # An engine with a positive count and no mentions keeps its rows: that
+        # IS a measured absence, and it is a finding.
+        engine_questions = max(
+            [int(m.get("questions_total") or 0) for m in eng_mentions] or [0])
+        measured = not (eng_mentions and engine_questions <= 0)
+        engine_coverage.append({"engine": engine,
+                                "questions_total": engine_questions,
+                                "measured": measured})
+        if not measured:
+            unmeasured.append(engine)
+            continue
         eng_citations = [c for c in citations if c.get("engine") == engine]
         total_mentions = sum(int(m.get("mention_count") or 0) for m in eng_mentions)
         total_cites = sum(int(c.get("cite_count") or 0) for c in eng_citations)
@@ -176,7 +196,9 @@ def compute_sov(export: Optional[Dict[str, Any]], competitor_domains: List[str],
                 "entity_type": "brand", "is_client": bool(m.get("is_client")), "category": category,
                 "mention_share": round(100.0 * count / total_mentions, 2) if total_mentions else 0.0,
                 "citation_share": None,
-                "presence_rate": round(count / qt, 3) if qt else 0.0,
+                # None, not 0.0: without a question count there is no rate, and
+                # 0.0 asserts "named in none of the answers" (Chunk X).
+                "presence_rate": round(count / qt, 3) if qt else None,
                 "avg_sentiment": round(s[0] / s[1], 3) if s and s[1] else None,
             })
 
@@ -198,7 +220,13 @@ def compute_sov(export: Optional[Dict[str, Any]], competitor_domains: List[str],
             if cited_gap:
                 gaps.append({"engine": engine, "domain": c.get("domain"), "cite_count": count})
 
-    return {"data_available": True, "rows": rows, "gaps": gaps}
+    # `unmeasured_engines` is additive: a consumer that ignores it behaves as
+    # before. It exists so the report can say "perplexity: not measured (0
+    # answers)" rather than leave the engine out silently, which is the same
+    # N-of-M surfacing rule the rest of the run follows (P2).
+    return {"data_available": True, "rows": rows, "gaps": gaps,
+            "unmeasured_engines": unmeasured,
+            "engine_coverage": engine_coverage}
 
 
 def _norm_domain(domain: Any) -> str:

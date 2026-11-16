@@ -752,10 +752,16 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
   `ranked_keywords` = a DataForSEO enrichment keyword that passed the relevance filter;
   `unlabelled` = a row written before 2026-11-15, whose provenance is unknown and which
   is therefore never treated as a magnet, vacuum or reframe target.
-- **The handoff `rank` is whatever Serp-Discover wrote.** Serp-Compete does not
-  re-measure it. Tool 1's rank semantics are themselves under repair (its paginated
-  SERP positions restart at 1 per page), so a rank from a handoff generated before that
-  fix understates how far down the page a result really was.
+- **The handoff `rank` is whatever Serp-Discover wrote, and today it is
+  page-relative.** Serp-Compete does not re-measure it. Tool 1 stores SerpAPI's
+  per-page `position` verbatim and merges paginated pages without an offset, so in
+  its 3-page mode the ranks run `1..9, 1..10, 1..10`: several targets each claim
+  rank 1, and a "rank 2" may be the second result of page 3 (review finding H1 /
+  D-C-01, still open on the Serp-Discover side). Since 2026-11-16 the briefing's
+  coverage block **says so**, naming the schema version it read. The warning is
+  driven by `handoff.absolute_rank_versions`, so it retires itself once a handoff
+  arrives on a version whose ranks are absolute — see `docs/handoff_contract.md`
+  §1.4.
 - **A missing number is NULL, not zero, all the way down** (fixed 2026-11-15). An
   unmeasured Moz Page Authority, a brand whose search volume the provider would not
   return, a page whose scrape errored, a drift whose two sides were not both measured:
@@ -779,10 +785,12 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
   keyword — not search volume and not your traffic. It was labelled "Volume by cell
   (est. traffic)" and stored as `keyword_volume` (C-M-20).
 - **The magnet / vacuum thresholds are editorial and uncalibrated**
-  (`technical.vacuum_min_medical` = 10 and `technical.magnet_max_position` = 10, both
-  dated 2026-11-14; `branded_demand.ambiguous_brand_ratio` = 10). They were chosen to
+  (`technical.vacuum_min_medical` = 6, re-set from 10 on 2026-11-15 when decision 3
+  shrank the Tier-1 vocabulary; `technical.magnet_max_position` = 10, dated
+  2026-11-14; `branded_demand.ambiguous_brand_ratio` = 10). They were chosen to
   match the documented definitions, not derived from outcome data. Raising or lowering
-  them changes the magnet, vacuum and reframe lists together, by design.
+  them changes the magnet, vacuum and reframe lists together, by design. The
+  provenance table below is authoritative for the current values.
 - **`est_traffic` is DataForSEO's `etv`** — estimated monthly visits for that
   keyword×position, not measured traffic, and **0 means not measured**: the handoff
   carries no traffic figure, so one appears only where DataForSEO reported the same URL
@@ -846,6 +854,33 @@ rows chosen by an `est_traffic DESC` sort with heavy ties (C-C-07). A sheet only
   zero); Branded-Demand competitor figures are search-volume estimates (only your own can be
   GSC-anchored) and say so when the source is down; Reputation-Risk items are *pattern
   detections, not confirmed Google penalties*.
+- **One site is one competitor, whichever spelling the handoff used** (since
+  2026-11-16). Tool 1 writes domains as `netloc.lower()` with `www.` kept, while its
+  own brand and citation paths strip it, so a handoff can carry both forms of one
+  site. They are now grouped under the canonical (lower-cased, `www.`-stripped)
+  form, so the site gets one audit, one `competitors` row and one keyword count
+  instead of two of each. Target URLs are still fetched exactly as given. Which
+  side *should* own canonical form is open (review decision 4); this repo
+  normalises defensively either way — `docs/handoff_contract.md` §1.3.
+- **An AI engine that answered nothing is not an engine that found nothing** (since
+  2026-11-16). serp-discover writes brand-mention rows for engines it skipped or
+  that failed, carrying a question count of 0. Those engines are now excluded from
+  the Share-of-Voice shares and **named in the section as not measured**, rather
+  than printed at "0% mention share, named in 0% of answers" — which asserted a
+  measured absence. An engine that was asked and found nothing keeps its row: that
+  is a finding. The per-engine counts are stored, so an old report can still say
+  which engines were unmeasured.
+- **A repeated Moz anchor error may be one old outage, not many** (since
+  2026-11-16). Tool 1 caches a competitor's Moz block for up to 30 days and can
+  cache it with the failure inside, so the same error is re-served every run. The
+  anchor caveat now splits the errored domains into those whose data was collected
+  during this run and those re-served from the cache, with the undated ones counted
+  separately — "no date" is evidence of neither.
+- **The GSC pull is stated on the section** (since 2026-11-16): the window, the
+  country filter and the device scope, read from the config keys the fetcher reads.
+  serp-discover pulls GSC over its own window and filters, so figures from the two
+  reports are comparable only where both state the same ones. Agreeing a single
+  window across both tools is still open — `docs/handoff_contract.md` §5.
 - **Reframes are AI-drafted scaffolds**, not clinical copy — always apply your own
   judgement.
 
@@ -873,6 +908,9 @@ never been checked against an outcome.
 | `risk_signals.cliff_min_sample` | 10 | editorial; the sample a step-change test needs. The signal is usually withheld (§5.3) | 2026-11-15 |
 | `risk_signals.volatility_min_shift` | 3 | editorial; the alert TRIGGER. Was a literal while the config key the owner could edit only set the severity band | 2026-03 (moved to config 2026-11-15) |
 | `risk_signals.cliff_drop_pct` / `cliff_lookback` / `volatility_high_shift` | 0.3 / 6 / 6 | editorial | 2026-05 |
+| `risk_signals.moz_cache_tolerance_hours` | 24 | editorial; how far a domain's `fetched_at` may trail the handoff's assembly and still count as collected during that Tool 1 run. Beyond it an `error` status is a 30-day cache hit being re-served, not this run's outage (§6.4) | 2026-11-16 |
+| `gsc_settings.date_range_days` / `country` | 90 / `can` | **not editorial** — the pull parameters, printed on the GSC section so a figure from this tool is not read beside serp-discover's differently-scoped one (`docs/handoff_contract.md` §5) | 2026-11-15 |
+| `handoff.absolute_rank_versions` | *(empty)* | **not editorial** — records which handoff `schema_version`s carry absolute SERP ranks. Empty because serp-discover's chunk D1 has not shipped, so the briefing warns that `rank` is page-relative (`docs/handoff_contract.md` §1.4) | 2026-11-16 |
 | `branded_demand.ambiguous_brand_ratio` | 10 | editorial; above it, a bare stem's demand is not the practice's (§4.7) | 2026-11-15 |
 | `serp_overlap.top_n` / `commodity_high_overlap` | 10 / 3 | editorial; a local overlap proxy, not a measured index | 2026-05 |
 | `cluster_thresholds.*` | 2 / 3 | editorial; bounded by `max_audit_pages_per_domain` (§3.3) | 2026-05 |

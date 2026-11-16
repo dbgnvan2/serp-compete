@@ -86,6 +86,12 @@ validate the full feature set described in this README.
 - **[USER_MANUAL.md](docs/USER_MANUAL.md)** — Comprehensive guide for end users
 - **[SPEC_COVERAGE_REPORT_v3.md](docs/SPEC_COVERAGE_REPORT_v3.md)** — Implementation status
 - **[DATA_PERSISTENCE_MAP_v3.md](docs/DATA_PERSISTENCE_MAP_v3.md)** — Database schema
+- **[handoff_contract.md](docs/handoff_contract.md)** — What the serp-discover handoff and
+  exports *mean*, as opposed to `handoff_schema.json`, which says only whether a file is
+  well-formed: domain canonical form, rank semantics, which fields must survive ingestion,
+  and what this tool does when the producer sends something it cannot trust
+- **[FEATURE_GUIDE.md](docs/FEATURE_GUIDE.md)** — What each section measures, and §9 for the
+  limitations and the provenance of every threshold that drives a verdict
 - **[shared_config.json](shared_config.json)** — All configuration options (fully commented)
 
 ## Architecture

@@ -149,14 +149,20 @@ def _handoff_anchor_texts(run_domains=None, client_domain: str = "") -> Tuple[Di
 
 
 def _remember_moz_block(handoff_data: Dict[str, Any]) -> None:
-    """Retain the handoff's `moz` block for the anchor path to reuse.
+    """Retain the handoff's `moz` block and `schema_version` for later steps.
 
     The state and its guard live in src.handoff_moz, which is importable
     without the application's full dependency set and can therefore be tested.
+
+    The version is retained here, with the block, because both are facts about
+    the handoff that was actually validated and both are needed long after
+    ingestion returns — the version decides whether the report must qualify
+    `targets[].rank` as page-relative (Chunk X, rank semantics).
     """
     try:
-        from src.handoff_moz import remember_moz_block
+        from src.handoff_moz import remember_handoff_version, remember_moz_block
         remember_moz_block(handoff_data)
+        remember_handoff_version(handoff_data)
     except Exception as exc:  # noqa: BLE001
         print(f"⚠️ Moz block not retained: {exc}")
 
@@ -398,13 +404,38 @@ def run_audit(handoff_path: str = None):
         print("❌ No competitors identified. Aborting.")
         return
 
-    # Optimization 1: Group by domain
-    domain_groups = {}
-    for t in targets_raw:
-        d = t["domain"]
-        if d not in domain_groups:
-            domain_groups[d] = []
-        domain_groups[d].append(t)
+    # Optimization 1: Group by domain — by the CANONICAL form of it.
+    #
+    # Chunk X (canonical domain form): Tool 1 writes `targets[].domain` as
+    # `netloc.lower()` with `www.` kept, while its own citation and brand paths
+    # strip it. Grouping on the raw string therefore made one site two
+    # competitors whenever a handoff carried both forms — two DataForSEO
+    # enrichment calls, two `competitors` rows, two sets of keyword counts for
+    # the barbell and positioning to divide between, and the same brand token
+    # derived twice. The omit-list test two lines below already normalised, so
+    # the two paths disagreed about what a domain is: an omitted `www.` host
+    # was skipped while its bare twin was audited.
+    #
+    # The canonical form is the stripped one, because that is what the rest of
+    # this repo already compares on: `load_omitted_domains`, `derive_brand_name`,
+    # `sov_analyzer._norm_domain`, `cluster_detector._normalise` and
+    # `youtube_presence._stem` all normalise first. Target URLs are untouched —
+    # the URL is what gets fetched, and `https://www.x.com/a` is not
+    # necessarily `https://x.com/a`.
+    #
+    # Decision 4 (which side owns canonical form) is still open and this does
+    # not pre-empt it: the workplan's own note is that the fix belongs here
+    # defensively either way, and if Tool 1 starts stripping at write time this
+    # code keeps working unchanged.
+    #
+    # The grouping itself lives in src.audit_universe so that a test can reach
+    # it — this loop was unreachable from any test, and the one test that
+    # covered it re-implemented it instead.
+    domain_groups = audit_universe.group_targets_by_domain(targets_raw)
+    dropped_targets = len(targets_raw) - sum(len(v) for v in domain_groups.values())
+    if dropped_targets:
+        print(f"⚠️ {dropped_targets} handoff target(s) carried no domain and were "
+              f"not attributed to a competitor.")
 
     # The domains this run is willing to audit: every ingested domain MINUS the
     # policy exclusions. Deliberately not minus the get_relevant_pages skip —
@@ -412,8 +443,7 @@ def run_audit(handoff_path: str = None):
     # scoping on competitor_keywords got wrong. But domain_groups alone
     # re-admits the omit list, so an omitted directory could collect an
     # anchor-spam finding in a client report (P3/P6).
-    audited_domains = [d for d in domain_groups
-                       if normalise_domain(d) not in omitted_domains]
+    audited_domains = [d for d in domain_groups if d not in omitted_domains]
 
     db = DatabaseManager()
     velocity = VelocityTracker(SHARED_CONFIG_PATH)
@@ -795,6 +825,23 @@ def run_audit(handoff_path: str = None):
         "pa_total": pa_total,
         "universe": dict(universe_stats),
     }
+    # Chunk X (rank semantics / H1): the handoff's ranks are page-relative
+    # until serp-discover's D1 lands, so the magnet table's "rank" column is
+    # not a SERP position. Carried as a fact about the ingested file rather
+    # than hard-coded, so the caveat disappears by itself once a handoff
+    # arrives on a version listed in `handoff.absolute_rank_versions`.
+    try:
+        from src.handoff_moz import handoff_rank_is_absolute, validated_handoff_version
+        run_coverage["handoff_version"] = validated_handoff_version()
+        # The run's OWN config, passed in rather than read again inside the
+        # helper: a second read resolves the file relative to src/, so an
+        # orchestrator- or test-supplied config was ignored and the report
+        # could have described a rank convention the run was not using.
+        run_coverage["rank_is_absolute"] = handoff_rank_is_absolute(
+            absolute_versions=(shared_config.get("handoff", {}) or {}).get(
+                "absolute_rank_versions") or [])
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️ Handoff rank semantics not determined: {exc}")
     print(f"\n📋 Run coverage: audited {len(competitor_keywords)} of "
           f"{len(domain_groups)} handoff domain(s); "
           f"{len(skipped_domains)} skipped"

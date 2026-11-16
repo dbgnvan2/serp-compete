@@ -7,6 +7,45 @@ import datetime
 from src.risk_radar import anchor_caveat_lines, anchor_data_unreadable
 
 
+def gsc_pull_note(config) -> str:
+    """The line that states which Google Search Console pull a section used.
+
+    Purpose: stop a figure from this tool being read beside a figure from
+             serp-discover as though both described the same traffic.
+    Spec:    docs/review_2026-11-04/REVIEW_WORKPLAN_2026-11-04.md §3 Chunk X
+             (GSC bullet); docs/handoff_contract.md §GSC
+    Tests:   Serp-compete/tests/test_handoff_contract.py::TestGscPullIsStated
+
+    serp-discover pulls 90 days, all devices, global; this tool pulls the
+    `gsc_settings.date_range_days` window with a `gsc_settings.country` filter
+    so the client's own positions come from the same market as the Canada-scoped
+    DataForSEO snapshot. Neither report said which pull it was.
+
+    The values are read from the keys `GSCManager.fetch_performance_data` reads,
+    not restated here, so this line cannot drift from the request that was
+    actually made. A function rather than inline text for the same reason
+    `anchor_caveat_lines` is one: the decision is then testable without
+    standing up a whole report.
+    """
+    settings = ((config or {}).get("gsc_settings", {}) or {})
+    try:
+        days = int(settings.get("date_range_days", 90))
+    except (TypeError, ValueError):
+        days = 90
+    country = str(settings.get("country", "can") or "").strip().lower()
+    return (
+        f"_Pull: last {days} days, "
+        + (f"country `{country}`" if country else "no country filter")
+        + ", all devices, query × page. "
+        + ("The country filter matches the DataForSEO SERP snapshot, which is a "
+           "Canada snapshot, so the two are comparable. " if country else
+           "No country filter, so this is global traffic and is NOT comparable "
+           "with the Canada-scoped DataForSEO SERP snapshot. ")
+        + "serp-discover pulls GSC over its own window; figures from the two "
+          "reports are comparable only where both state the same window and "
+          "filter._")
+
+
 class ReportGenerator:
     def __init__(self, db_path: str = None):
         # None, not a literal: DatabaseManager falls through to load_db_path(),
@@ -168,6 +207,22 @@ class ReportGenerator:
                     f"{universe.get('enrichment_dropped_brand', 0)} dropped as the "
                     f"competitor's own brand and "
                     f"{universe.get('enrichment_dropped_irrelevant', 0)} as off-topic.")
+            # Chunk X (rank semantics / H1): serp-discover stores SerpAPI's
+            # per-page `position` verbatim and concatenates paginated pages
+            # without an offset, so the handoff's ranks restart at 1 on every
+            # page. Until its chunk D1 lands and bumps `schema_version`, a
+            # "rank 2" in this report may be the second result of page 3.
+            if run_coverage.get("rank_is_absolute") is False:
+                report.append(
+                    f"> ⚠️ **Handoff ranks are page-relative.** This handoff is "
+                    f"schema v{run_coverage.get('handoff_version') or '?'}, which "
+                    f"carries serp-discover's per-page SERP `position` rather than an "
+                    f"absolute one (review finding H1 / D-C-01, open on the "
+                    f"serp-discover side). Several targets can therefore share a rank, "
+                    f"and a rank of 2 may be the second result of page 3. Read the "
+                    f"`rank` column below as \"where on its SERP page\", not as a "
+                    f"market position; `handoff.absolute_rank_versions` in "
+                    f"`shared_config.json` is what retires this warning.")
         else:
             report.append("\n_Run coverage was not recorded for this run — how many "
                           "handoff domains were audited, skipped or unmeasured is "
@@ -189,7 +244,9 @@ class ReportGenerator:
         if gsc_findings:
             report.append("\n## 📈 Internal GSC Performance Gaps")
             report.append("Analysis of our own site's performance in Google Search Console.")
-            
+            report.append(gsc_pull_note(self.config))
+
+
             target_gaps = gsc_findings.get("target_gaps")
             if target_gaps is not None and not target_gaps.empty:
                 report.append("\n### High Impression / Low CTR Gaps")
@@ -667,11 +724,27 @@ class ReportGenerator:
                 FROM sov_daily WHERE run_id = ?
             ''', conn, params=(run_id,))
 
+            # Chunk X: which engines actually answered. serp-discover writes
+            # brand-mention rows for an engine that answered nothing (D-C-05 /
+            # D-C-11), so those engines are now dropped from `sov_daily` rather
+            # than published at 0% share — and an engine missing from the table
+            # has to be named, or "not measured" reads as "measured, absent".
+            sov_coverage = self.db.get_sov_coverage(run_id)
+            sov_unmeasured = [c["engine"] for c in sov_coverage if not c["measured"]]
+
             if not df_sov.empty:
                 report.append("\n## Competitive AI Share-of-Voice")
                 report.append("When the AI engines answer category questions, whose brand and "
                               "sources come back. Consumed from serp-discover's AI-visibility "
                               "probes (not re-probed here). _Rolling snapshots — LLM answers vary._")
+                if sov_unmeasured:
+                    report.append(
+                        f"\n_Not measured this run: {', '.join(sorted(sov_unmeasured))} — "
+                        f"the export carried no answered questions for "
+                        f"{'these engines' if len(sov_unmeasured) > 1 else 'this engine'}, so "
+                        f"{'they are' if len(sov_unmeasured) > 1 else 'it is'} excluded from "
+                        f"the shares below rather than shown at 0%. Absence here is not "
+                        f"evidence that the engine does not name these brands._")
                 for engine in sorted(df_sov['engine'].dropna().unique()):
                     eng = df_sov[df_sov['engine'] == engine]
                     report.append(f"\n### {engine}")
@@ -688,8 +761,13 @@ class ReportGenerator:
                                       "answers the brand was named in): " + ", ".join(
                             f"{r['entity']}{' (you)' if r['is_client'] else ''} "
                             f"{(r['mention_share'] or 0):.0f}%"
-                            + (f" / named in {(r['presence_rate'] or 0) * 100:.0f}% of answers"
-                               if r['presence_rate'] is not None else "")
+                            # pd.notna, not `is not None`: a SQL NULL arrives
+                            # from pandas as NaN, which IS not None and would
+                            # have rendered "named in nan% of answers". A brand
+                            # row can now carry NULL here — the export gave no
+                            # question count for it (Chunk X).
+                            + (f" / named in {r['presence_rate'] * 100:.0f}% of answers"
+                               if pd.notna(r['presence_rate']) else "")
                             for _, r in men.iterrows()))
                     # …and the remainder, so the shares visibly sum to 100.
                     other_share = brands[brands['category'] == 'other']['mention_share'].sum()

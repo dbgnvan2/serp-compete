@@ -409,6 +409,21 @@ def anchor_caveat_lines(signal_types, coverage=None):
             f"{coverage.get('total', 0)} domain(s) had readable anchor data "
             f"({causes}). Absence of an anchor signal below is not evidence of a clean "
             f"link profile for the domains that could not be read._")
+        # Chunk X (D-C-10 downstream): Tool 1 caches a competitor's Moz block
+        # for up to 30 days and can cache it with the failure in it, so the
+        # same error is re-served every run. Counting those as this run's
+        # outage asks the owner to go and check a provider that is working.
+        cached = coverage.get("errored_cached", 0) or 0
+        unknown_age = coverage.get("errored_age_unknown", 0) or 0
+        if cached or unknown_age:
+            parts = []
+            if cached:
+                parts.append(f"{cached} came from Tool 1's cache rather than this "
+                             f"run — one older outage being re-served, not a fresh one")
+            if unknown_age:
+                parts.append(f"{unknown_age} carried no collection date, so its age "
+                             f"is unknown")
+            lines.append("_Of the errored domains, " + "; ".join(parts) + "._")
     return lines
 
 

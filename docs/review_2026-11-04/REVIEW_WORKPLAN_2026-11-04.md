@@ -230,6 +230,25 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 
 #### Chunk X — Handoff and export contract
 *Effort:* S–M, but it needs both repos open. Do after D1 and C1.
+
+> **Status 2026-11-16: the serp-compete half is done; the serp-discover half is not.**
+> Shipped in this repo: `docs/handoff_contract.md` (the contract itself),
+> `Serp-compete/tests/test_handoff_contract.py` (37 cases, all against the real
+> consumer), canonical domain grouping end to end
+> (`audit_universe.group_targets_by_domain` + both sides of `handoff_moz`'s matching),
+> `handoff.absolute_rank_versions` with a self-retiring report warning while the
+> handoff's ranks are page-relative, the SoV zero-answer-engine gate with a new
+> `sov_coverage` table, cached-vs-fresh Moz anchor errors, and the GSC pull stated on
+> the section. Also fixed: the two conversion tests that re-implemented
+> `main.convert_handoff_to_targets` instead of calling it, which is why C-C-13 stayed
+> green while broken.
+>
+> **Not done, and needing the other repo or the owner:** the producer-side contract
+> test; decision 4 (which side canonicalises — compete is defensive either way); the
+> `schema_version` bump that D1 will bring; `paa_questions` in the handoff if the
+> FEATURE_GUIDE §6.1 promise is to be restored (dropped in C1 instead); one Moz client
+> shape, which still needs a live call to settle C-C-04; and agreeing one GSC window
+> and stating it in serp-discover's report too.
 - **Domain canonical form.** Tool 1 writes `targets[].domain` and `moz.domains` keys as `netloc.lower()` (www kept) while its own citation/brand paths strip www; Tool 2 breaks on the www form (C-C-01) and its omit-list fix (`normalise_domain`) exists but is applied in one place. Decide which side canonicalises (decision 4), encode it in `docs/handoff_contract.md`, and add a contract test on both sides.
 - **Rank semantics.** After D1, `targets[*].rank` becomes absolute; bump `schema_version` and document it; Tool 2 should assert the version it expects (`handoff.supported_versions` is decorative today — C-C-14).
 - **PAA.** FEATURE_GUIDE §6.1 promises PAA context in reframes; the handoff has no PAA field. Either add `paa_questions` per target to the handoff (Tool 1 has them) or drop the promise.
@@ -508,8 +527,17 @@ denominator), C-C-02 (`COUNT(DISTINCT m.keyword)`), C-C-07 ("showing N of M"),
 C-C-08 (`t2_count`/`t3_count` persisted, estimate gone), C-C-10
 (`get_competitor_das` requires `run_id`) and C-C-16 (`--handoff` passed from both
 the orchestrator and `run_audit.sh`). The rest of each chunk's list is taken from
-its commit and its tests, not separately re-derived. The compete suite is 578
-passed, exit 0, at `3d56e0a`.
+its commit and its tests, not separately re-derived. The compete suite was 578
+passed, exit 0, at `3d56e0a` (chunk C3); it is 683 passed, exit 0, after chunk X.
+
+Every serp-compete finding C-C-01…18 and C-M-01…20 is now marked fixed, across
+chunks C1 (`f7b09bf`), C2 (`7a6405b`), C3 (`3d56e0a`) and C4 (`7c98967`,
+`977b52f`, `f48953f`). The compete half of chunk X followed; see its status note
+in §3. **Protocol step 4 — regenerate the briefing from the reference handoff and
+diff the markdown — has not been performed for any compete chunk:** no cloud
+session has `.env`, `competitor_history.db` or the reference handoff, all of which
+are gitignored or untracked. Each chunk's evidence is its probes flipping plus its
+behaviour tests, and nothing was approximated in step 4's place.
 
 No discover finding is fixed yet: chunk D1/D2 has pushed nothing.
 

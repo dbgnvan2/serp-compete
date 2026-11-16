@@ -544,9 +544,18 @@ class TestHandoffMozIngestion(unittest.TestCase):
             "broken.com": {"anchor_texts": {"status": "error", "items": []}},
         }}
         counts = anchor_coverage(block)
+        # `errored_cached` / `errored_age_unknown` are sub-counts OF `errored`
+        # (Chunk X): this block carries neither `generated_at` nor `fetched_at`,
+        # so the error's age cannot be established and it lands in
+        # `errored_age_unknown` — not in `errored_cached`, because "undated" is
+        # not evidence of a cache hit any more than it is of a fresh outage.
         self.assertEqual(counts, {"total": 3, "with_anchors": 1, "no_record": 1,
                                   "errored": 1, "skipped": 0, "unknown": 0,
-                                  "read_no_anchors": 0})
+                                  "read_no_anchors": 0,
+                                  "errored_cached": 0, "errored_age_unknown": 1})
+        # The sub-counts must not inflate the unreadable total.
+        from src.risk_radar import anchor_data_unreadable
+        self.assertEqual(anchor_data_unreadable(counts), 1)
 
     def test_coverage_counts_a_skipped_domain_as_skipped_not_no_record(self):
         """A domain Tool 1 capped or dropped for quota carries no anchor_texts
@@ -1439,18 +1448,43 @@ class TestOmittedDomainsStayOut(unittest.TestCase):
 
     def test_the_omit_filter_and_the_scope_use_the_same_normalisation(self):
         """Both sites in main.py must agree, or a domain is skipped for the
-        audit but still collects an anchor signal."""
-        import ast
-        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-        with open(os.path.join(root, "main.py"), encoding="utf-8") as f:
-            tree = ast.parse(f.read())
-        compares = [ast.unparse(n) for n in ast.walk(tree)
-                    if isinstance(n, ast.Compare)
-                    and "omitted_domains" in ast.unparse(n)]
-        self.assertTrue(compares, "nothing compares against omitted_domains")
-        for c in compares:
-            self.assertIn("normalise_domain", c,
-                          f"unnormalised omit comparison: {c}")
+        audit but still collects an anchor signal.
+
+        Behavioural since 2026-11-16 (Chunk X). This asserted that every source
+        comparison against `omitted_domains` mentions `normalise_domain`, which
+        made the opposite mistake to the one its sibling above documents: once
+        the grouping key itself became canonical (`group_targets_by_domain`),
+        the comparison no longer needs to normalise and the grep failed on
+        code that is strictly more correct. A test that fails when the bug is
+        fixed is worse than no test (P19).
+        """
+        from src.audit_universe import group_targets_by_domain
+        from src.brand_utils import normalise_domain
+        from src.handoff_moz import anchor_coverage
+
+        omitted = {normalise_domain("psychologytoday.com")}
+        targets = [
+            {"domain": "www.psychologytoday.com", "url": "https://www.psychologytoday.com/a"},
+            {"domain": "psychologytoday.com", "url": "https://psychologytoday.com/b"},
+            {"domain": "www.realrival.example", "url": "https://www.realrival.example/c"},
+        ]
+        groups = group_targets_by_domain(targets)
+        audited = [d for d in groups if d not in omitted]
+
+        # One site is one group, and the omitted site is gone in BOTH spellings.
+        self.assertEqual(sorted(groups), ["psychologytoday.com", "realrival.example"])
+        self.assertEqual(audited, ["realrival.example"])
+
+        # …and the anchor scope agrees: the omitted domain contributes nothing
+        # to coverage, while the audited one is still counted even though Tool 1
+        # spelled it with `www.`.
+        block = {"domains": {
+            "www.psychologytoday.com": {"anchor_texts": {"status": "error"}},
+            "www.realrival.example": {"anchor_texts": {"status": "error"}},
+        }}
+        counts = anchor_coverage(block, audited)
+        self.assertEqual(counts["total"], 1)
+        self.assertEqual(counts["errored"], 1)
 
     def test_the_normaliser_is_defined_once(self):
         """sov_analyzer had its own copy; two definitions drift."""

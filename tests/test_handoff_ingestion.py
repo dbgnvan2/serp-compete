@@ -189,24 +189,29 @@ class TestHandoffSchemaValidation:
 
 
 class TestHandoffConversion:
-    """Test conversion of handoff data to internal format."""
+    """Test conversion of handoff data to internal format.
+
+    These call the REAL consumer. Until 2026-11-16 (Chunk X) they carried their
+    own copy of `main.convert_handoff_to_targets` under the comment "Simulate
+    the conversion logic from main.py", so the shipped function could have
+    changed shape or dropped a field with every assertion here still passing —
+    and one of them had: `client_brand_names` was read by the schema, written by
+    Tool 1, and thrown away by the consumer for months (C-C-13). A contract test
+    that re-implements the contract tests nothing (P21).
+    """
 
     def test_handoff_conversion_basic(self, valid_handoff_data):
         """Test basic handoff-to-targets conversion."""
-        # Simulate the conversion logic from main.py
-        targets = []
-        for target in valid_handoff_data.get("targets", []):
-            targets.append({
-                "domain": target["domain"],
-                "url": target["url"],
-                "primary_keyword": target["primary_keyword_for_url"],
-                "est_traffic": 0,
-                "rank": target["rank"],
-                "entity_type": target["entity_type"],
-                "content_type": target["content_type"],
-                "title": target["title"],
-                "source_keyword": target["source_keyword"]
-            })
+        from src.main import convert_handoff_to_targets
+
+        targets, paa_map, brand_names = convert_handoff_to_targets(valid_handoff_data)
+
+        # The handoff has no PAA field, so the consumer must return an empty
+        # map rather than invent one (FEATURE_GUIDE §6.1's PAA promise was
+        # dropped in C1 for this reason).
+        assert paa_map == {}
+        # …and the client's brand names must survive ingestion (C-C-13).
+        assert brand_names == ["Living Systems", "Bowen"]
 
         assert len(targets) == 2
         assert targets[0]["domain"] == "example.com"
@@ -217,32 +222,14 @@ class TestHandoffConversion:
         assert targets[1]["rank"] == 3
 
     def test_legacy_conversion_basic(self, legacy_data):
-        """Test basic legacy format conversion."""
-        # Simulate legacy conversion logic from main.py
-        targets = []
-        if "organic_results" in legacy_data:
-            for res in legacy_data["organic_results"]:
-                url = res.get("Link")
-                keyword = res.get("Source_Keyword")
-                if url and keyword:
-                    from urllib.parse import urlparse
-                    domain = urlparse(url).netloc.replace('www.', '')
-                    targets.append({
-                        "domain": domain,
-                        "url": url,
-                        "primary_keyword": keyword,
-                        "est_traffic": res.get("Word_Count") if isinstance(res.get("Word_Count"), (int, float)) else 0
-                    })
+        """Test basic legacy format conversion — through the real function."""
+        from src.main import convert_legacy_to_targets
 
-        paa_data = {}
-        if "paa_questions" in legacy_data:
-            for paa in legacy_data["paa_questions"]:
-                kw = paa.get("Source_Keyword")
-                question = paa.get("Question")
-                if kw and question:
-                    if kw not in paa_data:
-                        paa_data[kw] = []
-                    paa_data[kw].append(question)
+        targets, paa_data, brand_names = convert_legacy_to_targets(legacy_data)
+
+        # The legacy format has no client_brand_names; the caller falls back to
+        # shared_config `client.name`, so this must be empty, not absent.
+        assert brand_names == []
 
         assert len(targets) == 2
         assert targets[0]["domain"] == "example.com"
