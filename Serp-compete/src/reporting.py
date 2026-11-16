@@ -512,8 +512,32 @@ class ReportGenerator:
                 # {0, .3, .4, .6, .7, 1.0}, and 0.4 of it is the scheme of the URL
                 # DataForSEO returned — so a second decimal place implies a
                 # resolution the inputs do not have.
+                # pd.notna, not `is not None`: pandas reads a SQL NULL as NaN
+                # in a numeric column, and `NaN is not None` is True — so a
+                # page whose dimension could not be computed printed "nan"
+                # beside the pages that could. It only looked right when EVERY
+                # value was NULL (the column is then dtype object and the
+                # values really are None), which is why the mixed case — one
+                # competitor's Domain Authority unmeasured, the realistic one —
+                # was the broken one. Same defect as the SoV presence_rate
+                # line, found the same day by rendering the section.
                 for col in ['experience_score', 'expertise_score', 'authoritativeness_score', 'trustworthiness_score']:
-                    df_eeat[col] = df_eeat[col].apply(lambda x: f"{x:.1f}" if x is not None else "—")
+                    df_eeat[col] = df_eeat[col].apply(
+                        lambda x: f"{x:.1f}" if pd.notna(x) else UNKNOWN_CELL)
+                # A table of dashes with no stated cause is the failure mode
+                # this report exists to avoid. The usual cause is an absent
+                # `eeat_weights` block: EEATScorer then has nothing to weight
+                # with and correctly computes nothing, silently.
+                _dimensions = ['experience_score', 'expertise_score',
+                               'authoritativeness_score', 'trustworthiness_score']
+                if all((df_eeat[col] == UNKNOWN_CELL).all() for col in _dimensions):
+                    report.append(
+                        "> ⚠️ **No EEAT composite could be computed for any page.** The "
+                        "signals below were read, but the scores were not: check that "
+                        "`eeat_weights` is present in `shared_config.json` — without it "
+                        "there is nothing to weight the signals with, and the scorer "
+                        "returns unknown for every dimension. This is not a finding "
+                        "about the competitors.")
                 report.append(
                     "_Each score is a weighted sum of BOOLEAN signals, so it moves in "
                     "steps, not continuously — trustworthiness, for example, can only "

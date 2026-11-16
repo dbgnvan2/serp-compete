@@ -208,3 +208,55 @@ class TestNothingScoredStillSaysSo(unittest.TestCase):
         self.assertIn("Page Authority was unmeasured", content)
         self.assertIn("Blocked by the 429 circuit breaker", content)
         self.assertNotRegex(content, r"\|\s*nan\s*\|")
+
+
+class TestTheEeatDashesAreDashesNotNan(unittest.TestCase):
+    """The mixed case is the realistic one, and it was the broken one.
+
+    The section rendered each dimension with
+    `f"{x:.1f}" if x is not None else "—"`. pandas reads a SQL NULL as NaN in a
+    numeric column, and `NaN is not None` is True — so a page whose dimension
+    could not be computed printed "nan" beside the pages that could. It only
+    looked right when EVERY value was NULL, because the column is then dtype
+    object and the values really are None.
+
+    Found by rendering the section for the first time: the test fixture
+    MagicMocks `EEATScorer`, so this table had never appeared in any rendered
+    briefing.
+    """
+
+    def test_a_mixed_column_renders_the_unknown_marker(self):
+        series = pd.Series([0.55, np.nan])
+        rendered = series.apply(lambda x: f"{x:.1f}" if pd.notna(x) else UNKNOWN_CELL)
+        self.assertEqual(list(rendered), ["0.6", UNKNOWN_CELL])
+
+    def test_the_old_logic_is_what_produced_nan(self):
+        """Kept as the evidence: `is not None` passes NaN straight through."""
+        series = pd.Series([0.55, np.nan])
+        old = series.apply(lambda x: f"{x:.1f}" if x is not None else UNKNOWN_CELL)
+        self.assertEqual(list(old), ["0.6", "nan"])
+
+    def test_the_deep_render_shows_real_eeat_scores(self):
+        """The whole section, end to end, with the REAL EEATScorer.
+
+        Also guards the fixture: the test CONFIG has no `eeat_weights`, so
+        before the renderer started from the repo's own config this table was
+        four columns of dashes — a property of the fixture, which is exactly
+        what makes a rendered sample misleading.
+        """
+        content = TestNothingScoredStillSaysSo._briefing("deep")
+        self.assertIn("EEAT Competitive Analysis", content)
+        self.assertNotRegex(content, r"\|\s*nan\s*\|")
+        # A real composite, to one decimal place.
+        self.assertRegex(content, r"\|\s*0\.\d\s*\|")
+        # …and no "could not be computed" banner, because they were.
+        self.assertNotIn("No EEAT composite could be computed", content)
+
+    def test_the_deep_render_shows_the_sections_the_fixture_mocks_away(self):
+        """EEAT, Extractability and Cluster are MagicMocked in the default
+        fixture, so none of them had ever been rendered."""
+        content = TestNothingScoredStillSaysSo._briefing("deep")
+        for heading in ("EEAT Competitive Analysis",
+                        "Extractability signals",
+                        "Internal Linking Cluster Analysis"):
+            self.assertIn(heading, content, f"{heading} did not render")

@@ -87,6 +87,33 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**Three owner-facing report sections had never been rendered, because the test fixture mocks the components that fill them.**
+- **Root cause (P19):** the end-to-end harness MagicMocks `GeoProfiler`, `EEATScorer` and
+  `ClusterDetector`, so no rendered briefing — in any test, or in any of the renderer's
+  scenarios — had ever contained the EEAT, Extractability or Cluster tables. Every defect found
+  by reading the artifact this week came from the sections that DO render.
+- **What that hid:** the EEAT section formatted each dimension with
+  `f"{x:.1f}" if x is not None else "—"`. pandas reads a SQL NULL as NaN in a numeric column and
+  `NaN is not None` is True, so a page whose dimension could not be computed printed **"nan"**
+  beside the pages that could. It only looked right when EVERY value was NULL — the column is
+  then dtype object and the values really are None — which is why the realistic case (one
+  competitor's Domain Authority unmeasured) was the broken one. This is the same defect as the
+  SoV `presence_rate` line, in a section nothing had ever looked at.
+- **And what the fixture itself hid:** the renderer built its config from the test fixture's
+  partial `CONFIG`, which has no `eeat_weights` block. `EEATScorer` then has nothing to weight
+  with and correctly computes nothing — so the first `deep` render showed four columns of dashes
+  and I spent twenty minutes hunting a product bug that was a property of my own fixture. The
+  renderer now starts from the repo's **own** `shared_config.json`, so the sample reflects the
+  owner's real thresholds and weights.
+- **Which turned out to be a real gap too:** an absent config block produces a full table of
+  unknowns with no stated cause. The section now says so, and names `eeat_weights` as the thing
+  to check, because "a table of dashes with no explanation" is the failure mode this whole report
+  is written to avoid.
+- **Rule:** a mock in a fixture is a section of the artifact nobody has ever seen. When the
+  harness stands in for a component, the output of that component is untested by construction —
+  and "we render the report in a test" stops being true for precisely the parts that are hardest
+  to reason about. Check what the fixture replaces before trusting what the render shows.
+
 **The GUI's config write was not atomic, and a truncated `shared_config.json` is silently catastrophic rather than loudly broken.**
 - **Root cause (P16):** `orchestrator.save_config` was
   `open(SHARED_CONFIG_PATH, 'w')` then `json.dump`. The open truncates

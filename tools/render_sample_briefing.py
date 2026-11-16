@@ -52,6 +52,17 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "Serp-compete"))
 sys.path.insert(0, REPO_ROOT)
 
 
+
+def _real_config_block(name):
+    """One block of the repo's own `shared_config.json`, or None."""
+    try:
+        with open(os.path.join(REPO_ROOT, "shared_config.json"),
+                  encoding="utf-8") as f:
+            return json.load(f).get(name)
+    except (OSError, ValueError, KeyError):
+        return None
+
+
 def _load_fakes():
     """The end-to-end fakes, from the test module that owns them."""
     path = os.path.join(REPO_ROOT, "Serp-compete", "tests",
@@ -205,6 +216,93 @@ class _DeadDfs:
         return {str(k).lower(): None for k in keywords}
 
 
+
+# --------------------------------------------------------------------------
+# A real scraper over fabricated HTML
+# --------------------------------------------------------------------------
+
+#: Competitor pages with enough structure to exercise the three enrichment
+#: components for real: JSON-LD, a byline, question headings, internal links,
+#: a stock image and a self-hosted one.
+def _fabricated_html(domain: str, path: str, *, schema: bool = True,
+                     byline: bool = True) -> str:
+    head = ["<html><head><title>Counselling in North Vancouver</title>",
+            '<meta name="description" content="Support for couples.">']
+    if schema:
+        head.append(
+            '<script type="application/ld+json">'
+            '{"@context":"https://schema.org","@type":"FAQPage",'
+            '"mainEntity":[{"@type":"Question","name":"What is anxiety?"}]}'
+            "</script>")
+        head.append(
+            '<script type="application/ld+json">'
+            '{"@type":"Organization","name":"Rival Counselling"}</script>')
+    head.append("</head><body>")
+    body = [
+        "<nav><a href='/services'>Services</a><a href='/fees'>Fees</a></nav>",
+        "<h1>Anxiety and relationship counselling</h1>",
+    ]
+    if byline:
+        body.append('<p class="byline">By Dr A. Clinician, RCC, MA</p>')
+        body.append('<time datetime="2026-09-01">1 September 2026</time>')
+    body += [
+        "<h2>What is an anxiety disorder?</h2>",
+        "<p>" + ("Our treatment addresses the symptoms of a diagnosed "
+                 "disorder with clinical medication and a care plan. ") * 6
+        + "</p>",
+        "<h2>How does our process work?</h2>",
+        "<p>" + ("We observe the relationship system and the pursuer "
+                 "distancer pattern across the family. ") * 4 + "</p>",
+        f'<a href="https://{domain}/services">Our services</a>',
+        f'<a href="https://{domain}/about">About us</a>',
+        '<a href="https://example.org/external">A reference</a>',
+        '<img src="https://shutterstock.com/stock.jpg">',
+        f'<img src="https://{domain}/wp/our-office.jpg">',
+        "<footer>© Rival Counselling</footer></body></html>",
+    ]
+    return "".join(head + body)
+
+
+class _CannedSession:
+    """A `requests.Session` serving fabricated HTML for any URL.
+
+    So `SemanticAuditor.scrape_content` runs for real — boilerplate stripping,
+    the scoring window, metadata extraction, JSON-LD — and `GeoProfiler`,
+    `EEATScorer` and `ClusterDetector` get a genuine `ScrapedPage`. The default
+    fixture hands them a `SimpleNamespace` and MagicMocks the three components,
+    so the EEAT, Extractability and Cluster sections of the briefing had never
+    been rendered at all.
+    """
+
+    def __init__(self, blocked=(), errored=()):
+        self.blocked = set(blocked)
+        self.errored = set(errored)
+
+    def get(self, url, **_kwargs):
+        import requests
+
+        class _Resp:
+            def __init__(self, status, text):
+                self.status_code = status
+                self.text = text
+                self.content = text.encode()
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    error = requests.exceptions.HTTPError(f"{self.status_code}")
+                    error.response = self
+                    raise error
+
+        if url in self.blocked:
+            return _Resp(429, "")
+        if url in self.errored:
+            return _Resp(500, "")
+        parsed = url.split("://", 1)[-1]
+        domain = parsed.split("/", 1)[0]
+        path = "/" + parsed.split("/", 1)[1] if "/" in parsed else "/"
+        return _Resp(200, _fabricated_html(domain, path))
+
+
 SCENARIOS = {
     "minimal": "The default fixture: six handoff domains, one omitted, one "
                "429-blocked, one with no Moz record, one cache-served. No AI "
@@ -214,6 +312,10 @@ SCENARIOS = {
                     "search volume, every page scrape is blocked, and there is "
                     "no AI export. Nothing in the briefing may read as a clean "
                     "bill of health.",
+    "deep": "full, but with the REAL SemanticAuditor, GeoProfiler, EEATScorer "
+            "and ClusterDetector over fabricated HTML — so the EEAT, "
+            "Extractability and Cluster sections actually render. The default "
+            "fixture MagicMocks all three.",
     "full": "minimal, plus an AI-visibility export covering all three engine "
             "coverage states, a Moz anchor block with a fresh error / a cached "
             "error / an undated error / a spam anchor, GSC findings, and one "
@@ -221,6 +323,20 @@ SCENARIOS = {
     "authority-drop": "full, run twice, with Page Authority falling 38 → 30 "
                       "between runs so the Fragile Magnet section fires.",
 }
+
+
+
+def _geo_cls(scenario, main):
+    """The real GeoProfiler for `deep`, a MagicMock otherwise."""
+    return main.GeoProfiler if scenario == "deep" else MagicMock()
+
+
+def _eeat_cls(scenario, main):
+    return main.EEATScorer if scenario == "deep" else MagicMock()
+
+
+def _cluster_cls(scenario, main):
+    return main.ClusterDetector if scenario == "deep" else MagicMock()
 
 
 def render(scenario: str, out_dir: str) -> list:
@@ -236,7 +352,27 @@ def render(scenario: str, out_dir: str) -> list:
 
 
 def _render_in(fakes, scenario, out_dir, work):
-    config = dict(fakes.CONFIG)
+    # Start from the REPO'S OWN config, not the test fixture's partial copy.
+    # The fixture has no `eeat_weights` block, so `EEATScorer` correctly
+    # computed nothing and the EEAT table rendered as four columns of dashes —
+    # a property of the fixture, not of the tool, and exactly the kind of thing
+    # that makes a rendered sample misleading. Reading the real file also means
+    # the render reflects the owner's actual thresholds and weights.
+    try:
+        with open(os.path.join(REPO_ROOT, "shared_config.json"),
+                  encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, ValueError):
+        config = {}
+    config.update(fakes.CONFIG)
+    # …but keep the fixture's own client/technical/clinical overrides, which are
+    # what make the fabricated numbers land in interesting places.
+    for block in ("eeat_weights", "geo_signals", "cluster_thresholds",
+                  "stock_image_hosts", "credential_list", "case_study_triggers",
+                  "clinical_pivots", "brand", "handoff"):
+        real = _real_config_block(block)
+        if real is not None:
+            config[block] = real
     omit_path = os.path.join(work, "omitted_domains.txt")
     with open(omit_path, "w") as f:
         f.write(f"{fakes.OMITTED}\n")
@@ -258,7 +394,7 @@ def _render_in(fakes, scenario, out_dir, work):
         json.dump(config, f)
 
     handoff = fakes._handoff()
-    if scenario in ("full", "authority-drop"):
+    if scenario in ("full", "authority-drop", "deep"):
         handoff["moz"] = _moz_block(fakes)
         # The same site in the other spelling, on a different page.
         handoff["targets"].append(
@@ -284,7 +420,8 @@ def _render_in(fakes, scenario, out_dir, work):
             error_urls={f"https://{fakes.NO_MOZ}/couples"},
             blocked_urls={f"https://{fakes.BLOCKED}/couples"})
 
-    gsc = (_gsc_with_findings(fakes) if scenario in ("full", "authority-drop")
+    gsc = (_gsc_with_findings(fakes)
+           if scenario in ("full", "authority-drop", "deep")
            else fakes._FakeGsc())
     if scenario == "authority-drop":
         moz = _DroppingMoz(fakes)
@@ -300,6 +437,18 @@ def _render_in(fakes, scenario, out_dir, work):
     from src.velocity_module import VelocityTracker
 
     import src.main as main
+
+    if scenario == "deep":
+        # The REAL scraper and the REAL three enrichment components, over
+        # fabricated HTML. Only the network is fake.
+        from src.semantic import SemanticAuditor
+
+        blocked = {f"https://{fakes.BLOCKED}/couples"}
+        errored = {f"https://{fakes.NO_MOZ}/couples"}
+        session = _CannedSession(blocked=blocked, errored=errored)
+        with patch("src.semantic.requests.Session", return_value=session):
+            auditor = SemanticAuditor()
+        auditor._canned_session = session
 
     captured: list = []
 
@@ -324,12 +473,18 @@ def _render_in(fakes, scenario, out_dir, work):
          patch.object(main, "MozClient", lambda *a, **kw: moz), \
          patch.object(main, "SemanticAuditor", lambda *a, **kw: auditor), \
          patch.object(main, "ReframeEngine", lambda *a, **kw: fakes._FakeReframe()), \
-         patch.object(main, "GeoProfiler", MagicMock()), \
-         patch.object(main, "EEATScorer", MagicMock()), \
-         patch.object(main, "ClusterDetector", MagicMock()), \
+         patch.object(main, "GeoProfiler", _geo_cls(scenario, main)), \
+         patch.object(main, "EEATScorer", _eeat_cls(scenario, main)), \
+         patch.object(main, "ClusterDetector", _cluster_cls(scenario, main)), \
          patch.object(main, "ReportGenerator", _Reporter):
-        for _ in range(runs):
-            main.run_audit()
+        if scenario == "deep":
+            with patch("src.semantic.requests.Session",
+                       return_value=auditor._canned_session):
+                for _ in range(runs):
+                    main.run_audit()
+        else:
+            for _ in range(runs):
+                main.run_audit()
 
     written = []
     for index, content in enumerate(captured, 1):

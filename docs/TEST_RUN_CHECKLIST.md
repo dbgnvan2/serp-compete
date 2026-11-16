@@ -74,8 +74,13 @@ python3 tools/render_sample_briefing.py full -o sample_briefings
 
 Renders a complete briefing from fabricated data: no API keys, no GSC property,
 no Moz token, no handoff. **The numbers are invented — read the wording, the
-caveats and the N-of-M lines, not the figures.** `--list` describes the three
-scenarios; `authority-drop` runs twice so the Fragile Magnet section fires.
+caveats and the N-of-M lines, not the figures.** `--list` describes the five
+scenarios. Two are worth knowing about: **`deep`** uses the real
+`SemanticAuditor`, `GeoProfiler`, `EEATScorer` and `ClusterDetector` over
+fabricated HTML, so the EEAT, Extractability and Cluster sections actually
+render — the other scenarios mock those three away, which is why their tables
+had never been seen. **`total-outage`** has every provider down, so nothing in
+the briefing may read as a clean bill of health.
 
 This is not §4 of the review protocol (which diffs a real regenerated briefing
 against the previous one, and needs the artifacts only a developer machine
