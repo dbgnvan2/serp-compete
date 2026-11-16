@@ -87,6 +87,41 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**A committed config file carried the path to a developer's machine, published their username and the OAuth client ID, broke GSC auth everywhere else — and a test required it to be that way.**
+- **Root cause (P4 / P19):** `shared_config.json` is committed and pushed. Its
+  `auth.gsc_client_secrets` held
+  `/Users/<name>/ProjectsLocal/serp-compete/client_secret_<id>.apps.googleusercontent.com.json`.
+  No secret VALUE was exposed — the secret file itself is gitignored, and this key only points
+  at it — but the line publishes a local username and the OAuth client ID in a file anyone with
+  the repo can read. And it was functionally wrong anywhere but that one machine, because
+  `_authenticate`'s chain was `if not client_secrets:` before the discovery glob: a non-empty
+  string is truthy, so a configured-but-MISSING path was kept and the fallback never ran. GSC
+  auth therefore failed on every other machine with "GSC Client Secrets file not found." —
+  pointing at the wrong cause — while a usable `client_secret_*.json` sat in the repo root.
+- **What kept it there:** `test_config_integrity.test_gsc_config_integrity` asserted
+  `assert secrets_path, "GSC Client Secrets path is missing from config"`, under the comment
+  "Client Secrets path should be absolute or point to an existing file". The test REQUIRED the
+  defect. Emptying the key failed the suite, which is how it was found — and it is the second
+  test this week that asserted a bug rather than the behaviour (the first was the omit-filter
+  source-grep in chunk X).
+- **Fix:** the key is empty, with a comment saying why an absolute path is wrong and that the
+  secret file is gitignored. Discovery moved into `gsc_performance.find_client_secrets`, which
+  tries the configured path, `gsc_auth.json`, the working directory and the repo root, and
+  **accepts a candidate only if the file exists**. The integrity test now asserts the safe
+  property instead: if the key is set it must be relative, must not name a home directory, and
+  must not embed the client ID.
+- **And a standing guard, because CLAUDE.md's one CRITICAL rule was enforced by attention:**
+  `tests/test_secrets_are_ignored.py` asks `git check-ignore` whether
+  `client_secret_*.json`, `token.json` (the OAuth REFRESH token
+  `gsc_performance.TOKEN_PATH` writes on first auth), `.env`, `google-secrets.txt` and the audit
+  database would be staged — for files that do not exist yet, which is the point — and asserts
+  none is already tracked, since `.gitignore` is not consulted for a path already in the index.
+  It also scans the committed config for credential-shaped VALUES; that scan is what found this.
+- **Rule:** a path in a committed file is published, even when the thing it points at is not. And
+  "verify X before every commit", written in a CLAUDE.md, is a rule enforced by attention —
+  which is to say, enforced until someone is in a hurry. If the failure is unrecoverable, and a
+  pushed secret is, write the test.
+
 **The keyword-gap miner mined run 4 forever, could not apply the filter it claimed to apply, and its whole config block had been specified in 2026-05 and never built.**
 - **Root cause (P4 / P14 / P19):** `src/competitor_mining.py`, at 19% coverage, held a literal
   for every value `docs/serp_tools_upgrade_spec_v3.md` had specified as a config key in May —

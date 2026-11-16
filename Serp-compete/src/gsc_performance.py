@@ -1,6 +1,7 @@
 import os
 import json
 import datetime
+from typing import Optional
 import pandas as pd
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -14,7 +15,45 @@ from src.database import DatabaseManager
 SHARED_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "shared_config.json"))
 CLINICAL_DICT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clinical_dictionary.json"))
 # Move token.json to root of serp-main
-TOKEN_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "token.json"))
+#: The repo root, so the OAuth client secret can be found from any working
+#: directory rather than only when the process starts in the root.
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+#: Holds an OAuth REFRESH token once anyone authenticates. Gitignored, and
+#: Serp-compete/tests/test_secrets_are_ignored.py keeps it that way.
+TOKEN_PATH = os.path.join(PROJECT_ROOT, "token.json")
+
+def find_client_secrets(config: dict) -> Optional[str]:
+    """The OAuth client-secret file to use, or None.
+
+    Purpose: find it wherever it is, and never return a path that is not there.
+    Tests:   Serp-compete/tests/test_secrets_are_ignored.py
+
+    Order: `auth.gsc_client_secrets`, then `gsc_auth.json`, then any
+    `client_secret_*.json` in the working directory, then any in the repo root.
+    **Each candidate is accepted only if the file exists.**
+
+    The old chain kept a configured-but-missing path, because a non-empty
+    string is truthy: `if not client_secrets:` was False, so the glob never ran
+    and `_authenticate` raised "GSC Client Secrets file not found." even with a
+    usable `client_secret_*.json` in the repo root. And what
+    `shared_config.json` shipped WAS a missing path — an absolute path on one
+    developer's machine — so GSC auth failed on every other machine, with a
+    message pointing at the wrong cause (found 2026-11-16).
+    """
+    import glob
+
+    candidates = [
+        (config.get("auth", {}) or {}).get("gsc_client_secrets"),
+        "gsc_auth.json",
+    ]
+    candidates += sorted(glob.glob("client_secret_*.json"))
+    candidates += sorted(glob.glob(os.path.join(PROJECT_ROOT,
+                                                "client_secret_*.json")))
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
 
 class GSCManager:
     def __init__(self):
@@ -38,19 +77,7 @@ class GSCManager:
         # Default to scopes in config if not provided
         scopes = self.config.get("auth", {}).get("scopes", ["https://www.googleapis.com/auth/webmasters.readonly"])
         
-        # Check for client secrets in config
-        client_secrets = self.config.get("auth", {}).get("gsc_client_secrets")
-        # Fallback to gsc_auth.json if specified in spec but not in config
-        if not client_secrets or not os.path.exists(client_secrets):
-            if os.path.exists("gsc_auth.json"):
-                client_secrets = "gsc_auth.json"
-        
-        if not client_secrets:
-            # Try to find a client secret file in the root if none specified
-            import glob
-            secrets = glob.glob("client_secret_*.json")
-            if secrets:
-                client_secrets = secrets[0]
+        client_secrets = find_client_secrets(self.config)
 
         if os.path.exists(TOKEN_PATH):
             creds = Credentials.from_authorized_user_file(TOKEN_PATH, scopes)
