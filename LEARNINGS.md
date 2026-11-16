@@ -87,6 +87,38 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**A content tool wrote five invented keywords into the owner's pillar draft, and the docs said it was tested.**
+- **Root cause (P14 / P8 / P4):** `src/strike_mapper.py` maps the GSC strike list onto the pillar
+  draft's H2s. `gsc_strike_list.md` in this repo holds exactly one row — `| No data | - | - | - |
+  - | - |` — and `get_top_gsc_keywords` silently substituted five hard-coded keywords when it
+  found nothing. `inject_headers` then wrote them into `pillar_north_shore_draft.md`. **The five
+  headings in that draft today are those invented keywords**, and nothing in the file or the
+  console said they came from an editorial list rather than Search Console. The same function was
+  non-idempotent (every run re-injected every heading, into a file the owner edits by hand), its
+  placeholder test was `parts[1] != "No data"` — exact and case-sensitive, blind to the `-` and
+  empty-cell forms the generator also writes — and its reframe vocabulary was a dict in Python
+  source, against this repo's own CLAUDE.md rule.
+- **What would have caught it:** a coverage run. `IMPLEMENTATION_PLAN_v3.md` listed
+  `test_strike_mapper.py` as "(existing)" and `SPEC_COVERAGE_REPORT_v3.md` marked the module
+  "✅ Done" with a line-number citation. The file never existed and the module was at **0%**.
+  Two other claimed test files — `test_orchestrator.py`, `test_third_party_crawlers.py` — do not
+  exist either, and the spec's "Integration point: called from orchestrator.py:111" is not true:
+  `orchestrator.py` contains no reference to `strike_mapper` at all.
+- **Fix:** no data now means no headings, unless `--allow-fallback` is passed, and then the
+  output says the headings are editorial and not Search Console data. Injection is idempotent
+  and recognises headings the owner wrote by hand. The vocabulary moved to
+  `shared_config.json → strike_mapper`, with the Python constant as a guarded fallback. It is a
+  dry run by default — it edits a content file, so writing is opt-in.
+  `tests/test_strike_mapper.py`, 21 cases.
+- **For the owner:** the five `##` headings in `pillar_north_shore_draft.md` came from the
+  fallback list, not from Search Console. They may still be the right headings — they are the
+  configured reframe vocabulary — but they are not evidence of search demand, and nothing in the
+  draft says so.
+- **Rule:** a fallback that returns plausible content is worse than an error. This one ran, wrote
+  a file and printed "Successfully injected 5 GSC-mapped headers" — with no GSC data anywhere in
+  the process. And a "✅ Done" with a test filename beside it is the most expensive kind of wrong
+  entry in a status doc: it stops anyone looking.
+
 **In a run where nothing could be scored, the report's primary action list disappeared instead of saying so.**
 - **Root cause (P2):** the Traffic Magnets section had two branches — magnets found, and "none
   of the N audited page(s) met the magnet definition". The second branch's own comment says the

@@ -1583,11 +1583,11 @@ tests/test_reporting.py::test_reframe_quality_scoring PASSED
 | Gap 5 v3 | Reframe quality scoring | reporting.py (score_reframe_quality) | test_reporting.py::test_reframe_quality_scoring | ✅ Done |
 | Gap 5 v3 | Implementation roadmap section | reporting.py (roadmap_items) | test_reporting.py::test_roadmap_generation | ✅ Done |
 | Feature 1 | Competitor mining approved | competitor_mining.py (existing) | test_competitor_mining.py (existing) | ✅ Approved |
-| Feature 2 | Orchestrator DAG-based | orchestrator.py (enhanced) | test_orchestrator.py (enhanced) | ✅ Done |
-| Feature 3 | Strike mapper approved | strike_mapper.py (existing) | test_strike_mapper.py (existing) | ✅ Approved |
+| Feature 2 | Orchestrator DAG-based | orchestrator.py (enhanced) | *none — `test_orchestrator.py` does not exist* | ⚠️ Verified 2026-11-16: `orchestrator.py` is at **0% coverage** and nothing imports `step_dag`, so the DAG-based execution this row claims is not what the orchestrator does. See SPEC_COVERAGE_REPORT_v3.md Part 3 Debt 3 |
+| Feature 3 | Strike mapper approved | strike_mapper.py (existing) | `Serp-compete/tests/test_strike_mapper.py` | ✅ Approved. The test was listed here as "(existing)" from 2026-05 and **did not exist** until 2026-11-16; writing it found that the module manufactured keywords from a "No data" strike list, was not idempotent, and kept its editorial vocabulary in Python |
 | Debt 1 | Pivot map externalized | shared_config.json (clinical_pivots), reframe_engine.py updated | test_reframe_engine.py | ✅ Done |
-| Debt 2 | Legacy tables deprecated | database.py (comments), GEMINI.md (docs) | N/A (documentation) | ✅ Done |
-| Debt 3 | Step DAG formalized | shared_config.json (step_dag), orchestrator.py | test_orchestrator.py::test_step_dag_validation | ✅ Done |
+| Debt 2 | Legacy tables deprecated | database.py (comments), GEMINI.md (docs) | N/A (documentation) | ❌ Verified 2026-11-16: the two tables named are `semantic_audits` and `competitor_metrics`, and both are **live** — read and written on every run, and extended by chunks C1/C3/C4. See DATA_PERSISTENCE_MAP_v3.md §1.1 |
+| Debt 3 | Step DAG formalized | shared_config.json (step_dag), orchestrator.py | *none — neither the test nor the config key exists* | ❌ Verified 2026-11-16: `shared_config.json → step_dag` was deleted as a key with no reader (C-C-14), `src/step_dag.py` is imported only by its own test, and the orchestrator sequences steps directly |
 
 **Summary:** 16 spec items, 16 implemented, 16 tested. **100% coverage.**
 ```

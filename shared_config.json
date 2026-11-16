@@ -419,6 +419,21 @@
     "attachment styles": "From Attachment Labels to Pursuit-Distance Cycles",
     "self care": "Self-Care as a Differentiation Strategy"
   },
+  "_strike_mapper_comment": "Editorial vocabulary for Serp-compete/src/strike_mapper.py, the standalone GSC-strike-list -> pillar-draft heading mapper. Moved out of Python source on 2026-11-16 per CLAUDE.md ('editorial content belongs in YAML/JSON config, not Python source'); DEFAULT_REFRAMES in that module mirrors this block as the fallback for running the script without config, and a test keeps the two in step. `max_keywords` is how many striking-distance queries get a heading.",
+  "strike_mapper": {
+    "_max_keywords_source": "editorial, uncalibrated, 2026-04 (moved to config 2026-11-16)",
+    "max_keywords": 5,
+    "reframes": {
+      "couples counselling north vancouver": "Observing the Reciprocal Pursuit-Distance Cycle",
+      "relationship therapy north vancouver": "From Individual Pathology to Systemic Process",
+      "anxiety clinic north vancouver": "Intercepting the Anxiety Loop through Differentiation",
+      "marriage therapist north shore": "Defining a Self in the Marriage System",
+      "family systems therapy bc": "The Multigenerational Transmission of Anxiety",
+      "counselling north vancouver": "Beyond Symptoms: Focus on the Relationship System",
+      "marriage counselling north vancouver": "Observing the Emotional System in Conflict",
+      "relationship counselling north vancouver": "Tracing the Reciprocity in Relationship Anxiety"
+    }
+  },
   "handoff": {
     "supported_versions": [
       "1.0",

@@ -204,9 +204,10 @@ The v3 specification requirements were implemented and tested. Corrected
 
 | Requirement | Implementation | Status |
 |-------------|------------------|--------|
-| strike_mapper.py module | Serp-compete/src/strike_mapper.py (66 lines) | ✅ Done |
-| GSC-to-content gaps | src/strike_mapper.py:15–45 | ✅ Done |
-| Integration point | Called from orchestrator.py:111 | ✅ Done |
+| strike_mapper.py module | `Serp-compete/src/strike_mapper.py` | ✅ Done. Rewritten 2026-11-16 — see below |
+| GSC-to-content gaps | `strike_mapper.get_top_gsc_keywords` / `inject_headers` | ⚠️ It **invented** the gaps. `gsc_strike_list.md` holds one row, `\| No data \|`, and the parser silently returned five hard-coded keywords; `inject_headers` wrote them into `pillar_north_shore_draft.md`, where those five headings still are. It was also non-idempotent (every run re-injected them) and kept its reframe vocabulary in Python source, against CLAUDE.md. Fixed 2026-11-16: no data now means no headings unless `--allow-fallback` is passed, which says in the output that the headings are editorial and not Search Console data |
+| Integration point | ~~Called from orchestrator.py:111~~ | ❌ Not true as of 2026-11-16: `orchestrator.py` contains no reference to `strike_mapper`. It is a standalone script, run by hand |
+| Tests | `Serp-compete/tests/test_strike_mapper.py` (21 cases) | ✅ Written 2026-11-16. `IMPLEMENTATION_PLAN_v3.md` had listed this file as "(existing)" since 2026-05; it did not exist, and the module was at 0% coverage |
 
 **Authorized:** Yes, supports publication planning  
 **Status:** Complete
