@@ -87,6 +87,46 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**I shipped a regression in C4a that silently zeroed seven signals across two composites, and found it a day later by writing the tests that chunk never had.**
+- **Root cause (P22 / P19):** C-M-19 (commit `7c98967`, 2026-11-15) added
+  `SemanticAuditor._strip_boilerplate` so that nav, footer, `<header>`, menu divs, `<style>`
+  and `<script>` would stop entering the scored text window — a correct fix for a real problem
+  (a menu listing seven treatment services scored medical 9 on an about page). It runs at
+  `semantic.py:306`. `_extract_metadata` runs at `:323`, and its JSON-LD block looked for
+  `soup.find_all('script', type='application/ld+json')` — in a soup whose every `<script>` had
+  just been decomposed. **From 2026-11-15 to 2026-11-16 no page's structured data was ever
+  seen.** Permanently False, for every competitor: `has_faq_schema`,
+  `has_article_schema`, `has_localbusiness_schema`, `has_person_schema`, `has_org_schema` in
+  `geo_profiler` — five of its signals, including the FAQ and question ones C-M-14 had just
+  asked to be weighted ABOVE Organization and Person — and `schema_author_type_person` and
+  `schema_organization_present` in `eeat_scorer`. Extractability tiers collapse toward Weak and
+  the expertise and authoritativeness dimensions fall, for every page, with no caveat anywhere,
+  because from the consumers' point of view the pages genuinely had no schema.
+- **What would have caught it:** a test on `scrape_content`. `semantic.py` was at **67%** and
+  the uncovered blocks were precisely the scrape failure paths and the whole of
+  `_extract_metadata`. Three chunks of review work had read that module closely and none of us
+  noticed that the module with the most owner-facing consequences had its extraction untested.
+  The 2026-11-15 suite was green at 617 tests.
+- **Fix:** the JSON-LD strings are captured BEFORE stripping and passed into
+  `_extract_metadata`. Not by exempting `<script type="application/ld+json">` from the
+  stripping, which was the one-line option: the blocks would then have reached the scoring
+  window and counted `schema.org`, `@type` and every property name as prose — trading a
+  zeroed signal for an inflated one. There are now tests that the schema reaches
+  `geo_profiler.profile_page` and `eeat_scorer.score_page`, and that `schema.org` does NOT
+  appear in `scoring_text`.
+- **Also found in the same pass:** `stock_image_hosts` existed twice — read from
+  `shared_config.json` by `eeat_scorer` and hard-coded as a literal set inside
+  `_extract_metadata` — so editing that config key changed the EEAT stock-image penalty and
+  left `likely_original_images_count` alone. One visible knob controlling half of what it
+  appears to (C-C-14's class, in a module C4 had just edited). And the host comparison was
+  case-sensitive, so `IStockPhoto.com` in a `src` attribute counted as the practice's own
+  photography.
+- **Rule:** when you add a pass that MUTATES a shared parse tree, every later reader of that
+  tree is now reading something different, and the compiler cannot tell you which. Either take
+  what you need before the mutation, or do not mutate — and write the test for the consumer,
+  not for the mutation. This one slipped through a careful review of the very function that
+  broke it, because the function looked right and nothing exercised what it fed.
+
 **The fragility list scored pages it had never read, because the guard was `if not content:` on a dataclass.**
 - **Root cause (P16 / P14):** `src/infiltrator.py` (documented in `compete-spec.md`#C3 as a live
   implementation, 0% coverage until 2026-11-16) scrapes a competitor page and scores it. The

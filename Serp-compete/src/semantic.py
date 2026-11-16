@@ -2,13 +2,41 @@ import spacy
 import time
 from bs4 import BeautifulSoup
 import requests
-from typing import Dict, List, Tuple, Any, Literal
+from typing import Any, Dict, List, Literal, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 from urllib.parse import urlparse
 
 from src.scoring_logic import TIER_1_MEDICAL, TIER_2_SYSTEMS, TIER_3_BOWEN_EXPERT, calculate_weighted_score
+
+#: Fallback only — `shared_config.json` → `stock_image_hosts` is the editorial
+#: source of record, and `eeat_scorer` has always read it from there.
+#:
+#: This list was a literal set inside `_extract_metadata` while `eeat_scorer`
+#: read the config key of the same name, so editing that key changed the EEAT
+#: stock-image penalty and did NOT change `likely_original_images_count` — one
+#: visible knob controlling half of what it appears to (the C-C-14 / C-M-18
+#: class). Kept byte-identical to the config block and guarded by a test.
+DEFAULT_STOCK_IMAGE_HOSTS = frozenset({
+    "shutterstock.com", "gettyimages.com", "istockphoto.com", "unsplash.com",
+    "pexels.com", "pixabay.com", "stock.adobe.com",
+})
+
+
+def stock_image_hosts() -> frozenset:
+    """The hosts whose images are not the site's own work."""
+    try:
+        from src.database import load_shared_config
+    except ImportError:  # pragma: no cover - standalone use
+        return DEFAULT_STOCK_IMAGE_HOSTS
+    try:
+        configured = load_shared_config().get("stock_image_hosts")
+    except Exception:  # noqa: BLE001 - a config read must not break a scrape
+        return DEFAULT_STOCK_IMAGE_HOSTS
+    if isinstance(configured, (list, tuple, set, frozenset)) and configured:
+        return frozenset(str(host).strip().lower() for host in configured if host)
+    return DEFAULT_STOCK_IMAGE_HOSTS
 
 
 @dataclass
@@ -275,6 +303,12 @@ class SemanticAuditor:
             # C-M-19 — <header> and any element whose class/id looks like a menu).
             # A <header> or div-based menu listing seven treatment services scored
             # medical 9 on an about-page whose body was about distance and pursuit.
+            # Captured BEFORE stripping: _strip_boilerplate decomposes every
+            # <script>, which from 2026-11-15 to 2026-11-16 meant no page's
+            # JSON-LD schema was ever seen. See _extract_metadata.
+            json_ld = [script.string for script
+                       in soup.find_all('script', type='application/ld+json')
+                       if script.string]
             self._strip_boilerplate(soup)
             full_text = soup.get_text(separator=' ')
             full_text_words = full_text.split()
@@ -292,7 +326,7 @@ class SemanticAuditor:
             backwards_compat_string = headers_text + " " + " ".join(first_500_words_list)
 
             # Extract metadata
-            metadata = self._extract_metadata(soup, url)
+            metadata = self._extract_metadata(soup, url, json_ld=json_ld)
 
             return ScrapedPage(
                 url=url,
@@ -380,7 +414,8 @@ class SemanticAuditor:
                     order += 1
         return outline
 
-    def _extract_metadata(self, soup: BeautifulSoup, url: str) -> Dict[str, Any]:
+    def _extract_metadata(self, soup: BeautifulSoup, url: str,
+                          json_ld: Optional[List[str]] = None) -> Dict[str, Any]:
         """Extract page metadata (title, author, dates, schema, links, etc)."""
         metadata = {
             "title": None,
@@ -437,30 +472,49 @@ class SemanticAuditor:
         if update_date:
             metadata["update_date"] = update_date.get('content')
 
-        # JSON-LD schema
-        try:
-            for script in soup.find_all('script', type='application/ld+json'):
-                try:
-                    schema_data = json.loads(script.string)
-                    self._extract_schema_types(schema_data, metadata)
-                except json.JSONDecodeError as e:
-                    # Store error but continue
-                    pass
-        except Exception:
-            pass
+        # JSON-LD schema.
+        #
+        # `json_ld` is passed in because the soup reaching here has had its
+        # <script> tags decomposed. `_strip_boilerplate` (C-M-19, 2026-11-15)
+        # removes script/style so they do not enter the scored text window, and
+        # it runs BEFORE this function — so from that date until 2026-11-16 no
+        # page's JSON-LD was ever found. Every schema signal was therefore
+        # permanently False: `has_faq_schema`, `has_article_schema`,
+        # `has_localbusiness_schema`, `has_person_schema` and `has_org_schema`
+        # in geo_profiler (five of its signals, including the FAQ/question ones
+        # C-M-14 asked to be weighted highest), and
+        # `schema_author_type_person` / `schema_organization_present` in
+        # eeat_scorer. Two owner-facing composites were quietly degraded for
+        # every competitor, and the tests covered neither.
+        #
+        # The blocks cannot simply be left in the soup: their JSON would then
+        # be counted as prose in the scoring window.
+        for raw in (json_ld or []):
+            try:
+                self._extract_schema_types(json.loads(raw), metadata)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                # A rival's malformed schema must not cost us the page.
+                continue
+            except Exception:  # noqa: BLE001 - nor must an unexpected shape
+                continue
 
         # Images
         image_hosts_set = set()
-        stock_image_hosts = {"shutterstock.com", "gettyimages.com", "istockphoto.com", "unsplash.com", "pexels.com", "pixabay.com", "stock.adobe.com"}
+        # The config key, not a second copy of the list (see
+        # DEFAULT_STOCK_IMAGE_HOSTS). Read once per page, not per image.
+        stock_hosts = stock_image_hosts()
         for img in soup.find_all('img'):
             metadata["image_count"] += 1
             src = img.get('src', '')
             if src:
                 parsed = urlparse(src)
                 if parsed.netloc:
+                    host = parsed.netloc.lower()
                     image_hosts_set.add(parsed.netloc)
-                    # Count original images (not from stock hosts)
-                    if parsed.netloc not in stock_image_hosts and parsed.netloc:
+                    # Count original images (not from stock hosts). Compared
+                    # lower-cased: `IStockPhoto.com` in a src attribute used to
+                    # count as the site's own photography.
+                    if host not in stock_hosts:
                         metadata["likely_original_images_count"] += 1
         metadata["image_hosts"] = list(image_hosts_set)
 
