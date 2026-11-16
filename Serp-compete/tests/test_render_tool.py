@@ -69,7 +69,7 @@ class TestTheRendererRuns(unittest.TestCase):
         """`--list` is the only documentation of what the scenarios contain."""
         tool = _tool()
         self.assertEqual(set(tool.SCENARIOS),
-                         {"minimal", "full", "authority-drop"})
+                         {"minimal", "full", "authority-drop", "total-outage"})
         for name, description in tool.SCENARIOS.items():
             self.assertTrue(description.strip(), f"{name} has no description")
 

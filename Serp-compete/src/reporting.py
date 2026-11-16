@@ -568,6 +568,12 @@ class ReportGenerator:
                      if words else None)
                     for med, words in zip(df_magnets["medical_score"], df_magnets["words"])]
             audited_pages = self.db.count_audited_pages(run_id)
+            # Whether a Systemic Vacuum list was actually rendered. The SERP
+            # Overlap section says it "folds in the Systemic Vacuum list above",
+            # and in a run where nothing could be scored that pointed at a
+            # section which is not there (found by rendering the total-outage
+            # scenario).
+            vacuums_rendered = False
             magnet_filter_note = (
                 f"_Filter: handoff rank ≤ {max_pos}, medical_score ≥ {floor} "
                 f"(`technical.vacuum_min_medical`, editorial and uncalibrated), and the "
@@ -591,6 +597,7 @@ class ReportGenerator:
                 # Spec 2: Highlight Systemic Vacuums — the magnets with no systemic
                 # language. Same predicate as the reframe targets, by construction.
                 vacuums = df_magnets[(df_magnets['systems_score'] == 0) | (df_magnets['systemic_label'] == 'Surface-Level')]
+                vacuums_rendered = not vacuums.empty
                 if not vacuums.empty:
                     disp_vacuums, vacuum_note = self._capped(
                         vacuums, self.markdown_row_cap, "vacuum(s)")
@@ -611,6 +618,20 @@ class ReportGenerator:
                 report.append(f"None of the {audited_pages} audited page(s) met the "
                               f"magnet definition this run.")
                 report.append(magnet_filter_note)
+            else:
+                # …and the third case, which the branch above names but did not
+                # handle: NOTHING was scored, so the section used to vanish
+                # entirely. A reader seeing no Traffic Magnets heading cannot
+                # tell "no competitor page qualified" from "no competitor page
+                # could be read", and this is the report's primary action list.
+                # Found by rendering the total-outage scenario and reading it
+                # (tools/render_sample_briefing.py).
+                report.append("\n## Identified 'Traffic Magnets'")
+                report.append(
+                    "**No page could be scored this run**, so there is nothing to "
+                    "qualify or to rule out. This is not a finding that competitors "
+                    "have no Traffic Magnets — see the run coverage in the Executive "
+                    "Summary for which domains were blocked, skipped or unmeasured.")
 
             # 3b. GEO / Extractability — Why Competitors Get Cited (SC-1)
             df_geo = pd.read_sql_query('''
@@ -696,9 +717,12 @@ class ReportGenerator:
                                   + (f"  _(top 15 of {n})_" if n > 15 else ""))
                     for _, r in comm.head(15).iterrows():
                         report.append(f"- **{r['keyword']}** (you + {int(r['overlap_count'])} rivals; commoditized SERP)")
-                report.append("\n_Folds in the Systemic Vacuum list above (not duplicated). "
-                              "Competitor positions are SERP-measured; self_position is "
-                              "first-party GSC (see estimation_basis in the Excel sheet)._")
+                report.append(
+                    "\n_"
+                    + ("Folds in the Systemic Vacuum list above (not duplicated). "
+                       if vacuums_rendered else "")
+                    + "Competitor positions are SERP-measured; self_position is "
+                      "first-party GSC (see estimation_basis in the Excel sheet)._")
 
             # 3d. Competitor Feasibility (C4 / SC-6: check_feasibility, surfaced)
             df_feasibility = pd.read_sql_query('''

@@ -87,6 +87,28 @@ pattern). The high-frequency ones in this codebase:
 Newest first. Format:
 **Issue → Root cause (Pn) → What would have caught it → Fix → Rule.**
 
+**In a run where nothing could be scored, the report's primary action list disappeared instead of saying so.**
+- **Root cause (P2):** the Traffic Magnets section had two branches — magnets found, and "none
+  of the N audited page(s) met the magnet definition". The second branch's own comment says the
+  reader "cannot otherwise tell it from 'nothing was audited'". When nothing WAS audited both
+  branches were skipped and the heading vanished, so the exact confusion the comment names was
+  the one case left unhandled. A reader seeing no Traffic Magnets heading cannot tell "no
+  competitor page qualified" from "no competitor page could be read". The same render showed
+  the SERP Overlap section saying it "folds in the Systemic Vacuum list above" when there was
+  no such list — a caveat pointing at a section that is not there.
+- **What would have caught it:** rendering a briefing with every provider down. The honest-absence
+  behaviour is the thing chunk C2 was for, and nobody had ever read the artifact it produces.
+  `tools/render_sample_briefing.py total-outage` now does exactly that: Moz answers nothing for
+  every URL, DataForSEO 429s every call and reports no volume, every scrape is blocked.
+- **Fix:** a third branch stating that no page could be scored, that this is not a finding about
+  the competitors, and where to look for why; the cross-reference is now conditional on the list
+  it points at. Both locked by tests that render the scenario and read the output.
+- **Rule:** the two-branch shape is the recurring bug of this codebase, and it showed up three
+  times in one evening — `measured` as a boolean when the source has three states, the magnet
+  section as found/not-found when "unscorable" is a third, `errored` as one bucket when a cached
+  failure and a fresh one are different facts. Before writing the `else`, count the states the
+  SOURCE can be in.
+
 **The console printed a timestamp as a failure count, and the risk evidence reached the owner with escaped unicode.**
 - **Root cause (P22 / P19):** the anchor-coverage console line built its breakdown by iterating
   EVERY key of the coverage dict (`f"{v} {k}"` for anything truthy). That was correct when the

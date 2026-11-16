@@ -175,10 +175,45 @@ class _DroppingMoz:
                 for u in urls]
 
 
+class _DeadMoz:
+    """Moz answers nothing, for every URL, all run.
+
+    Not an empty list of metrics for one domain — a provider that is simply
+    down. Used by the `total-outage` scenario, because the whole of review
+    chunk C2 rests on the claim that an outage cannot render as a clean bill of
+    health, and that claim is only worth anything if someone reads the briefing
+    an outage produces.
+    """
+
+    def get_url_metrics(self, urls):
+        return []
+
+
+class _DeadDfs:
+    """DataForSEO 429s every call, and returns no search volume."""
+
+    def __init__(self):
+        self.last_error = None
+
+    def get_relevant_pages(self, domain):
+        self.last_error = "HTTP 429 (rate limited)"
+        return []
+
+    def get_search_volume(self, keywords):
+        # None, not 0: a provider that would not answer has not told us the
+        # demand is zero (C-C-11).
+        return {str(k).lower(): None for k in keywords}
+
+
 SCENARIOS = {
     "minimal": "The default fixture: six handoff domains, one omitted, one "
                "429-blocked, one with no Moz record, one cache-served. No AI "
                "export, no Moz anchors, no GSC findings.",
+    "total-outage": "Every external provider is down: Moz returns nothing for "
+                    "every URL, DataForSEO 429s every call and reports no "
+                    "search volume, every page scrape is blocked, and there is "
+                    "no AI export. Nothing in the briefing may read as a clean "
+                    "bill of health.",
     "full": "minimal, plus an AI-visibility export covering all three engine "
             "coverage states, a Moz anchor block with a fresh error / a cached "
             "error / an undated error / a spam anchor, GSC findings, and one "
@@ -239,14 +274,25 @@ def _render_in(fakes, scenario, out_dir, work):
         json.dump(handoff, f)
 
     db_path = os.path.join(work, "sample.db")
-    auditor = fakes._FakeAuditor(
-        error_urls={f"https://{fakes.NO_MOZ}/couples"},
-        blocked_urls={f"https://{fakes.BLOCKED}/couples"})
+    if scenario == "total-outage":
+        # Every scrape blocked, not merely errored: a 429 from the circuit
+        # breaker is the case the report must not render as "nothing to report".
+        all_urls = {t["url"] for t in handoff["targets"]}
+        auditor = fakes._FakeAuditor(blocked_urls=all_urls)
+    else:
+        auditor = fakes._FakeAuditor(
+            error_urls={f"https://{fakes.NO_MOZ}/couples"},
+            blocked_urls={f"https://{fakes.BLOCKED}/couples"})
 
     gsc = (_gsc_with_findings(fakes) if scenario in ("full", "authority-drop")
            else fakes._FakeGsc())
-    moz = (_DroppingMoz(fakes) if scenario == "authority-drop"
-           else fakes._FakeMoz())
+    if scenario == "authority-drop":
+        moz = _DroppingMoz(fakes)
+    elif scenario == "total-outage":
+        moz = _DeadMoz()
+    else:
+        moz = fakes._FakeMoz()
+    dfs = _DeadDfs() if scenario == "total-outage" else fakes._FakeDfs()
     runs = 2 if scenario == "authority-drop" else 1
 
     from src.database import DatabaseManager
@@ -274,7 +320,7 @@ def _render_in(fakes, scenario, out_dir, work):
                       lambda *a, **kw: DatabaseManager(db_path)), \
          patch.object(main, "VelocityTracker",
                       lambda *a, **kw: VelocityTracker(config_path)), \
-         patch.object(main, "DataForSEOClient", lambda *a, **kw: fakes._FakeDfs()), \
+         patch.object(main, "DataForSEOClient", lambda *a, **kw: dfs), \
          patch.object(main, "MozClient", lambda *a, **kw: moz), \
          patch.object(main, "SemanticAuditor", lambda *a, **kw: auditor), \
          patch.object(main, "ReframeEngine", lambda *a, **kw: fakes._FakeReframe()), \

@@ -142,3 +142,69 @@ class TestWholeNumbersStayWholeNumbers(unittest.TestCase):
         rendered = md_table(df, index=False)
         self.assertIn("-3", rendered)
         self.assertNotIn("-3.0", rendered)
+
+
+class TestNothingScoredStillSaysSo(unittest.TestCase):
+    """The third case the magnet section never handled.
+
+    `reporting` had two branches: magnets found, and "none of the N audited
+    page(s) met the magnet definition". The second branch's own comment says
+    the reader "cannot otherwise tell it from 'nothing was audited'" — and when
+    nothing WAS audited, both branches were skipped and the whole section
+    vanished. A reader seeing no Traffic Magnets heading cannot tell "no
+    competitor page qualified" from "no competitor page could be read", and
+    this is the report's primary action list.
+
+    Found by rendering the `total-outage` scenario — every provider down, every
+    scrape blocked — and reading it.
+    """
+
+    @staticmethod
+    def _briefing(scenario):
+        import os
+        import sys
+        import tempfile
+
+        tool_dir = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "..", "tools"))
+        if tool_dir not in sys.path:
+            sys.path.insert(0, tool_dir)
+        import render_sample_briefing
+
+        start = os.getcwd()
+        with tempfile.TemporaryDirectory() as out:
+            try:
+                written = render_sample_briefing.render(scenario, out)
+            finally:
+                os.chdir(start)
+            with open(written[-1], encoding="utf-8") as f:
+                return f.read()
+
+    def test_a_total_outage_still_renders_the_magnet_section(self):
+        content = self._briefing("total-outage")
+        self.assertIn("Identified 'Traffic Magnets'", content)
+        self.assertIn("No page could be scored this run", content)
+        # …and it must not be readable as a finding about the competitors.
+        self.assertIn("not a finding that competitors have no Traffic Magnets",
+                      content)
+
+    def test_a_total_outage_does_not_point_at_a_section_that_is_absent(self):
+        """The SERP Overlap note said it "folds in the Systemic Vacuum list
+        above" unconditionally, and in this run there is no such list."""
+        content = self._briefing("total-outage")
+        self.assertNotIn("Systemic Vacuum list above", content)
+        # The rest of that sentence must survive.
+        self.assertIn("Competitor positions are SERP-measured", content)
+
+    def test_the_cross_reference_is_kept_when_the_list_is_there(self):
+        content = self._briefing("minimal")
+        self.assertIn("Systemic Vacuums", content)
+        self.assertIn("Folds in the Systemic Vacuum list above", content)
+
+    def test_a_total_outage_names_what_could_not_be_measured(self):
+        """The whole point of chunk C2: an outage cannot read as a clean run."""
+        content = self._briefing("total-outage")
+        self.assertIn("Page Authority measured for 0 of", content)
+        self.assertIn("Page Authority was unmeasured", content)
+        self.assertIn("Blocked by the 429 circuit breaker", content)
+        self.assertNotRegex(content, r"\|\s*nan\s*\|")
