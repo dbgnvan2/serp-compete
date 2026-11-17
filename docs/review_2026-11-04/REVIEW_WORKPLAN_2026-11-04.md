@@ -122,6 +122,24 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 - *After:* re-run `run_feasibility.py` and the brief on every `market_analysis_*.json` the owner still relies on; previous `client_rank`, feasibility and handoff files are wrong.
 
 #### Chunk D2 — Null is not zero (H2, discover side)
+*Status (2026-11-16):* split into three pushes. **D2a is done** — commit
+`9784690`, closing D-C-03, D-C-04, D-M-02, D-M-05, D-M-08; the plan, the
+15 acceptance criteria as built, and the 11 cold-review findings are in
+`PLAN_D2_null_is_not_zero.md`. **D2b is done** — closing D-C-02 and D-C-10;
+the plan, its 16 acceptance criteria as built and the three faults found
+while building are in `PLAN_D2b_a_failed_fetch_is_not_an_answer.md`. Both
+caches now record whether the provider answered, not only what it said:
+GSC caches an absence only on a completed fetch, and the Moz competitor
+cache is per signal with its own timestamps, so one failed sub-call costs
+one call next run instead of freezing four for 30 days. **D2c is done** —
+closing D-C-08, D-C-20 and D-C-21; the plan and its 14 acceptance criteria
+as built are in `PLAN_D2c_one_host_one_answer.md`. `domain_utils.normalize_domain`
+is now the one definition of a host, so all 121 overrides answer for `x.ca`
+and `www.x.ca` alike; a response at or above 400 is recorded and not read,
+with the outcome on every row as `Fetch_Status`; and an AI Overview only the
+un-located fallback probe returned no longer counts as exposure for this
+market. **Chunk D2 is complete.** The verdict label landed as `"Not Measured"`, not the
+`"No DA Data"` this plan wrote — one state, one label, held by a test.
 *Findings:* D-C-04/D-M-02 (S1), D-C-03/D-M-08 (S1), D-M-05 (client_da provenance, High), D-C-02 (S1 GSC), D-C-10 (S2 Moz competitor cache), D-C-08 (S2 `www.` bypasses overrides), D-C-20 (S3 error pages enriched), D-C-21 (S3 AIO fallback flag). *Effort:* L.
 - D-C-08: normalise once in `EntityClassifier.classify` (strip `www.`, lower-case) so the pipeline, `refresh_analysis_outputs` and the override-candidate report agree; test `classify("www.x.ca") == classify("x.ca")` for every override.
 - DA providers: return `None` for absent `rank` / `domain_authority` (`dataforseo_client.py:206`, `moz_client.py:334`); never cache a `None` as 0 (cache a `found=0` sentinel the consumer omits). `serp_audit.py:1625-1628,1752` and `run_feasibility.py:331-335` exclude `None`.
@@ -311,7 +329,37 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
    now; raise them as a separate question if the C4 before/after numbers show
    them driving the score.
 4. **Domain canonical form.** Tool 1 strips `www.` at write time (simplest), or Tool 2 normalises at ingest.
+
+   **ANSWERED 2026-11-16 in chunk D2c: both, with Tool 1 writing the canonical
+   form.** `domain_utils.normalize_domain` (lowercase, no port, no credentials,
+   no leading `www.`) is now the single definition in Tool 1, applied to
+   `targets[].domain`, the `moz.domains` keys, the client domain from
+   `config.yml` and every `omit_from_audit` entry. Tool 2 keeps normalising at
+   ingest (`src/brand_utils.py`, `src/handoff_moz.py`) — defence on both sides
+   costs nothing and means neither tool has to trust the other's spelling. The
+   client test is equality or a dot-suffix match, never a substring one.
+   Recorded in `docs/handoff_contract.md` ("The canonical host form"); the
+   contract test on Tool 1's side is
+   `tests/test_d2c_one_host_one_answer.py::TestTheHandoffAgreesOnWhichHostIsWhich`.
+   Tool 2 still needs its half of that contract test (chunk C1).
 5. **`visibility_cliff` and the velocity alerts.** Keep with a real data source and floor, or remove until one exists.
+
+   **RECOMMENDED by the agent 2026-11-16 (owner may overrule): remove the
+   signal until a data source exists, and keep the stored series.** The cliff
+   is computed from `competitor_metrics` snapshots whose denominator is "pages
+   we happened to scrape this run", which moves run to run for reasons that
+   have nothing to do with the competitor's visibility; a drop of three ranked
+   keywords out of five sampled pages is indistinguishable from a scrape that
+   got two fewer pages. An alert that cannot tell those apart is worse than no
+   alert, because the report states it as a competitor movement. So: stop
+   emitting the signal and its velocity alerts in the report, keep writing the
+   snapshots (the series is the only way a real floor will ever be
+   calibrated), and keep the config floor `risk_signals.cliff_min_sample` in
+   place with its reader, so re-enabling it is a config change plus a report
+   section rather than a rebuild. An errored scrape must write a `rank NULL`
+   snapshot rather than be omitted, otherwise the series being kept is itself
+   biased (P1/P2). Revisit when a snapshot routinely carries ten or more
+   ranked keywords per domain.
 6. **Client DA source (D-M-05).** Live provider lookup (recommended) vs the fixed 35 — and which provider is "the" scale for feasibility going forward.
 
    **DECIDED 2026-11-14 by the owner: the live provider lookup.** Look the client
@@ -391,6 +439,31 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
    one.
 8. **Barbell / EEAT / cluster at N≤3 (C-M-10/12/13).** Raise `max_audit_pages_per_domain` (cost) or demote these sections to boolean evidence tables.
 
+   **RECOMMENDED by the agent 2026-11-16 (owner may overrule — this one
+   spends API money either way): demote the sections now, raise the cap only
+   for a named shortlist.** Three sampled pages cannot carry a barbell
+   authority split, an E-E-A-T composite to two decimal places, or a cluster
+   label; raising the cap to the ten or so pages those statistics would need
+   multiplies the per-domain scrape cost across every audited competitor,
+   most of which the owner will never act on. So: rewrite the three sections
+   as boolean evidence tables — "author byline present on 2 of 3 pages
+   sampled", "schema present: yes/no", "pages sampled: 3" — with the sample
+   size in every row and no composite scores, averages or confidence words
+   where n ≤ `risk_signals.min_sample_for_statistics` (new, editorial,
+   uncalibrated). Then, separately, allow a per-domain override so the owner
+   can raise `max_audit_pages_per_domain` for two or three named rivals they
+   actually compete with and get real statistics there, at a cost they chose.
+   This keeps every number honest at today's spend and puts the extra spend
+   where it is worth it. The demotion is chunk C4 work and does not need the
+   override to land first.
+
+   Not a decision, for the record: the three arguable Tier-1 words
+   (`treatment`, `clinical`, `healthcare`) already have their answer in
+   decision 3 — they stay until the C4 before/after numbers show them driving
+   the score. And `step_dag.py` lives in serp-compete
+   (`Serp-compete/src/step_dag.py`, imported only by its own test), so the
+   wire-it-or-delete-it call belongs to that repo's chunks, not here.
+
 ---
 
 ## 5. Verification protocol for the coding agent (every chunk)
@@ -409,15 +482,15 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 | ID | Sev/Impact | Chunk | One line | Status (2026-11-16) |
 |---|---|---|---|---|
 | D-C-01 | S1 | D1 | SerpAPI per-page `position` stored as absolute `Rank` | fixed `2285828` |
-| D-C-02 | S1 | D2 | GSC transient failure cached as `found=0` for the TTL | open |
-| D-C-03 | S1 | D2 | Zero DA-covered keyword → "Low Feasibility"; no N-of-M | open |
-| D-C-04 | S1 | D2 | DataForSEO `rank: null` → DA 0, averaged, cached 30 days | open |
+| D-C-02 | S1 | D2 | GSC transient failure cached as `found=0` for the TTL | fixed (D2b) |
+| D-C-03 | S1 | D2 | Zero DA-covered keyword → "Low Feasibility"; no N-of-M | fixed `9784690` (D2a) |
+| D-C-04 | S1 | D2 | DataForSEO `rank: null` → DA 0, averaged, cached 30 days | fixed `9784690` (D2a); null encoding unverified against a live response |
 | D-C-05 | S1 | D3 | Skipped/failed engines get AIVI 0 persisted and ranked #1 | open |
 | D-C-06 | S2 | D4 | CLI re-run overwrites previous timestamped outputs | open |
 | D-C-07 | S2 | D4 | Play-parity HARD-fail can never fire | open |
-| D-C-08 | S2 | D2/D6 | `www.` hosts bypass `domain_overrides` (35/121 overrides) | open |
+| D-C-08 | S2 | D2/D6 | `www.` hosts bypass `domain_overrides` (35/121 overrides) | fixed (D2c) |
 | D-C-09 | S2 | D4 | `refresh_analysis_outputs` leaves `keyword_profiles`/report stale | open |
-| D-C-10 | S2 | D2 | Moz competitor block with one failed sub-call cached 30 days as `ok` | open |
+| D-C-10 | S2 | D2 | Moz competitor block with one failed sub-call cached 30 days as `ok` | fixed (D2b) |
 | D-C-11 | S2 | D3 | Probe failures drop from denominators; empty answers = "not mentioned" | open |
 | D-C-12 | S2 | D4 | GUI post-feasibility regenerate drops "# Content Briefs" | open |
 | D-C-13 | S2 | D4 | Keyword whose fetch failed vanishes without an N-of-M line | open |
@@ -427,17 +500,17 @@ Effort: S (< ½ day), M (½–1 day), L (1–2 days) for an agent with the repo 
 | D-C-17 | S3 | D6 | `serp_intent.thresholds.confidence_*` have no reader | open |
 | D-C-18 | S3 | D4 | §6 prints "unknown" for keys metrics never returns | open |
 | D-C-19 | S3 | D1 | Two feasibility producers with different definitions | fixed `2285828` |
-| D-C-20 | S3 | D2 | 403/429/5xx bodies are classified as content | open |
-| D-C-21 | S3 | D2 | `Has_Main_AI_Overview` set from the no-location fallback | open |
+| D-C-20 | S3 | D2 | 403/429/5xx bodies are classified as content | fixed (D2c) |
+| D-C-21 | S3 | D2 | `Has_Main_AI_Overview` set from the no-location fallback | fixed (D2c) |
 | D-C-22 | S3 | D1 | Rank history polluted by aborted runs and alt-query rows | fixed `2285828` |
 | D-M-01 | High | D1 | = D-C-01 (methodology consequences) | fixed `2285828` |
-| D-M-02 | High | D2 | Unscorable domain enters the feasibility mean as 0 | open |
+| D-M-02 | High | D2 | Unscorable domain enters the feasibility mean as 0 | fixed `9784690` (D2a) |
 | D-M-03 | High | D3 | = D-C-05 plus Jaccard(∅,∅)=1 and prioritisation | open |
 | D-M-04 | High | D3 | Foundational structure sub-score measures competitors' schema | open |
-| D-M-05 | High | D2 | `client_da` fixed 35 vs live provider on a different scale | open |
+| D-M-05 | High | D2 | `client_da` fixed 35 vs live provider on a different scale | fixed `9784690` (D2a); config value is now an override |
 | D-M-06 | High | D4 | Best opportunity ignores the mandatory intent gate | open |
 | D-M-07 | High | D4 | Extraction play asserts "high DA gap" when unmeasured | open |
-| D-M-08 | High | D2 | = D-C-03 (fake verdict + paid pivot fetch) | open |
+| D-M-08 | High | D2 | = D-C-03 (fake verdict + paid pivot fetch) | fixed `9784690` (D2a) |
 | D-M-09 | Med | D6 | Mean DA is the wrong statistic; no n / min / entity split | open |
 | D-M-10 | Med | D6 | "Confidence" is a classification count capped by enrichment budget | open |
 | D-M-11 | Med | D4 | Mixed-intent strategy says "backdoor" when dominant is preferred; dict-order ties | open |
@@ -568,6 +641,129 @@ is a real defect, not a false positive):
   class as D-C-22, in a dev-facing script.
 - `step_dag.py` is built, correct and covered by 13 passing tests, and is
   reachable from nothing. Either wire it in or delete it with its test.
+
+### Follow-up to the 2026-11-14 reading: the market setting and the wrapped links
+
+Not a numbered chunk. The 2026-11-14 reading turned up two faults in the run
+itself, and the user authorised both fixes ("Yes, both").
+
+**The market.** `config.yml serpapi.location` said `Vancouver, British
+Columbia, Canada` while `feasibility.non_profit_location` said
+`North Vancouver`: the run measured one city and scored another, so the
+client's absence from all nine map packs described the wrong market.
+`serpapi.location` is now the SerpAPI `canonical_name`
+`North Vancouver,British Columbia,Canada`, confirmed against a live
+`locations.json` lookup before the change. `run_feasibility.DEFAULT_LOCATION`
+replaces two hardcoded fallbacks and `probe_ai_visibility` holds the same
+value with a test asserting they agree. `config_validators.validate_config_yml`
+warns when the two settings disagree — a warning, not an error, because
+measuring a neighbouring market on purpose is legitimate.
+
+**The wrapped links.** Every organic link and every AI-Overview citation of
+that run arrived as `https://www.google.com/goto?url=CAES...`, an opaque
+Google payload. SerpAPI passes it through, so every URL-derived stage read
+`www.google.com`: entity and content classification, Domain Authority lookup,
+client-rank detection, handoff targets, citation attribution. New module
+`link_recovery.py` recovers what Google still sends in the clear — the host,
+from `displayed_link`, a reference's `source_icon`, `source` where it is a
+hostname, or the host already recovered for the row a sitelink sits inside —
+and walks every dict in a response rather than a named list of containers
+(enumerating them missed four: ads, ad sitelinks, organic sitelinks, and
+AI-Overview `snippet_links`). A recovered link is the site root, not the
+ranked page, so the row is marked `Is_Destination_Page: false` and
+`Link_Status: site_root`, and every page-level figure reads `Not Measured`
+rather than the front page's value. A row whose host cannot be recovered
+carries no URL at all: unknown, not `google.com`, whose Domain Authority
+would otherwise be scored as a competitor's (P1/P14).
+
+Verified on the archived run, not only on synthetic rows: 203 wrapped links,
+160 recovered, 43 lost (all AI-Overview inline `snippet_links`), 0 lost
+organic rows, 0 wrappers surviving anywhere. `parse_data` over
+`raw/20261114_155451/calls/0001_*.json` yields ranks 1-4 as yellowpages.ca,
+thebestvancouver.com, reddit.com and allycouples.com, and the six AI-Overview
+citations resolve to psychologytoday.com, goodlifetherapy.ca, reddit.com and
+janeapp.com.
+
+Three helpers were extracted because the gates they carry have to hold in the
+primary pass and the pivot pass alike, and a source guard can only honestly
+assert "there is exactly one writer": `moz_client.write_metrics` (Domain
+Authority is a property of the domain and survives a site-root recovery; Page
+Authority is a property of the page and does not, and the row and the database
+are gated together — P43), `feasibility.url_window` (slices the top N *first*,
+then drops blanks, and reports the hole; filtering first slides rank 11 into a
+set everything calls "the top 10" — P9/P31) and `link_recovery.link_status`.
+Moving them also kept `serp_audit.py` under its 2200-line cap, which the
+first version of the change exceeded; the cap was not raised.
+
+**Effort tier: Full** (`standards/effort-budget.md`), because the change is on
+the data path and touches external calls. Tests for the change, a full sweep
+budget, one cold `learning-qa` pass.
+
+That pass returned 8 findings, all fixed in this chunk with one guard test
+each (`tests/test_link_recovery_followup.py`, 24 tests):
+
+- My own guard `test_page_authority_is_gated_but_domain_authority_is_not`
+  sliced the source at the *first* `item["Competitor_DA"] =` and stayed green
+  while the pivot pass wrote an ungated Page Authority 180 lines below. This
+  is why the three helpers above were extracted.
+- `_GOOGLE_HOST` matched `google.example.com` — someone else's subdomain —
+  contradicting its own comment. Tightened and verified against 8 hosts.
+- Three readers go back over stored output written before the fix.
+  `generate_domain_override_candidates.normalize_domain` now returns no domain
+  for a wrapper, so google.com cannot enter the override review queue;
+  `refresh_analysis_outputs` keeps a row's existing `Entity_Type` rather than
+  overwriting it with `N/A`, which would turn an unknown into a measured
+  negative; each reports its count (P2).
+- A probe citation whose host could not be recovered voted "client not cited".
+  `Citations_Unresolved` now travels with `Client_Cited` onto the probe row and
+  into the brief data, and is logged.
+- `raw/<run_id>/*_response.json` is written *after* recovery, so a file named
+  "raw" held processed links. It now carries a `_post_processing` key pointing
+  at `raw/<run_id>/calls/`, which is written before recovery runs. The writer
+  moved to `serp_checkpoint`, which owns the archive.
+- The market comparison read only the first comma field, so
+  `North Vancouver,Washington,United States` passed and
+  `North Vancouver, British Columbia` false-fired. It now compares every field
+  both settings name.
+- `place_phrases` was used through a bare `in` test, so with the city set to
+  "North Bay" the keyword "therapy for bayside families" read as already
+  naming the place and went out with no location. `query_variants.names_place`
+  matches on word boundaries.
+- "unsupported location" and the other parameter errors were retried three
+  times with backoff. They are now in `_fetch_serp_api`'s `non_retryable`
+  markers: a setting SerpAPI has rejected once will be rejected again.
+- Two tests were pinned to the live `config.yml`, so changing the client's
+  market in config would have failed the suite. They patch `_serp_city`.
+
+Honest limits of that pass: it ran before `handoff_writer.py`,
+`config_manager.py`, `report_writing_directives.yml` and the `"N/A"` change
+landed, and it covers one family of failure modes (the failure-hides family),
+not general correctness.
+
+**Adjacent issues found, not fixed:**
+
+- The handoff's targets assert a site root is the ranked page and carry no
+  destination-page flag. Fixing it needs a `schema_version` bump agreed with
+  Tool 2, so it is recorded in `docs/methodology.md` rather than changed here.
+- `play_routing.yml` rules 3 and 4 match `feasibility: [low, unknown]` and
+  their strategy text asserts a high DA gap, which an unmeasured keyword does
+  not have. This is already open finding **D-M-07**, covering both
+  `extraction_play` and `local_pivot_play` — tracked, not newly discovered.
+- City aliases ("North Van", "NVan") are editorial content with no home. There
+  is no hardcoded list to externalise, so nothing was moved; a
+  `location_aliases` key in `serp_vocab.yml` is the place for one if the need
+  is ever shown with real keywords.
+- The `Situational_Probes` sheet has no glossary coverage beyond the two
+  columns this change touched (`Client_Cited`, `Citations_Unresolved`).
+
+The discover suite is 1621 passed, 72 skipped, exit 0.
+
+**After:** the owner work the market fix creates. Every
+`market_analysis_*.json` on disk was produced against the wrong city with
+wrapped links, so `run_feasibility.py` and the briefs need re-running over any
+that are still relied on. No DA provider is currently reachable
+(`DATAFORSEO_LOGIN`/`PASSWORD` absent from `.env`, Moz returned nothing on
+2026-11-14), so feasibility stays unmeasured until one is.
 
 Chunk X's open half shipped with it at `6164008` (serp-compete): the handoff moved
 to `schema_version` 2.0/2.1 and those versions are now in compete's
