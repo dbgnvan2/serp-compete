@@ -138,10 +138,83 @@
                 "type": "string"
               },
               "ranking_keywords": {
-                "type": "object"
+                "type": "object",
+                "description": "One Moz signal. The producer always emits `status` and `data_available`; neither is `required` here, because a v1.1 handoff written before review chunk D2b may carry a sub-block without them and this schema's consumer exits 1 on a validation error.",
+                "properties": {
+                  "status": {
+                    "type": "string"
+                  },
+                  "data_available": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
               },
               "anchor_texts": {
-                "type": "object"
+                "type": "object",
+                "description": "One Moz signal. The producer always emits `status` and `data_available`; neither is `required` here, because a v1.1 handoff written before review chunk D2b may carry a sub-block without them and this schema's consumer exits 1 on a validation error.",
+                "properties": {
+                  "status": {
+                    "type": "string"
+                  },
+                  "data_available": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              },
+              "brand_authority": {
+                "type": "object",
+                "description": "One Moz signal. The producer always emits `status` and `data_available`; neither is `required` here, because a v1.1 handoff written before review chunk D2b may carry a sub-block without them and this schema's consumer exits 1 on a validation error.",
+                "properties": {
+                  "status": {
+                    "type": "string"
+                  },
+                  "data_available": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              },
+              "link_momentum": {
+                "type": "object",
+                "description": "One Moz signal. The producer always emits `status` and `data_available`; neither is `required` here, because a v1.1 handoff written before review chunk D2b may carry a sub-block without them and this schema's consumer exits 1 on a validation error.",
+                "properties": {
+                  "status": {
+                    "type": "string"
+                  },
+                  "data_available": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              },
+              "fetched_at": {
+                "type": "string",
+                "description": "When this block was collected (ISO 8601 UTC) \u2014 the OLDEST of its signals, since the block is only as current as its stalest part. Absent when nothing was collected."
+              },
+              "signals_fetched_at": {
+                "type": "object",
+                "description": "Per-signal collection time. Each signal is fetched and cached independently, so they can differ by up to the cache TTL (review chunk D2b)."
+              },
+              "complete": {
+                "type": "boolean",
+                "description": "False when an enabled signal was not obtained on this block. A block can carry real data for one signal and a gap in another (review chunk D2b)."
+              },
+              "signals_missing": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Enabled signals not obtained \u2014 failed, skipped by the cap or quota, or not yet fetched. Empty when the block is complete."
               }
             }
           }
