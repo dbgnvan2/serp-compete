@@ -47,6 +47,9 @@ class VelocityTracker:
         db_name = self.config.get("technical", {}).get("database_path", "living_systems_intel.db")
         # Ensure we are pointing to the root
         self.db_path = os.path.abspath(os.path.join(os.path.dirname(shared_config_path), db_name))
+        # The same configured wait as `DatabaseManager`, read from the config
+        # this instance already loaded (review chunk Y11).
+        self.lock_timeout = db_connect.lock_timeout_from_config(self.config)
         self._initialize_db()
 
     def _load_config(self, path: str):
@@ -58,7 +61,7 @@ class VelocityTracker:
     def connection(self):
         """A managed connection: committed on a clean exit, always closed
         (review chunk Y10, the same change as `DatabaseManager`)."""
-        return db_connect.connection(self.db_path)
+        return db_connect.connection(self.db_path, timeout=self.lock_timeout)
 
     @property
     def pa_drop_min(self) -> float:

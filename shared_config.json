@@ -70,7 +70,10 @@
     "_high_authority_max_pa_comment": "C-M-18: a domain whose AVERAGE Moz Page Authority across its sampled URLs exceeds this is skipped entirely as too entrenched (FEATURE_GUIDE 2.2). It was a literal 50 inside main.py's loop, so the one threshold that decides whether a competitor is audited at all could not be changed without editing Python.",
     "_high_authority_max_pa_source": "editorial, uncalibrated, 2026-03 (moved to config 2026-11-15)",
     "high_authority_max_pa": 50,
-    "_max_audit_pages_per_domain_source": "operational cost choice, 2026-03 — pages scraped per competitor. It is the reason cluster/EEAT/focus are keyhole views; raising it is review decision 8."
+    "_max_audit_pages_per_domain_source": "operational cost choice, 2026-03 — pages scraped per competitor. It is the reason cluster/EEAT/focus are keyhole views; raising it is review decision 8.",
+    "_db_lock_timeout_seconds_comment": "Y11 — how long a writer waits for another writer's SQLite lock before the write fails with `database is locked`. It was sqlite3's own default of 5, passed by nobody and choosable by nobody, while the Streamlit orchestrator and an audit write this file at the same time. A wait cannot be switched off: a non-positive or non-numeric value is reported and the default used.",
+    "_db_lock_timeout_seconds_source": "editorial, uncalibrated — sqlite3's own default, now named. Raise it if a run reports `database is locked`.",
+    "db_lock_timeout_seconds": 5.0
   },
   "stop_words": [
     "the",

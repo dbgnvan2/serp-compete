@@ -10,6 +10,27 @@ from src import db_connect
 # Paths relative to serp-compete/src/
 SHARED_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "shared_config.json"))
 
+def config_for_lock_timeout() -> Dict[str, Any]:
+    """`shared_config.json` for the lock wait alone, never raising.
+
+    `load_shared_config` raises on a corrupt or unreadable file, deliberately:
+    a caller reading an editorial threshold must not silently score against a
+    default. The lock wait is not that — it is how long to wait for a lock —
+    and `DatabaseManager.__init__` reads it even when the caller supplied its
+    own `db_path`, so raising here would newly fail construction for a caller
+    that never reads the config at all (cold review of chunk Y11). The file's
+    real readers still raise where they are.
+    """
+    try:
+        return load_shared_config()
+    except Exception as exc:
+        logging.warning(
+            "Could not read %s for the database lock wait (%s); using the "
+            "documented default. Every other setting in that file is read "
+            "elsewhere and will report this itself.", SHARED_CONFIG_PATH, exc)
+        return {}
+
+
 def load_shared_config() -> Dict[str, Any]:
     """shared_config.json, or {} when it is absent.
 
@@ -102,8 +123,17 @@ def load_db_path():
     return "competitor_history.db"
 
 class DatabaseManager:
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: str = None, config: Dict[str, Any] = None):
         self.db_path = db_path or load_db_path()
+        # Resolved once per instance, like `load_db_path` above and every other
+        # editorial threshold in this module: the wait before a concurrent
+        # write fails with `database is locked` was sqlite3's undeclared 5.0
+        # until review chunk Y11, while the Streamlit orchestrator and an audit
+        # write this file at the same time. `config` is the same optional
+        # argument `position_thresholds` and `magnet_thresholds` take, so a
+        # caller holding the config does not re-read the file.
+        self.lock_timeout = db_connect.lock_timeout_from_config(
+            config if config is not None else config_for_lock_timeout())
         self._create_tables()
 
     def connection(self):
@@ -114,7 +144,7 @@ class DatabaseManager:
         handle — per competitor and per URL inside the audit loop. Two callers
         took it bare and never closed it at all (review chunk Y10).
         """
-        return db_connect.connection(self.db_path)
+        return db_connect.connection(self.db_path, timeout=self.lock_timeout)
 
     def _create_tables(self):
         with self.connection() as conn:
