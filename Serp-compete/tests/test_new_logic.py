@@ -42,7 +42,7 @@ def test_drift_is_computed_from_two_measured_page_authorities(temp_db):
     run_id2 = temp_db.create_run("client.com")
     temp_db.save_competitor_history(run_id2, url, position=1, pa=25, traffic=500)
 
-    with temp_db._get_connection() as conn:
+    with temp_db.connection() as conn:
         drift = conn.execute("SELECT drift FROM competitor_history WHERE run_id=?",
                              (run_id2,)).fetchone()[0]
     assert drift == -5
@@ -58,7 +58,7 @@ def test_an_unknown_page_authority_is_stored_null_and_drifts_nowhere(temp_db):
     run_id2 = temp_db.create_run("client.com")
     temp_db.save_competitor_history(run_id2, url, position=1, pa=None, traffic=500)
 
-    with temp_db._get_connection() as conn:
+    with temp_db.connection() as conn:
         pa, drift = conn.execute(
             "SELECT pa, drift FROM competitor_history WHERE run_id=?",
             (run_id2,)).fetchone()
@@ -76,7 +76,7 @@ def test_the_run_after_an_outage_does_not_report_a_rebound(temp_db):
     run3 = temp_db.create_run("client.com")
     temp_db.save_competitor_history(run3, url, position=1, pa=35, traffic=500)
 
-    with temp_db._get_connection() as conn:
+    with temp_db.connection() as conn:
         drift = conn.execute("SELECT drift FROM competitor_history WHERE run_id=?",
                              (run3,)).fetchone()[0]
     assert drift == 0            # compared with the last MEASURED PA, not with NULL

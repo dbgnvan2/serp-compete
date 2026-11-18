@@ -153,7 +153,7 @@ def test_f1_cited_gap_migrates_on_existing_db(tmp_path):
             avg_sentiment REAL)""")
         conn.commit()
     db = DatabaseManager(dbfile)             # init runs the ALTER migration
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(sov_daily)")}
     assert "cited_gap" in cols
     run_id = db.create_run("c.com")
@@ -165,6 +165,6 @@ def test_save_sov_roundtrip(tmp_path):
     run_id = db.create_run("c.com")
     res = compute_sov(EXPORT, COMPETITORS, "2026-07-22")
     db.save_sov(run_id, res["rows"])
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         n = conn.execute("SELECT COUNT(*) FROM sov_daily WHERE run_id=?", (run_id,)).fetchone()[0]
     assert n == len(res["rows"])

@@ -4,6 +4,15 @@
 **Purpose:** Complete context for spec writing session (separate Claude session without live repo access)  
 **Bundle Size:** 280 KB | **File Count:** 25 files
 
+> **This is a frozen snapshot of 2026-05-02, not current code.** The `.py`
+> files here are copies as they stood that day and they are not kept in step
+> with `Serp-compete/src`. Read them for the shape of the tool as it was
+> reviewed; never paste from them. One concrete drift, as of 2026-11-18: this
+> bundle's `database.py` and `velocity_module.py` still define
+> `_get_connection()` returning a bare `sqlite3.connect`, which review chunk
+> Y10 replaced with the managed `connection()` because the bare form commits
+> and never closes the handle.
+
 ---
 
 ## How to Use This Bundle

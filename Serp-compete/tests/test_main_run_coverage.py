@@ -197,7 +197,7 @@ def audited(tmp_path, monkeypatch):
 
 
 def _rows(db, sql, params=()):
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         return conn.execute(sql, params).fetchall()
 
 
@@ -264,7 +264,7 @@ def test_no_fragile_magnet_is_claimed_on_a_single_run(audited):
 
 def test_an_errored_scrape_leaves_a_null_rank_snapshot(audited):
     db, _markdown, _auditor = audited
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             "SELECT url, rank FROM market_history WHERE url LIKE ?",
             (f"https://{NO_MOZ}%",)).fetchall()
@@ -307,7 +307,7 @@ def test_the_cached_pages_tier_counts_are_read_not_estimated(audited):
     counts now travel on the row instead."""
     db, _markdown, _auditor = audited
     run_id = db.get_latest_run_id()
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT t2_count, t3_count FROM traffic_magnets WHERE run_id=? AND url=?",
             (run_id, f"https://{CACHED}/couples")).fetchone()
@@ -347,7 +347,7 @@ def test_cc08_market_position_is_stable_across_a_cached_rerun(tmp_path, monkeypa
 
     # The cached run re-used the stored counts rather than guessing them…
     runs = [r[0] for r in _rows(db, "SELECT id FROM runs ORDER BY id")]
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         counts = conn.execute(
             "SELECT t2_count, t3_count FROM traffic_magnets WHERE run_id=? AND url=?",
             (runs[-1], f"https://{ENRICHED}/couples")).fetchone()
@@ -371,7 +371,7 @@ def test_cm19_the_scoring_window_is_persisted_with_the_scores(tmp_path, monkeypa
                           _WindowAuditor())
     db = DatabaseManager(db_path)
     run_id = db.get_latest_run_id()
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         magnet = conn.execute(
             "SELECT medical_score, t2_count, t3_count, scoring_window_words "
             "FROM traffic_magnets WHERE run_id=? AND url=?",

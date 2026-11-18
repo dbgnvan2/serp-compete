@@ -98,7 +98,7 @@ def test_save_risk_signals_roundtrip(tmp_path):
     run_id = db.create_run("c.com")
     rows = compute_risk_signals([], {"a.com": [100, 20]}, [], "livingsystems.ca", CONFIG)
     db.save_risk_signals(run_id, rows, detected_at="2026-07-22")
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         got = conn.execute("SELECT signal_type, evidence_json FROM risk_signal WHERE run_id=?",
                            (run_id,)).fetchall()
     assert len(got) == 1 and got[0][0] == "visibility_cliff"
@@ -1205,8 +1205,9 @@ class TestSweepFixesPersistence(unittest.TestCase):
     def _raising_cursor(self, message):
         """A connection whose cursor.execute raises inside the guarded block.
 
-        Patching _get_connection itself raises BEFORE the try, so the except
-        branch is never entered and the test passes whatever the handler does.
+        Patching `connection` itself to raise would raise BEFORE the try, so
+        the except branch would never be entered and the test would pass
+        whatever the handler does.
         """
         cursor = MagicMock()
         cursor.execute.side_effect = sqlite3.OperationalError(message)
@@ -1221,7 +1222,7 @@ class TestSweepFixesPersistence(unittest.TestCase):
         every construction — so left broad this caught "database is locked" and
         reported it as an unrecorded run, silently (P1/P2)."""
         db = self._db()
-        with patch.object(db, "_get_connection",
+        with patch.object(db, "connection",
                           return_value=self._raising_cursor("database is locked")):
             with self.assertRaises(sqlite3.OperationalError):
                 db.get_anchor_coverage(1)
@@ -1259,7 +1260,7 @@ class TestSweepFixesPersistence(unittest.TestCase):
         """reporting.py is the only caller and has no exception handling, so a
         DB lagging a schema change must degrade, not crash the report."""
         db = self._db()
-        with patch.object(db, "_get_connection",
+        with patch.object(db, "connection",
                           return_value=self._raising_cursor(
                               "no such column: reason")):
             self.assertEqual(db.get_anchor_coverage(1), {})
@@ -1267,7 +1268,7 @@ class TestSweepFixesPersistence(unittest.TestCase):
     def test_a_genuinely_missing_table_still_degrades(self):
         """The one case the catch is for: a DB predating the table."""
         db = self._db()
-        with patch.object(db, "_get_connection",
+        with patch.object(db, "connection",
                           return_value=self._raising_cursor(
                               "no such table: anchor_coverage")):
             self.assertEqual(db.get_anchor_coverage(1), {})
@@ -1612,7 +1613,7 @@ class TestRiskEvidenceIsReadable(unittest.TestCase):
                 "signal_type": "anchor_text_spam", "severity": "high",
                 "evidence": {"interpretation": "links RECEIVED — not bought"},
             }], detected_at="2026-11-16")
-            with db._get_connection() as conn:
+            with db.connection() as conn:
                 stored = conn.execute(
                     "SELECT evidence_json FROM risk_signal WHERE run_id=?",
                     (run_id,)).fetchone()[0]

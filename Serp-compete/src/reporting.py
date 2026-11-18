@@ -418,7 +418,7 @@ class ReportGenerator:
             report.append(f"- **Completion Tokens:** {token_usage.get('completion_tokens', 0)}")
             report.append(f"- **Total Tokens:** {token_usage.get('total_tokens', 0)}")
 
-        with self.db._get_connection() as conn:
+        with self.db.connection() as conn:
             # 1. Volatility Alerts
             volatility = self.db.get_volatility_alerts(run_id)
             if volatility:
@@ -1292,37 +1292,40 @@ class ReportGenerator:
         
         # Excel Export
         with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-            with self.db._get_connection() as conn:
-                if not df_metrics.empty:
-                    df_metrics.to_excel(writer, sheet_name='Competitor Summary', index=False)
-                if not df_magnets.empty:
-                    df_magnets.to_excel(writer, sheet_name='Traffic Magnets', index=False)
-                if not df_eeat.empty:
-                    df_eeat.to_excel(writer, sheet_name='EEAT Scores', index=False)
-                if not df_clusters.empty:
-                    df_clusters.to_excel(writer, sheet_name='Cluster Analysis', index=False)
-                if not df_geo.empty:
-                    df_geo.to_excel(writer, sheet_name='GEO Extractability', index=False)
-                if not df_overlap.empty:
-                    df_overlap.to_excel(writer, sheet_name='SERP Overlap', index=False)
-                if not df_feasibility.empty:
-                    df_feasibility.to_excel(writer, sheet_name='Feasibility', index=False)
-                if not df_positioning.empty:
-                    df_positioning.to_excel(writer, sheet_name='Positioning', index=False)
-                if not df_sov.empty:
-                    df_sov.to_excel(writer, sheet_name='AI Share-of-Voice', index=False)
-                if not df_brand.empty:
-                    df_brand.to_excel(writer, sheet_name='Branded Demand', index=False)
-                if not df_risk.empty:
-                    df_risk.to_excel(writer, sheet_name='Reputation Risk', index=False)
-                if not df_yt.empty:
-                    df_yt.to_excel(writer, sheet_name='YouTube Presence', index=False)
-                if reframes:
-                    df_reframes = pd.DataFrame([{"keyword": r['keyword'], "url": r['url'], "reframe": r['reframe'][:500]} for r in reframes])
-                    df_reframes.to_excel(writer, sheet_name='Automated Reframes', index=False)
-                if token_usage:
-                    df_usage = pd.DataFrame([token_usage])
-                    df_usage.to_excel(writer, sheet_name='AI Usage Stats', index=False)
+            # No connection here: every sheet below is a DataFrame already built
+            # under the block above (its last query is line 1229). This opened a
+            # transaction and closed it again for zero statements, while reading
+            # as though the sheets were queried here (cold review of chunk Y10).
+            if not df_metrics.empty:
+                df_metrics.to_excel(writer, sheet_name='Competitor Summary', index=False)
+            if not df_magnets.empty:
+                df_magnets.to_excel(writer, sheet_name='Traffic Magnets', index=False)
+            if not df_eeat.empty:
+                df_eeat.to_excel(writer, sheet_name='EEAT Scores', index=False)
+            if not df_clusters.empty:
+                df_clusters.to_excel(writer, sheet_name='Cluster Analysis', index=False)
+            if not df_geo.empty:
+                df_geo.to_excel(writer, sheet_name='GEO Extractability', index=False)
+            if not df_overlap.empty:
+                df_overlap.to_excel(writer, sheet_name='SERP Overlap', index=False)
+            if not df_feasibility.empty:
+                df_feasibility.to_excel(writer, sheet_name='Feasibility', index=False)
+            if not df_positioning.empty:
+                df_positioning.to_excel(writer, sheet_name='Positioning', index=False)
+            if not df_sov.empty:
+                df_sov.to_excel(writer, sheet_name='AI Share-of-Voice', index=False)
+            if not df_brand.empty:
+                df_brand.to_excel(writer, sheet_name='Branded Demand', index=False)
+            if not df_risk.empty:
+                df_risk.to_excel(writer, sheet_name='Reputation Risk', index=False)
+            if not df_yt.empty:
+                df_yt.to_excel(writer, sheet_name='YouTube Presence', index=False)
+            if reframes:
+                df_reframes = pd.DataFrame([{"keyword": r['keyword'], "url": r['url'], "reframe": r['reframe'][:500]} for r in reframes])
+                df_reframes.to_excel(writer, sheet_name='Automated Reframes', index=False)
+            if token_usage:
+                df_usage = pd.DataFrame([token_usage])
+                df_usage.to_excel(writer, sheet_name='AI Usage Stats', index=False)
 
         print(f"Strategic Briefing generated: {excel_path} (and {md_path})")
         return report_content

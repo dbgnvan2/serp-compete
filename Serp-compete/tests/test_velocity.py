@@ -111,7 +111,7 @@ def test_an_errored_scrape_records_a_null_rank_snapshot(temp_tracker):
     temp_tracker.save_market_snapshot("competitor.com", "https://competitor.com/e",
                                       "kw", rank=None, da=None, systems_score=None,
                                       medical_score=None, run_id=1)
-    with temp_tracker._get_connection() as conn:
+    with temp_tracker.connection() as conn:
         row = conn.execute("SELECT run_id, rank, da FROM market_history").fetchone()
     assert row == (1, None, None)
     assert temp_tracker.get_market_alerts(run_id=1) == []

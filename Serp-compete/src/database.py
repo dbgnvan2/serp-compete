@@ -5,6 +5,8 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from src import db_connect
+
 # Paths relative to serp-compete/src/
 SHARED_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "shared_config.json"))
 
@@ -104,11 +106,18 @@ class DatabaseManager:
         self.db_path = db_path or load_db_path()
         self._create_tables()
 
-    def _get_connection(self):
-        return sqlite3.connect(self.db_path)
+    def connection(self):
+        """A managed connection: committed on a clean exit, always closed.
+
+        `_get_connection` returned a bare `sqlite3.connect`, and every caller
+        used it as `with ... as conn:`, which commits but never closes the
+        handle — per competitor and per URL inside the audit loop. Two callers
+        took it bare and never closed it at all (review chunk Y10).
+        """
+        return db_connect.connection(self.db_path)
 
     def _create_tables(self):
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             
             # Runs table
@@ -624,7 +633,7 @@ class DatabaseManager:
             conn.commit()
 
     def create_run(self, client_domain: str) -> int:
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT INTO runs (client_domain) VALUES (?)', (client_domain,))
             conn.commit()
@@ -640,7 +649,7 @@ class DatabaseManager:
         url_metrics response, and is None when Moz did not return one: unknown, never
         the page figure wearing a domain label.
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO competitors (domain, avg_da, domain_authority, last_crawled_at)
@@ -673,7 +682,7 @@ class DatabaseManager:
         unlabelled row is persisted and reported but never becomes a magnet, a
         vacuum or a reframe target.
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO traffic_magnets (run_id, domain, url, primary_keyword, est_traffic, medical_score, systems_score, systemic_label, keyword_source, keyword_relevant, rank, t2_count, t3_count, scoring_window_words)
@@ -691,7 +700,7 @@ class DatabaseManager:
         JSON string. (Spec: suite_enhancement_spec_v1.md#SC-1)
         """
         s = profile.signals
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO geo_profiles (
@@ -744,7 +753,7 @@ class DatabaseManager:
             raise ValueError(
                 f"carry_forward_profile: {table}.{match_col} not in allowlist"
             )
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(f"PRAGMA table_info({table})")
             cols = [row[1] for row in cursor.fetchall()]  # row[1] = column name
@@ -769,7 +778,7 @@ class DatabaseManager:
             return True
 
     def save_competitor_metrics(self, metrics: List[Dict[str, Any]], run_id: int):
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             for metric in metrics:
                 cursor.execute('''
@@ -786,7 +795,7 @@ class DatabaseManager:
         Spec:  suite_enhancement_spec_v1.md#C4
         Tests: tests/test_serp_overlap.py::test_sc6_save_and_read_roundtrip
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.executemany('''
                 INSERT INTO serp_overlap (
@@ -815,7 +824,7 @@ class DatabaseManager:
         could not tell an unmeasured client from one with no authority at all —
         and the rows would carry a verdict computed from that 0.
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.executemany('''
                 INSERT INTO competitor_feasibility
@@ -833,7 +842,7 @@ class DatabaseManager:
     def save_positioning(self, run_id: int, rows: List[Dict[str, Any]],
                          computed_at: str = None):
         """C2/SC-4: persist the barbell positioning rows (competitors + the client)."""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.executemany('''
                 INSERT INTO positioning (run_id, domain, is_client, computed_at,
@@ -849,7 +858,7 @@ class DatabaseManager:
 
     def save_sov(self, run_id: int, rows: List[Dict[str, Any]]):
         """C1/SC-3: persist per-engine share-of-voice rows (from the AV export)."""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.executemany('''
                 INSERT INTO sov_daily (run_id, engine, snapshot_date, entity, entity_type,
@@ -881,7 +890,7 @@ class DatabaseManager:
         Idempotent per run: the run's rows are replaced, so re-running a run
         does not double them.
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM sov_coverage WHERE run_id = ?', (run_id,))
             cursor.executemany(
@@ -902,7 +911,7 @@ class DatabaseManager:
         [] means the run predates the table — NOT that every engine was
         measured. The caller must not render a complete-coverage claim from it.
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             try:
                 rows = cursor.execute(
@@ -920,7 +929,7 @@ class DatabaseManager:
     def save_risk_signals(self, run_id: int, rows: List[Dict[str, Any]], detected_at: str = None):
         """C6/SC-8: persist reputation-risk signals (pattern detections)."""
         import json as _json
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.executemany('''
                 INSERT INTO risk_signal (run_id, domain, is_own_site, detected_at,
@@ -954,7 +963,7 @@ class DatabaseManager:
         writing no row at all would collapse them.
         """
         coverage = coverage or {}
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             # Column list and placeholders are derived from the one tuple, so
             # adding a count cannot leave the INSERT and the SELECT disagreeing
             # about which column holds what.
@@ -974,7 +983,7 @@ class DatabaseManager:
         {} means the run predates this table — not that the run was clean. The
         caller must not render a "everything was readable" claim from it.
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             try:
                 selected = ("collected_at", "fetch_status",
@@ -1019,7 +1028,7 @@ class DatabaseManager:
         so runs never collide. has_channel is stored as-is (True/False/None — None means
         unknown/error, never coerced to False; P1).
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM yt_channel_presence WHERE run_id = ?", (run_id,))
             cursor.executemany('''
@@ -1073,7 +1082,7 @@ class DatabaseManager:
         size, and this is a second and stronger reason.
         """
         try:
-            with self._get_connection() as conn:
+            with self.connection() as conn:
                 rows = conn.execute('''
                     SELECT run_id,
                            SUM(CASE WHEN position IS NOT NULL AND position <= 10
@@ -1099,7 +1108,7 @@ class DatabaseManager:
         its OTHER subfolders) so a genuinely off-topic subfolder reads as a mismatch."""
         from urllib.parse import urlparse
         by_domain: Dict[str, Dict[str, set]] = {}
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 "SELECT domain, url, keyword FROM competitor_metrics "
                 "WHERE run_id = ? AND keyword IS NOT NULL AND url IS NOT NULL", (run_id,)
@@ -1125,7 +1134,7 @@ class DatabaseManager:
 
     def save_brand_demand(self, run_id: int, rows: List[Dict[str, Any]]):
         """C3/SC-5: persist the branded-demand benchmark rows."""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.executemany('''
                 INSERT INTO brand_demand_bench (run_id, domain, brand, period,
@@ -1167,7 +1176,7 @@ class DatabaseManager:
           records that.
         """
         inputs: Dict[str, Dict[str, Any]] = {}
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             # Every domain this run audited, so this reader and
             # `get_competitor_das(run_id)` agree by construction about which
@@ -1229,7 +1238,7 @@ class DatabaseManager:
     def get_competitor_positions(self, run_id: int) -> Dict[str, Dict[str, int]]:
         """C4/SC-6: {keyword: {domain: best (lowest) position}} from competitor_metrics."""
         positions: Dict[str, Dict[str, int]] = {}
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT keyword, domain, MIN(position) FROM competitor_metrics
@@ -1251,7 +1260,7 @@ class DatabaseManager:
         its position.
         """
         volumes: Dict[str, float] = {}
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT keyword, MAX(traffic) FROM competitor_metrics
@@ -1277,7 +1286,7 @@ class DatabaseManager:
         gracefully rather than borrowing another run's numbers.
         """
         das: Dict[str, int] = {}
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             # C-M-09: the DOMAIN authority. The feasibility table compares "your DA"
             # with "each competitor's DA" and the competitor side was the average
             # PAGE authority of its sampled URLs. A competitor with no measured DA is
@@ -1304,7 +1313,7 @@ class DatabaseManager:
         came back from cache as "t3 = 1" and its domain was re-labelled *Direct
         Systemic* on the re-run, overwriting the right label with the wrong one.
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO semantic_audits (run_id, url, medical_score, systems_score, systemic_label, t2_count, t3_count, scoring_window_words)
@@ -1326,7 +1335,7 @@ class DatabaseManager:
         with the mirror-image +35 on the next working run.
         """
         pa_value = None if pa is None else float(pa)
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
 
             # Find the previous MEASURED PA for this URL (a NULL snapshot is not a
@@ -1354,7 +1363,7 @@ class DatabaseManager:
         NULL-vs-value distinction in `competitor_history.pa`, so an old run can still
         say whether its authority figures were measured (P2).
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 'SELECT COUNT(pa), COUNT(*) FROM competitor_history WHERE run_id = ?',
                 (run_id,)).fetchone()
@@ -1404,7 +1413,7 @@ class DatabaseManager:
             market_position = "Generalist"
             strategy = "Target their lack of Tier 3 depth."
 
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO competitor_metadata (domain, market_position, strategy, last_updated)
@@ -1417,7 +1426,7 @@ class DatabaseManager:
             conn.commit()
 
     def get_competitor_metadata(self, domain: str) -> Dict[str, str]:
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT market_position, strategy FROM competitor_metadata WHERE domain = ?', (domain,))
             row = cursor.fetchone()
@@ -1426,7 +1435,7 @@ class DatabaseManager:
             return {"market_position": "N/A", "strategy": "N/A"}
 
     def get_latest_run_id(self) -> int:
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT MAX(id) FROM runs')
             result = cursor.fetchone()
@@ -1445,7 +1454,7 @@ class DatabaseManager:
         volatility_min_shift = float((load_shared_config().get("risk_signals", {}) or {})
                                      .get("volatility_min_shift",
                                           DEFAULT_VOLATILITY_MIN_SHIFT))
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             # Get previous run_id
             cursor.execute('SELECT id FROM runs WHERE id < ? ORDER BY id DESC LIMIT 1', (run_id,))
@@ -1474,7 +1483,7 @@ class DatabaseManager:
 
     def count_audited_pages(self, run_id: int) -> int:
         """Every page this run audited, magnet or not — the M in "N of M"."""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 'SELECT COUNT(*) FROM traffic_magnets WHERE run_id = ?', (run_id,)
             ).fetchone()
@@ -1487,7 +1496,7 @@ class DatabaseManager:
         what they are; they are not folded into 'handoff'.
         """
         counts: Dict[str, int] = {}
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 "SELECT COALESCE(keyword_source, 'unlabelled'), COUNT(DISTINCT keyword) "
                 "FROM competitor_metrics WHERE run_id = ? AND keyword IS NOT NULL "
@@ -1517,7 +1526,7 @@ class DatabaseManager:
             config_min, config_max = magnet_thresholds()
             min_medical = config_min if min_medical is None else min_medical
             max_position = config_max if max_position is None else max_position
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 magnet_sql(vacuum_only=True,
@@ -1540,7 +1549,7 @@ class DatabaseManager:
             return openings
 
     def update_traffic_magnet_scores(self, run_id: int, url: str, medical: int, systems: int):
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE traffic_magnets
@@ -1558,7 +1567,7 @@ class DatabaseManager:
             conn.commit()
 
     def get_run_urls(self, run_id: int) -> List[str]:
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT DISTINCT url FROM traffic_magnets WHERE run_id = ?', (run_id,))
             return [row[0] for row in cursor.fetchall()]
@@ -1573,7 +1582,7 @@ class DatabaseManager:
         this return shape exists to remove (P22 — the old shape lacked the fields its
         caller needed, so the caller invented them).
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT medical_score, systems_score, systemic_label, t2_count, t3_count,

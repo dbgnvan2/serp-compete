@@ -33,7 +33,7 @@ def _presence_row(domain, **kw):
 
 
 def _count(db, run_id):
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         return conn.execute("SELECT COUNT(*) FROM yt_channel_presence WHERE run_id=?",
                             (run_id,)).fetchone()[0]
 
@@ -55,7 +55,7 @@ def test_p1_8_second_run_clean(tmp_path):
     run2 = db.create_run("livingsystems.ca")
     db.save_yt_presence(run2, [_presence_row("comp.com", subscriber_count=2000)])
     assert _count(db, run1) == 2 and _count(db, run2) == 1
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         subs = conn.execute("SELECT subscriber_count FROM yt_channel_presence "
                             "WHERE run_id=? AND domain='comp.com'", (run2,)).fetchone()[0]
     assert subs == 2000  # run 2 reads its own value, not run 1's stale 1000
@@ -68,7 +68,7 @@ def test_p1_8_second_run_clean(tmp_path):
         _presence_row("err.com", has_channel=None, channel_id="", check_status="error",
                       match_confidence="low", match_basis="none", estimation_basis="transient_error"),
     ])
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         got = dict(conn.execute("SELECT domain, has_channel FROM yt_channel_presence "
                                 "WHERE run_id=?", (run3,)).fetchall())
     assert got["none.com"] == 0        # False → stored 0
@@ -83,7 +83,7 @@ def test_p1_8_second_run_clean(tmp_path):
                                              estimation_basis="transient_error")])
     db.save_yt_presence(run4, [_presence_row("flip.com", has_channel=True,
                                              channel_id="UC_flip", check_status="confirmed")])
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         flip = conn.execute("SELECT check_status, channel_id FROM yt_channel_presence "
                             "WHERE run_id=? AND domain='flip.com'", (run4,)).fetchall()
     assert len(flip) == 1                          # no stale '' row left behind
@@ -130,11 +130,11 @@ def test_p1_9_migrates_on_existing_db(tmp_path):
     assert "uploads_recent" in cols_after, "migration did not add uploads_recent to existing DB"
 
     # Prior data survived, and a save touching the new column now works end-to-end.
-    with db._get_connection() as conn2:
+    with db.connection() as conn2:
         assert conn2.execute("SELECT COUNT(*) FROM yt_channel_presence "
                              "WHERE domain='prior.com'").fetchone()[0] == 1
     db.save_yt_presence(1, [_presence_row("new.com", uploads_recent=5)])
-    with db._get_connection() as conn2:
+    with db.connection() as conn2:
         got = conn2.execute("SELECT uploads_recent FROM yt_channel_presence "
                             "WHERE run_id=1 AND domain='new.com'").fetchone()[0]
     assert got == 5
@@ -564,7 +564,7 @@ def test_p1_7_wired_in_comparison_features(tmp_path, monkeypatch):
                                       str(tmp_path))
     assert _count(db, run_id) >= 2, "no yt_channel_presence rows — wiring/save missing (P21)"
     assert summary.get("yt_presence_rows", 0) >= 2
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         statuses = dict(conn.execute("SELECT domain, check_status FROM yt_channel_presence "
                                      "WHERE run_id=?", (run_id,)).fetchall())
     assert "livingsystems.ca" in statuses and "comp.com" in statuses

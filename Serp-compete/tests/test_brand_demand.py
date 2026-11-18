@@ -90,7 +90,7 @@ def test_save_brand_demand_roundtrip(tmp_path):
     run_id = db.create_run("c.com")
     rows = compute_branded_demand({"a.com": "Acme"}, _provider(100), CONFIG, period="2026-07")
     db.save_brand_demand(run_id, rows)
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         n = conn.execute("SELECT COUNT(*) FROM brand_demand_bench WHERE run_id=?",
                          (run_id,)).fetchone()[0]
     assert n == 1
@@ -181,7 +181,7 @@ def test_cm03_query_strings_are_persisted_for_the_excel_sheet(tmp_path):
     rows = compute_branded_demand({"a.com": "Acme Counselling"}, _provider(100), CONFIG,
                                   period="2026-07")
     db.save_brand_demand(run_id, rows)
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         queries = conn.execute("SELECT queries FROM brand_demand_bench WHERE run_id=?",
                                (run_id,)).fetchone()[0]
     assert "Acme Counselling reviews" in queries

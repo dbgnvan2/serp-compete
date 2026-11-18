@@ -218,7 +218,7 @@ def test_cc09_blocked_own_page_is_not_persisted_as_a_zero_audit(mock_gsc_manager
         mock_gsc_manager.analyze_gaps()
 
     mock_analyze.assert_not_called()          # an unreadable page is not scored
-    with mock_gsc_manager.db._get_connection() as conn:
+    with mock_gsc_manager.db.connection() as conn:
         rows = conn.execute("SELECT url, medical_score, systems_score FROM semantic_audits").fetchall()
     assert rows == []                          # nothing cached for the next 7 days
     assert mock_gsc_manager.db.was_audited_recently("https://livingsystems.ca/anxiety") is None
@@ -236,6 +236,6 @@ def test_cc09_an_errored_own_page_is_also_not_persisted(mock_gsc_manager):
          patch.object(mock_gsc_manager.auditor, 'scrape_content', return_value=errored):
         _gaps, _low, mismatches = mock_gsc_manager.analyze_gaps()
 
-    with mock_gsc_manager.db._get_connection() as conn:
+    with mock_gsc_manager.db.connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM semantic_audits").fetchone()[0] == 0
     assert mismatches == []       # no mismatch CLAIMED either way — the page is unknown

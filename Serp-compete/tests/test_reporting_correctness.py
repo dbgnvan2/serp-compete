@@ -97,7 +97,7 @@ def test_cc02_avg_pos_is_unchanged_by_the_fix(reporter):
 
 def _seed_wide_run(db, run_id, competitors=15, pages=3):
     """15 competitors × 3 pages — the real handoff's shape."""
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         for i in range(competitors * pages):
             domain = f"{chr(97 + i // pages)}comp.com"
             url = f"https://{domain}/p{i % pages}"
@@ -187,7 +187,7 @@ def test_cc08_a_legacy_cached_row_reports_unknown_counts(tmp_path):
     cannot silently treat it as zero — or re-derive it from the weighted score."""
     db = DatabaseManager(str(tmp_path / "legacy.db"))
     run_id = db.create_run("client.ca")
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         conn.execute("INSERT INTO semantic_audits (run_id, url, medical_score, "
                      "systems_score, systemic_label) VALUES (?,?,?,?,?)",
                      (run_id, "https://comp.com/a", 5, 2.0, "Standard"))
@@ -297,7 +297,7 @@ def test_cc10_the_feasibility_table_matches_positioning(tmp_path):
                                {"current.com": {"kw"}}, {"kw"}, "client.ca", 35,
                                db.get_competitor_das(run_id), {}, "2026-11-15")
     db.save_competitor_feasibility(run_id, 35, out["feasibility"])
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         domains = {r[0] for r in conn.execute(
             "SELECT domain FROM competitor_feasibility WHERE run_id=?",
             (run_id,)).fetchall()}

@@ -60,7 +60,7 @@ def test_enrich_scraped_page_persists_eeat_and_geo(tmp_path):
                         EEATScorer(CONFIG), GeoProfiler(CONFIG), stats)
     assert stats["eeat_fresh"] == 1 and stats["geo_fresh"] == 1
     assert stats["eeat_failed"] == 0 and stats["geo_failed"] == 0
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM eeat_scores WHERE run_id=?",
                             (run_id,)).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM geo_profiles WHERE run_id=?",
@@ -95,7 +95,7 @@ def test_carry_forward_cached_page_populates_from_prior_run(tmp_path):
     stats = new_enrichment_stats()
     carry_forward_cached_page(db, run2, "https://comp.com/a", stats)
     assert stats["eeat_carried"] == 1 and stats["geo_carried"] == 1
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM eeat_scores WHERE run_id=?",
                             (run2,)).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM geo_profiles WHERE run_id=?",
@@ -129,7 +129,7 @@ def test_finalize_cluster_all_fresh_computes(tmp_path):
                             had_cache_hit=False, cluster_detector=ClusterDetector(CONFIG),
                             stats=stats)
     assert stats["cluster_fresh"] == 1 and stats["cluster_carried"] == 0
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         row = conn.execute("SELECT cluster_signal, max_in_degree FROM cluster_results "
                            "WHERE run_id=?", (run,)).fetchone()
     assert row == ("clustered", 2)
@@ -147,7 +147,7 @@ def test_finalize_cluster_all_cached_carries_forward(tmp_path):
     finalize_domain_cluster(db, run2, "comp.com", [], had_cache_hit=True,
                             cluster_detector=det, stats=stats)
     assert stats["cluster_carried"] == 1 and stats["cluster_fresh"] == 0
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         row = conn.execute("SELECT cluster_signal FROM cluster_results WHERE run_id=?",
                            (run2,)).fetchone()
     assert row is not None and row[0] == "clustered"
@@ -172,7 +172,7 @@ def test_finalize_cluster_mixed_domain_prefers_carry_forward(tmp_path):
                             had_cache_hit=True, cluster_detector=det, stats=stats)
     assert stats["cluster_carried"] == 1  # carried, NOT a partial fresh compute
     assert stats["cluster_fresh"] == 0
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         row = conn.execute("SELECT cluster_signal, max_in_degree FROM cluster_results "
                            "WHERE run_id=?", (run2,)).fetchone()
     assert row == ("clustered", 2)  # the complete prior, not insufficient_data
@@ -189,7 +189,7 @@ def test_finalize_cluster_mixed_no_prior_falls_back_to_partial(tmp_path):
                             had_cache_hit=True, cluster_detector=ClusterDetector(CONFIG),
                             stats=stats)
     assert stats["cluster_fresh"] == 1 and stats["cluster_carried"] == 0
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         row = conn.execute("SELECT cluster_signal FROM cluster_results WHERE run_id=?",
                            (run,)).fetchone()
     assert row is not None and row[0] == "clustered"
@@ -202,6 +202,6 @@ def test_finalize_cluster_no_pages_no_cache_is_noop(tmp_path):
     finalize_domain_cluster(db, run, "comp.com", [], had_cache_hit=False,
                             cluster_detector=ClusterDetector(CONFIG), stats=stats)
     assert all(v == 0 for v in stats.values())
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM cluster_results WHERE run_id=?",
                            (run,)).fetchone()[0] == 0

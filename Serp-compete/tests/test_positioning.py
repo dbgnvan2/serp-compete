@@ -279,7 +279,7 @@ def test_save_positioning_roundtrip(tmp_path):
         "livingsystems.ca",
         {"moz_da": 35, "top10_count": 3, "medical_total": 8, "systems_total": 1}, CONFIG)
     db.save_positioning(run_id, rows, computed_at="2026-07-22")
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         got = conn.execute(
             "SELECT domain, is_client, quadrant, rationale_json FROM positioning "
             "WHERE run_id=? ORDER BY is_client", (run_id,)).fetchall()

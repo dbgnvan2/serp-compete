@@ -928,7 +928,7 @@ positioning_query = """
     ORDER BY cm.domain
 """
 
-with self.db._get_connection() as conn:
+with self.db.connection() as conn:
     positioning = conn.execute(positioning_query, (run_id,)).fetchall()
     if positioning:
         positioning_df = pd.DataFrame(positioning, columns=['Competitor', 'Market Position', 'Strategy', 'PA Drift', 'Cluster Signal'])

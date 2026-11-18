@@ -141,7 +141,7 @@ def test_sc6_save_and_read_roundtrip(tmp_path):
     run_id = db.create_run("livingsystems.ca")
     rows = build_overlap_rows({"kw": {"a.com": 2, "b.com": 3}}, {"kw": 4}, CONFIG, "2026-07-22")
     db.save_serp_overlap(run_id, rows)
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         got = conn.execute(
             "SELECT keyword, cell, self_position, overlap_count, competitors_ranking_json "
             "FROM serp_overlap WHERE run_id=?", (run_id,)).fetchall()
@@ -179,7 +179,7 @@ def test_get_competitor_das_from_competitors_table(tmp_path):
     domain ever audited in the feasibility table."""
     db = DatabaseManager(str(tmp_path / "d.db"))
     run_id = db.create_run("c.com")
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         # C-M-09: the feasibility input is `domain_authority`. `avg_da` is the average
         # PAGE authority of the sampled URLs and must not stand in for it, so b.com
         # (a PA but no DA) is excluded exactly as a domain with nothing stored is.
@@ -259,7 +259,7 @@ def test_finding3_save_competitor_feasibility_roundtrip(tmp_path):
     run_id = db.create_run("c.com")
     feas = feasibility_by_competitor("c.com", 35, {"weak.com": 40, "strong.com": 60})
     db.save_competitor_feasibility(run_id, 35, feas)
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         rows = dict(conn.execute(
             "SELECT domain, feasible FROM competitor_feasibility WHERE run_id=?",
             (run_id,)).fetchall())
@@ -311,7 +311,7 @@ def test_an_unmeasured_client_da_is_stored_as_null():
         db.save_competitor_feasibility(run_id, None, {
             "rival.ca": {"competitor_da": 40, "feasible": False,
                          "suggestion": "Hyper-Local Pivot"}})
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             stored = conn.execute(
                 "SELECT client_da FROM competitor_feasibility WHERE run_id=?",
                 (run_id,)).fetchone()

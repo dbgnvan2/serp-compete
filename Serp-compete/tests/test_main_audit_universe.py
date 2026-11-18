@@ -184,7 +184,7 @@ def audited(tmp_path, monkeypatch):
 
 
 def _rows(db, sql, params=()):
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         return conn.execute(sql, params).fetchall()
 
 

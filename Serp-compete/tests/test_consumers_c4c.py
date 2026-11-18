@@ -177,7 +177,7 @@ def test_cm11_the_exclusion_is_wired_into_the_run_path(tmp_path):
     run_comparison_features(db, run_id, config, "livingsystems.ca",
                             {"jerichocounselling.com": {"jericho counselling"}},
                             _Gsc(), _Dfs(), str(tmp_path))
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         keywords = {r[0] for r in conn.execute(
             "SELECT keyword FROM serp_overlap WHERE run_id=?", (run_id,)).fetchall()}
     assert "jericho counselling" not in keywords

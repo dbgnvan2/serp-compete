@@ -60,7 +60,7 @@ def test_f7_run_comparison_features_persists_all_five(tmp_path):
                                       competitor_keywords, _FakeGsc(), _FakeDfs(), str(tmp_path))
 
     def count(table):
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             return conn.execute(f"SELECT COUNT(*) FROM {table} WHERE run_id=?",
                                 (run_id,)).fetchone()[0]
 
@@ -86,7 +86,7 @@ def test_f2_client_moz_da_none_when_da_absent(tmp_path):
     cfg = {**SHARED_CONFIG, "client": {"domain": "livingsystems.ca"}}  # NO "da" key
     run_comparison_features(db, run_id, cfg, "livingsystems.ca",
                             {"comp.com": {"couples therapy"}}, _FakeGsc(), _FakeDfs(), str(tmp_path))
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         row = conn.execute("SELECT rationale_json FROM positioning "
                            "WHERE run_id=? AND is_client=1", (run_id,)).fetchone()
     assert row is not None                        # client is always plotted (SC-4.1)
@@ -117,7 +117,7 @@ def test_p13_one_feature_import_failure_degrades_only_that_feature(tmp_path, mon
                                       competitor_keywords, _FakeGsc(), _FakeDfs(), str(tmp_path))
 
     def count(table):
-        with db._get_connection() as conn:
+        with db.connection() as conn:
             return conn.execute(f"SELECT COUNT(*) FROM {table} WHERE run_id=?",
                                 (run_id,)).fetchone()[0]
 
@@ -145,7 +145,7 @@ class _RecordingDfs:
 
 
 def _brand_rows(db, run_id):
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         return dict(conn.execute(
             "SELECT domain, brand FROM brand_demand_bench WHERE run_id=?",
             (run_id,)).fetchall())
@@ -193,7 +193,7 @@ def test_cm03_competitor_brands_are_display_brands_not_bare_stems(tmp_path):
     # The bare stem is still queried, but only as the ambiguity probe: a call of its
     # own, whose volume stays out of the branded total (2 display queries × 100).
     assert ["lavender"] in dfs.queries
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         volume = conn.execute(
             "SELECT branded_search_volume FROM brand_demand_bench "
             "WHERE run_id=? AND domain=?", (run_id, "lavendercounselling.com")

@@ -146,7 +146,7 @@ def test_save_and_read_geo_profile_roundtrip(tmp_path):
     )
     prof = GeoProfiler(CONFIG).profile_page(page)
     db.save_geo_profile(run_id, prof)
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT url, extractability_tier, credential_count, why_cited "
             "FROM geo_profiles WHERE run_id=?", (run_id,)).fetchone()

@@ -44,7 +44,7 @@ def test_eeat_persists_to_eeat_scores_table(tmp_path):
     scorer = EEATScorer(CONFIG)
     score = scorer.score_page(_page("https://comp.com/a", byline="Jane, PhD"), domain_authority=40)
     scorer.save_to_database(db, run_id, score)  # the never-before-run path
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             "SELECT url, has_credentials_in_byline FROM eeat_scores WHERE run_id=?",
             (run_id,)).fetchall()
@@ -65,7 +65,7 @@ def test_cluster_persists_to_cluster_results_table(tmp_path):
     result = det.analyze_domain("comp.com", pages)
     det.save_to_database(db, run_id, result)  # the never-before-run path
     assert result.cluster_signal == "clustered"
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT domain, cluster_signal, max_in_degree FROM cluster_results WHERE run_id=?",
             (run_id,)).fetchone()
@@ -98,7 +98,7 @@ def test_geo_carry_forward_populates_new_run_on_cache_hit(tmp_path):
     # Second run: the URL cache-hits, no fresh profile is written — carry forward.
     run2 = db.create_run("c.com")
     assert db.carry_forward_profile("geo_profiles", "url", "https://comp.com/p", run2) is True
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         rows = conn.execute(
             "SELECT url FROM geo_profiles WHERE run_id=?", (run2,)).fetchall()
     assert len(rows) == 1 and rows[0][0] == "https://comp.com/p"
@@ -113,7 +113,7 @@ def test_eeat_carry_forward_populates_new_run_on_cache_hit(tmp_path):
                                     domain_authority=40))
     run2 = db.create_run("c.com")
     assert db.carry_forward_profile("eeat_scores", "url", "https://comp.com/a", run2) is True
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         n = conn.execute(
             "SELECT COUNT(*) FROM eeat_scores WHERE run_id=?", (run2,)).fetchone()[0]
     assert n == 1
@@ -131,7 +131,7 @@ def test_cluster_carry_forward_populates_new_run_on_cache_hit(tmp_path):
     det.save_to_database(db, run1, det.analyze_domain("comp.com", pages))
     run2 = db.create_run("c.com")
     assert db.carry_forward_profile("cluster_results", "domain", "comp.com", run2) is True
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         row = conn.execute(
             "SELECT cluster_signal, max_in_degree FROM cluster_results WHERE run_id=?",
             (run2,)).fetchone()
@@ -146,7 +146,7 @@ def test_carry_forward_returns_false_when_no_prior(tmp_path):
     db = DatabaseManager(str(tmp_path / "cf4.db"))
     run = db.create_run("c.com")
     assert db.carry_forward_profile("geo_profiles", "url", "https://none.com/x", run) is False
-    with db._get_connection() as conn:
+    with db.connection() as conn:
         n = conn.execute("SELECT COUNT(*) FROM geo_profiles").fetchone()[0]
     assert n == 0
 

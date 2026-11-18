@@ -152,7 +152,7 @@ def test_cm12_the_report_states_the_value_set_and_uses_one_decimal(tmp_path, mon
     rg.db.save_competitor_metrics(
         [{"domain": "comp.com", "url": "https://comp.com/a", "keyword": "kw",
           "position": 2, "traffic": 1.0}], run_id=run_id)
-    with rg.db._get_connection() as conn:
+    with rg.db.connection() as conn:
         conn.execute(
             "INSERT INTO eeat_scores (run_id, url, scored_at, experience_score, "
             "expertise_score, authoritativeness_score, trustworthiness_score, "
@@ -239,7 +239,7 @@ def test_cm14_the_section_is_renamed_and_says_it_measures_no_citations(tmp_path,
     rg.db.save_competitor_metrics(
         [{"domain": "comp.com", "url": "https://comp.com/a", "keyword": "kw",
           "position": 2, "traffic": 1.0}], run_id=run_id)
-    with rg.db._get_connection() as conn:
+    with rg.db.connection() as conn:
         conn.execute(
             "INSERT INTO geo_profiles (run_id, url, profiled_at, extractability_tier, "
             "question_heading_count, present_signals, why_cited) VALUES (?,?,?,?,?,?,?)",
@@ -260,7 +260,7 @@ def test_cm14_strong_tiers_are_checked_against_real_citations(tmp_path, monkeypa
     rg.db.save_competitor_metrics(
         [{"domain": "cited.com", "url": "https://cited.com/a", "keyword": "kw",
           "position": 2, "traffic": 1.0}], run_id=run_id)
-    with rg.db._get_connection() as conn:
+    with rg.db.connection() as conn:
         for url, tier in (("https://cited.com/a", "Strong"),
                           ("https://uncited.com/a", "Strong")):
             conn.execute(

@@ -247,7 +247,7 @@ See section above.
   - `insert_market_gaps()` — Insert keyword gaps
   - `get_volatility_alerts()` → list — Trending indicators for reporting
   - `get_feasibility_drift()` → list — Revision 4: PA drift detection (Fragile Magnets)
-  - `_get_connection()` — Context manager for transactions
+  - `connection()` — a managed connection: committed on a clean exit, rolled back on an exception, and **closed** on every path (review chunk Y10). It was `_get_connection()`, which returned a bare `sqlite3.connect`: used as `with ... as conn:` that commits and never closes, and twice taken bare and never closed at all. `db_connect.connection` holds the pairing, because `closing(sqlite3.connect(...))` is the opposite trap — it closes the handle and discards the commit
 
 **Database Tables & Schema:**
 1. **runs** (run_id, client_domain, created_at) — Run metadata

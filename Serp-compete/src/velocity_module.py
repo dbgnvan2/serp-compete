@@ -32,6 +32,8 @@ import os
 import json
 from typing import List, Dict, Any, Optional, Tuple
 
+from src import db_connect
+
 # Editorial default, uncalibrated, 2026-11-15 (shared_config
 # `risk_signals.pa_drop_min`): the smallest Moz Page-Authority drop between two
 # consecutive runs that is reported as a Fragile Magnet. 1-2 points is Moz noise.
@@ -53,8 +55,10 @@ class VelocityTracker:
                 return json.load(f)
         return {}
 
-    def _get_connection(self):
-        return sqlite3.connect(self.db_path)
+    def connection(self):
+        """A managed connection: committed on a clean exit, always closed
+        (review chunk Y10, the same change as `DatabaseManager`)."""
+        return db_connect.connection(self.db_path)
 
     @property
     def pa_drop_min(self) -> float:
@@ -62,7 +66,7 @@ class VelocityTracker:
                      .get("pa_drop_min", DEFAULT_PA_DROP_MIN))
 
     def _initialize_db(self):
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS market_history (
@@ -97,7 +101,7 @@ class VelocityTracker:
         record and a later reader can tell "we could not read it" from "it was not
         attempted" (C-C-06); `da = NULL` means Moz had no figure (C-C-03).
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO market_history (run_id, domain, url, keyword, rank, da, systems_score, medical_score)
@@ -114,7 +118,7 @@ class VelocityTracker:
         comparable; a drift whose two sides are not both measured is None, never 0 —
         "we don't know" and "it did not move" are different facts (P1).
         """
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             if run_id is None:
                 cursor.execute('''
@@ -175,7 +179,7 @@ class VelocityTracker:
         """
         alerts: List[Dict[str, Any]] = []
         threshold = self.pa_drop_min
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             cursor = conn.cursor()
             if run_id is None:
                 row = cursor.execute(
