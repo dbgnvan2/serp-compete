@@ -253,8 +253,16 @@ market. **Chunk D2 is complete.** The verdict label landed as `"Not Measured"`, 
 - **PAA.** FEATURE_GUIDE §6.1 promises PAA context in reframes; the handoff has no PAA field. Either add `paa_questions` per target to the handoff (Tool 1 has them) or drop the promise.
 - **`client_brand_names`** is written by Tool 1 and dropped by Tool 2 (C-C-13).
 - **Moz.** One client shape for both tools (C-C-04). Tool 1's `moz.domains[*].anchor_texts.status == "error"` can be a 30-day-stale cached error (D-C-10) — Tool 2's `anchor_coverage` should not read repeated `errored` as a fresh outage.
-- **AI-visibility export.** The export itself is sound (checked both sides). Tool 2's SoV consumer should require `questions_total > 0` per engine because Tool 1 currently writes rows for engines with zero answers (D-C-05/11) until D3 lands.
+- **AI-visibility export.** The export itself is sound (checked both sides). As of review chunk D3a Tool 1 no longer writes brand_mentions / ai_citations / ai_visibility_index rows for an engine with zero answers, so the export carries only measured engines. Tool 2's SoV consumer should still require `questions_total > 0` per engine: it is cheap, and it also covers the exports written before D3a.
 - **GSC.** Both tools pull GSC with different windows and filters (discover: 90-day all-device; compete: 90-day, one 5000-row page, global). Agree one window and `country=can` and state it in both reports.
+
+**DONE 2026-11-17.** `docs/review_2026-11-04/PLAN_X_handoff_contract.md`.
+Canonical host form, absolute rank and its `schema_version`,
+`client_brand_names`, and the GSC pull (both tools now filter window, country
+and device, each report states its own pull and neither states the other's) are
+closed with a contract test on both sides. Not taken: `paa_questions` in the
+handoff and the stale-cached-Moz-error read, both of which need an owner
+decision on what the consumer should do with them.
 
 ---
 
@@ -341,7 +349,16 @@ market. **Chunk D2 is complete.** The verdict label landed as `"Not Measured"`, 
    Recorded in `docs/handoff_contract.md` ("The canonical host form"); the
    contract test on Tool 1's side is
    `tests/test_d2c_one_host_one_answer.py::TestTheHandoffAgreesOnWhichHostIsWhich`.
-   Tool 2 still needs its half of that contract test (chunk C1).
+
+   **SETTLED 2026-11-17 in chunk X.** The D2c paragraph above overstated what
+   had been done: `targets[].domain` was canonical, but `moz_competitor` built
+   the `moz.domains` keys with its own `netloc.lower()` and kept the leading
+   `www.`, and `client_domain` was published as typed in `config.yml` — so one
+   handoff carried two forms of one host, and the client and omit tests still
+   compared raw strings. Chunk X routes all four through `normalize_domain`.
+   Both halves of the contract test now exist and call the real code:
+   `tests/test_handoff_contract.py` here and
+   `Serp-compete/tests/test_handoff_contract.py` there.
 5. **`visibility_cliff` and the velocity alerts.** Keep with a real data source and floor, or remove until one exists.
 
    **RECOMMENDED by the agent 2026-11-16 (owner may overrule): remove the
@@ -485,51 +502,51 @@ market. **Chunk D2 is complete.** The verdict label landed as `"Not Measured"`, 
 | D-C-02 | S1 | D2 | GSC transient failure cached as `found=0` for the TTL | fixed (D2b) |
 | D-C-03 | S1 | D2 | Zero DA-covered keyword → "Low Feasibility"; no N-of-M | fixed `9784690` (D2a) |
 | D-C-04 | S1 | D2 | DataForSEO `rank: null` → DA 0, averaged, cached 30 days | fixed `9784690` (D2a); null encoding unverified against a live response |
-| D-C-05 | S1 | D3 | Skipped/failed engines get AIVI 0 persisted and ranked #1 | open |
-| D-C-06 | S2 | D4 | CLI re-run overwrites previous timestamped outputs | open |
-| D-C-07 | S2 | D4 | Play-parity HARD-fail can never fire | open |
+| D-C-05 | S1 | D3 | Skipped/failed engines get AIVI 0 persisted and ranked #1 | fixed (D3a) |
+| D-C-06 | S2 | D4 | CLI re-run overwrites previous timestamped outputs | fixed (0864d58) |
+| D-C-07 | S2 | D4 | Play-parity HARD-fail can never fire | fixed (D4c) |
 | D-C-08 | S2 | D2/D6 | `www.` hosts bypass `domain_overrides` (35/121 overrides) | fixed (D2c) |
-| D-C-09 | S2 | D4 | `refresh_analysis_outputs` leaves `keyword_profiles`/report stale | open |
+| D-C-09 | S2 | D4 | `refresh_analysis_outputs` leaves `keyword_profiles`/report stale | fixed (D4c) |
 | D-C-10 | S2 | D2 | Moz competitor block with one failed sub-call cached 30 days as `ok` | fixed (D2b) |
-| D-C-11 | S2 | D3 | Probe failures drop from denominators; empty answers = "not mentioned" | open |
-| D-C-12 | S2 | D4 | GUI post-feasibility regenerate drops "# Content Briefs" | open |
-| D-C-13 | S2 | D4 | Keyword whose fetch failed vanishes without an N-of-M line | open |
-| D-C-14 | S2 | D4 | §4 evidence block reads keys the producer never writes | open |
-| D-C-15 | S2 | D4 | `stop_reason == max_tokens` never checked | open |
+| D-C-11 | S2 | D3 | Probe failures drop from denominators; empty answers = "not mentioned" | fixed (D3a) |
+| D-C-12 | S2 | D4 | GUI post-feasibility regenerate drops "# Content Briefs" | fixed (D4c) |
+| D-C-13 | S2 | D4 | Keyword whose fetch failed vanishes without an N-of-M line | fixed (D4c) |
+| D-C-14 | S2 | D4 | §4 evidence block reads keys the producer never writes | fixed (D4a) |
+| D-C-15 | S2 | D4 | `stop_reason == max_tokens` never checked | fixed (c742f68) |
 | D-C-16 | S3 | D6 | Failing Moz test is a hard-coded-date bomb | already fixed `abcc2aa` — close, do not re-fix |
-| D-C-17 | S3 | D6 | `serp_intent.thresholds.confidence_*` have no reader | open |
-| D-C-18 | S3 | D4 | §6 prints "unknown" for keys metrics never returns | open |
+| D-C-17 | S3 | D6 | `serp_intent.thresholds.confidence_*` have no reader | fixed (D6) — the two confidence thresholds now drive intent certainty; a test fails if any key under the block loses its reader |
+| D-C-18 | S3 | D4 | §6 prints "unknown" for keys metrics never returns | fixed (D4a) |
 | D-C-19 | S3 | D1 | Two feasibility producers with different definitions | fixed `2285828` |
 | D-C-20 | S3 | D2 | 403/429/5xx bodies are classified as content | fixed (D2c) |
 | D-C-21 | S3 | D2 | `Has_Main_AI_Overview` set from the no-location fallback | fixed (D2c) |
 | D-C-22 | S3 | D1 | Rank history polluted by aborted runs and alt-query rows | fixed `2285828` |
 | D-M-01 | High | D1 | = D-C-01 (methodology consequences) | fixed `2285828` |
 | D-M-02 | High | D2 | Unscorable domain enters the feasibility mean as 0 | fixed `9784690` (D2a) |
-| D-M-03 | High | D3 | = D-C-05 plus Jaccard(∅,∅)=1 and prioritisation | open |
-| D-M-04 | High | D3 | Foundational structure sub-score measures competitors' schema | open |
+| D-M-03 | High | D3 | = D-C-05 plus Jaccard(∅,∅)=1 and prioritisation | fixed (D3a) |
+| D-M-04 | High | D3 | Foundational structure sub-score measures competitors' schema | fixed (D3b) |
 | D-M-05 | High | D2 | `client_da` fixed 35 vs live provider on a different scale | fixed `9784690` (D2a); config value is now an override |
-| D-M-06 | High | D4 | Best opportunity ignores the mandatory intent gate | open |
-| D-M-07 | High | D4 | Extraction play asserts "high DA gap" when unmeasured | open |
+| D-M-06 | High | D4 | Best opportunity ignores the mandatory intent gate | fixed (D4a) |
+| D-M-07 | High | D4 | Extraction play asserts "high DA gap" when unmeasured | fixed (D4a) |
 | D-M-08 | High | D2 | = D-C-03 (fake verdict + paid pivot fetch) | fixed `9784690` (D2a) |
-| D-M-09 | Med | D6 | Mean DA is the wrong statistic; no n / min / entity split | open |
-| D-M-10 | Med | D6 | "Confidence" is a classification count capped by enrichment budget | open |
-| D-M-11 | Med | D4 | Mixed-intent strategy says "backdoor" when dominant is preferred; dict-order ties | open |
-| D-M-12 | Med | D4 | "Market too small" decided from `total_results` | open |
-| D-M-13 | Med | D4 | Commodity homogeneity counts `other` titles as homogeneous | open |
-| D-M-14 | Med | D3 | Gazetteer matches "Indeed"; ranking ties broken alphabetically | open |
-| D-M-15 | Med | D5 | Sponge is cross-sectional; reformat candidates = below-median half | open |
-| D-M-16 | Med | D5 | Branded share over tracked set vs property-level bands | open |
-| D-M-17 | Med | D5 | "Traffic at risk" can exceed actual clicks | open |
-| D-M-18 | Med | D3 | 20-question cap drops whole personas | open |
-| D-M-19 | Med | D4 | Pivot text asserts directory dominance; gate ignores intent verdict | open |
-| D-M-20 | Med | D5 | AIO constants without source; trend across unlike keyword sets | open |
-| D-M-21 | Med | D6 | Core thresholds/weights without stated derivation | open |
-| D-M-22 | Low–Med | D6 | Root `methodology.md` stale and contradictory | open |
-| D-M-23 | Low | D6 | Glossary DA-gap formula reversed | open |
-| D-M-24 | Low | D6 | `feasibility_score` exceeds documented 0–1 | open |
-| D-M-25 | Low | D3 | Failed sentiment stored as "neutral" | open |
-| D-M-26 | Low–Med | D6 | Bowen triggers include ubiquitous words; no counts | open |
-| D-M-27 | Low–Med | D4 | Validator cannot check the claims most likely wrong upstream | open |
+| D-M-09 | Med | D6 | Mean DA is the wrong statistic; no n / min / entity split | fixed (D6) — min_competitor_da / min_non_directory_da / n on the row, in §5b and §5c |
+| D-M-10 | Med | D6 | "Confidence" is a classification count capped by enrichment budget | fixed (D6) — coverage and certainty are separate figures, both printed; certainty is the ranking key |
+| D-M-11 | Med | D4 | Mixed-intent strategy says "backdoor" when dominant is preferred; dict-order ties | fixed (D4b) |
+| D-M-12 | Med | D4 | "Market too small" decided from `total_results` | fixed (D4b) |
+| D-M-13 | Med | D4 | Commodity homogeneity counts `other` titles as homogeneous | fixed (D4b) |
+| D-M-14 | Med | D3 | Gazetteer matches "Indeed"; ranking ties broken alphabetically | fixed (D3b) |
+| D-M-15 | Med | D5 | Sponge is cross-sectional; reformat candidates = below-median half | fixed (D5) |
+| D-M-16 | Med | D5 | Branded share over tracked set vs property-level bands | fixed (D5) |
+| D-M-17 | Med | D5 | "Traffic at risk" can exceed actual clicks | fixed (D5) |
+| D-M-18 | Med | D3 | 20-question cap drops whole personas | fixed (D3b) |
+| D-M-19 | Med | D4 | Pivot text asserts directory dominance; gate ignores intent verdict | fixed (D4b) |
+| D-M-20 | Med | D5 | AIO constants without source; trend across unlike keyword sets | fixed (D5) |
+| D-M-21 | Med | D6 | Core thresholds/weights without stated derivation | fixed (D6) — thresholds_provenance, printed in §A; blank prints as editorial, uncalibrated |
+| D-M-22 | Low–Med | D6 | Root `methodology.md` stale and contradictory | fixed (D6) — root guide banner-marked a dated snapshot; intent_mapping.yml sentence corrected |
+| D-M-23 | Low | D6 | Glossary DA-gap formula reversed | already fixed before D6 — verified and guarded |
+| D-M-24 | Low | D6 | `feasibility_score` exceeds documented 0–1 | fixed (D6) — feasibility_score clamped to 0–1 |
+| D-M-25 | Low | D3 | Failed sentiment stored as "neutral" | fixed (D3b) |
+| D-M-26 | Low–Med | D6 | Bowen triggers include ubiquitous words; no counts | fixed (D6) — per-trigger page counts + share; four ubiquitous triggers removed; §4 relabelled |
+| D-M-27 | Low–Med | D4 | Validator cannot check the claims most likely wrong upstream | fixed (D4c) |
 | C-C-01 | S1 | C1 | `www.` domains derive brand "www" | fixed `f7b09bf` (C1) |
 | C-C-02 | S1 | C3 | `total_keywords` inflated by cross join | fixed `3d56e0a` (C3) |
 | C-C-03 | S1 | C2 | Missing/failed PA stored as 0 → Fragile Magnet | fixed `7a6405b` (C2) |
