@@ -1211,6 +1211,19 @@ free-tier claim in a Python module, scoped to lines that name a provider or a
 plan so a module's estimate of its own usage ("~4 rows a month" in
 `moz_competitor.brand_authority_for`) is not swept up.
 
+A detail that makes L2 worse than a stale string. `moz_api_upgrade_spec_v1.md`
+(2026-08) already carried the correction as an explicit task: "`MOZ_TOKEN` is
+*not* 'free tier: 50 rows/month' — it is the **Starter Medium** API plan;
+correct the note and say the real quota is read at runtime via
+`quota.lookup`." The `CLAUDE.md` note named in that task was fixed. The two
+copies in `generate_insight_report.py` and `serp-me.py` were not, because the
+task named one document rather than the claim, and nobody searched for the
+other homes. That is the same shape as the defects this review spent eighty-
+seven findings on, committed while fixing one of them: the fix that corrects
+one copy of a claim and does not grep for the rest leaves the claim alive. The
+guard is the part that was missing — it fails on the claim wherever it appears,
+so the next copy cannot be added quietly.
+
 **What the run also established, which is not a defect.** Feasibility was
 absent although `MOZ_TOKEN` is present: `run_pipeline.py` runs steps 1.1-1.4
 and feasibility is not one of them, so a pipeline run never fetches DA however
