@@ -160,9 +160,14 @@ def _remember_moz_block(handoff_data: Dict[str, Any]) -> None:
     `targets[].rank` as page-relative (Chunk X, rank semantics).
     """
     try:
-        from src.handoff_moz import remember_handoff_version, remember_moz_block
+        from src.handoff_moz import (remember_client_domain,
+                                     remember_handoff_version,
+                                     remember_moz_block)
         remember_moz_block(handoff_data)
         remember_handoff_version(handoff_data)
+        # Review chunk Y1: the published client host, so a handoff produced
+        # for a different client is reported rather than audited in silence.
+        remember_client_domain(handoff_data)
     except Exception as exc:  # noqa: BLE001
         print(f"⚠️ Moz block not retained: {exc}")
 
@@ -400,6 +405,20 @@ def run_audit(handoff_path: str = None):
     # 1. Foundation: Dynamic Handover & Velocity Tracker
     targets_raw, paa_map, client_brand_names, handoff_file = get_latest_market_data(
         handoff_path)
+    # Review chunk Y1: the handoff says which client it was produced for, and
+    # nothing read it. This repo's config stays the authority — the audit is
+    # configured here — but a disagreement is stated rather than left to be
+    # discovered in the numbers. Checked before the no-targets abort: a handoff
+    # for the wrong client is a likely reason for there to be no targets, and
+    # behind the abort the run died without ever naming it (cold review of Y1).
+    try:
+        from src.handoff_moz import client_domain_mismatch
+        client_mismatch = client_domain_mismatch(client_domain)
+    except Exception:                               # never abort on a caveat
+        client_mismatch = ""
+    if client_mismatch:
+        print(f"⚠️ Client mismatch: {client_mismatch}.")
+
     if not targets_raw:
         print("❌ No competitors identified. Aborting.")
         return
@@ -824,6 +843,8 @@ def run_audit(handoff_path: str = None):
         "pa_measured": pa_measured,
         "pa_total": pa_total,
         "universe": dict(universe_stats),
+        # Carried into the report, not left in the console line above.
+        "client_domain_mismatch": client_mismatch,
     }
     # Chunk X (rank semantics / H1): the handoff's ranks are page-relative
     # until serp-discover's D1 lands, so the magnet table's "rank" column is

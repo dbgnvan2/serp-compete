@@ -30,11 +30,14 @@ from typing import Any, Dict, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
-try:  # brand_utils is dependency-free by design, so this import is safe here.
-    from src.brand_utils import normalise_domain
-except ImportError:  # pragma: no cover - standalone use without the package root
-    def normalise_domain(domain) -> str:  # type: ignore[misc]
-        return str(domain or "").strip().lower().removeprefix("www.")
+# brand_utils is dependency-free by design, so this import is safe here. There
+# is deliberately no fallback: the `ImportError` branch that used to sit here
+# defined a ninth copy of the host rule stripping `www.` only, so under it the
+# client compare, the mismatch check, the anchor keys and `restrict_to_run` all
+# silently reverted to the pre-Y1 rule and nothing could tell. An import that
+# cannot be satisfied should fail, not degrade to a different answer (P45,
+# cold review of chunk Y1).
+from src.brand_utils import normalise_domain
 
 
 def load_moz_block(handoff_path: Optional[str]) -> Dict[str, Any]:
@@ -126,6 +129,52 @@ def remember_handoff_version(handoff: Any) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Handoff version not retained: %s", exc)
         _VALIDATED_SCHEMA_VERSION = ""
+
+
+#: The `client_domain` the producer published, retained for the same reason
+#: and by the same call. Nothing read this field: compete takes the client host
+#: from its own `shared_config.client.domain`, so the two tools' agreement on
+#: which site is the client rested on two independently edited config values
+#: that nothing reconciled (review chunk Y1). Reading it does not make it the
+#: authority — this repo's own config stays that — but a mismatch is now
+#: reported instead of producing a report about somebody else's client.
+_VALIDATED_CLIENT_DOMAIN: str = ""
+
+
+def remember_client_domain(handoff: Any) -> None:
+    """Retain the validated handoff's `client_domain`. Never raises.
+
+    Call with `{}` at the start of each ingestion, like the two above: the
+    legacy and manual paths carry no client domain and a second run in one
+    process must not inherit the previous handoff's (P8).
+    """
+    global _VALIDATED_CLIENT_DOMAIN
+    try:
+        raw = (handoff or {}).get("client_domain") if isinstance(handoff, dict) else ""
+        _VALIDATED_CLIENT_DOMAIN = normalise_domain(raw or "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Handoff client domain not retained: %s", exc)
+        _VALIDATED_CLIENT_DOMAIN = ""
+
+
+def validated_client_domain() -> str:
+    """The canonical client host the handoff published, or `""`.
+
+    `""` means the handoff did not say — the legacy or manual path, or a
+    pre-2.0 file — which is not a disagreement.
+    """
+    return _VALIDATED_CLIENT_DOMAIN
+
+
+def client_domain_mismatch(configured: str) -> str:
+    """One sentence when the handoff's client is not this repo's, else `""`."""
+    published = validated_client_domain()
+    mine = normalise_domain(configured or "")
+    if not published or not mine or published == mine:
+        return ""
+    return (f"the handoff was produced for `{published}` but this repo's "
+            f"`shared_config.client.domain` is `{mine}` — every figure below "
+            f"compares one client's SERPs with another's configuration")
 
 
 def validated_handoff_version() -> str:
@@ -253,8 +302,14 @@ def anchor_texts_by_domain(moz_block: Dict[str, Any]) -> Dict[str, Dict[str, Any
             # is appended last deliberately and must keep winning for its own
             # domain (see the comment above).
             existing = out.get(key)
+            # The client's own domain is compared in the canonical form, like
+            # every other host here. A raw compare made this test depend on
+            # the producer's spelling of one field (review chunk Y1); files
+            # already on disk carry the pre-chunk-X form.
+            client_key = normalise_domain(
+                ((moz_block or {}).get("client") or {}).get("domain", ""))
             if existing and len(existing.get("items") or []) > len(items) \
-                    and domain != (((moz_block or {}).get("client") or {}).get("domain")):
+                    and normalise_domain(domain) != client_key:
                 continue
             out[key] = {
                 "items": items,

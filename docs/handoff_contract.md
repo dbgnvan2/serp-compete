@@ -120,6 +120,20 @@ What went wrong before 2026-11-16, and what each failure cost:
 **If Tool 1 starts stripping at write time**, none of this code changes:
 `normalise_domain` is idempotent.
 
+**The prefixes stripped** are `www.` and `m.`, repeatedly, and only while a `.`
+remains in what is left — the same rule and the same `ALIAS_PREFIXES` constant
+as `serp-discover`'s `domain_utils.normalize_domain` (review chunk Y1). The two
+tools must agree: a host the producer canonicalises one way and the consumer
+another is two sites again at the join. The client's own entry in `moz.client`
+is compared in this form too, so a handoff file already on disk carrying the
+pre-chunk-X `www.` spelling still has its own anchors recognised.
+
+**`client_domain` is checked, not assumed.** `handoff_moz.remember_client_domain`
+retains the host the handoff published and `client_domain_mismatch` compares it
+with `shared_config.client.domain`; `run_audit` prints the disagreement. A
+handoff that does not say — the legacy `market_analysis_*.json` path, a manual
+target list, or a pre-2.0 file — is silence, not a mismatch (P1).
+
 ### 1.4 Rank semantics
 
 > **Review finding H1 / D-C-01 — FIXED on the serp-discover side 2026-11-16

@@ -158,6 +158,20 @@ def gsc_pull_note(config) -> str:
     )
 
 
+def client_mismatch_line(run_coverage: dict = None) -> str:
+    """The report's client-mismatch caveat, or `""` when the two agree.
+
+    The sentence itself comes from `handoff_moz.client_domain_mismatch`; this
+    only decides how the report says it. Separate from `generate_summary` so
+    it can be tested without a populated database and an Excel write (cold
+    review of chunk Y1).
+    """
+    mismatch = (run_coverage or {}).get("client_domain_mismatch")
+    if not mismatch:
+        return ""
+    return f"> \u26a0\ufe0f **Client mismatch:** {mismatch}."
+
+
 class ReportGenerator:
     def __init__(self, db_path: str = None):
         # None, not a literal: DatabaseManager falls through to load_db_path(),
@@ -267,6 +281,16 @@ class ReportGenerator:
             "\n## Executive Summary",
             "This report identifies strategic openings where competitors rely on the 'Medical Model' and provides automated Bowen-based reframes."
         ]
+
+        # The handoff names the client it was produced for. A disagreement with
+        # this repo's `shared_config.client.domain` goes in the artefact, not
+        # only into a console line somebody read once: the report is what is
+        # still here weeks later, and without this it reads clean while every
+        # figure in it compares one client's SERPs with another's configuration
+        # (cold review of chunk Y1).
+        mismatch_line = client_mismatch_line(run_coverage)
+        if mismatch_line:
+            report.insert(4, mismatch_line)
 
         # Run coverage, in the artefact rather than only in the console (P2).
         if run_coverage:

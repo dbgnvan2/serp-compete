@@ -9,6 +9,8 @@ Tests:   tests/test_brand_utils.py
 """
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from typing import Iterable, Optional
 
 # Editorial vocab (P4): practice-name suffixes stripped from a domain stem to get the bare
@@ -77,6 +79,12 @@ def derive_display_brand(domain: str, suffixes: Optional[Iterable[str]] = None) 
     return " ".join(part.title() for part in [token, *reversed(stripped)])
 
 
+#: Host prefixes the web treats as aliases of the apex. Must stay identical to
+#: serp-discover's `domain_utils.ALIAS_PREFIXES` — the producer and the
+#: consumer disagreeing about which host is which is what chunk X was about.
+ALIAS_PREFIXES = ("www.", "m.")
+
+
 def normalise_domain(domain) -> str:
     """Lower-cased, www-stripped domain, for comparing domains from two sources.
 
@@ -85,5 +93,46 @@ def normalise_domain(domain) -> str:
     them raw let four entries on the omit list through — including
     psychologytoday.com — so a directory the client explicitly excluded could
     be audited and named in the report (P3/P6).
+
+    Review chunk Y1: `m.` is stripped too, and prefixes are stripped to a
+    fixed point, matching serp-discover's `domain_utils.normalize_domain`
+    exactly. A mobile host that this side counted as a separate competitor
+    while the producer counted it as the apex is the same join failure chunk X
+    fixed for `www.`. A prefix is only stripped when something that can still
+    be a site is left: `m.ca` is a registrable domain whose first label
+    happens to be "m".
+
+    The cold review of Y1 found this function mirrored only the prefix list:
+    it kept a scheme, a path, a port and userinfo, so `https://m.x.ca/p` came
+    back whole here and as `x.ca` on the producer's side. The whole rule is
+    mirrored now — netloc, no userinfo, no port, and free text (anything with
+    a space in it) is not a host and comes back `""`. `tests/
+    test_handoff_contract.py` asserts the two sides agree over a shared case
+    table, rather than grepping the sibling repo for a constant.
     """
-    return str(domain or "").strip().lower().removeprefix("www.")
+    raw = str(domain or "").strip()
+    if not raw or any(ch.isspace() for ch in raw):
+        return ""
+    if "//" in raw:
+        host = urlparse(raw).netloc
+    elif "/" in raw:
+        host = urlparse("//" + raw).netloc
+    else:
+        host = raw
+    host = host.lower()
+    if "@" in host:                         # userinfo@host
+        host = host.rsplit("@", 1)[-1]
+    if host.startswith("["):                # IPv6 literal, keep the brackets
+        head, _, _port = host.partition("]")
+        host = head + "]"
+    elif ":" in host:
+        host = host.split(":", 1)[0]
+    changed = True
+    while changed:
+        changed = False
+        for prefix in ALIAS_PREFIXES:
+            if host.startswith(prefix) and "." in host[len(prefix):]:
+                host = host[len(prefix):]
+                changed = True
+                break
+    return host

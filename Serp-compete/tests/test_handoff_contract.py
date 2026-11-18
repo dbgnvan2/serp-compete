@@ -20,7 +20,11 @@ import json
 import unittest
 
 from src.audit_universe import group_targets_by_domain
+from src.brand_utils import normalise_domain
 from src.handoff_moz import (anchor_coverage, anchor_texts_by_domain,
+                             client_domain_mismatch,
+                             remember_client_domain,
+                             validated_client_domain,
                              error_is_cached, handoff_rank_is_absolute,
                              remember_handoff_version, restrict_to_run,
                              validated_handoff_version)
@@ -781,3 +785,161 @@ class TestGscPullIsStated(unittest.TestCase):
         markdown = self._markdown({"date_range_days": 90, "country": ""})
         self.assertIn("no country filter", markdown)
         self.assertIn("NOT comparable", markdown)
+
+
+class TestTheClientsOwnHostIsRecognisedInEitherForm(unittest.TestCase):
+    """Review chunk Y1 — the consumer compares hosts, not spellings.
+
+    Handoff files already on disk carry the pre-chunk-X form, so the client
+    entry's `domain` can be `www.livingsystems.ca` while every competitor key
+    beside it is bare. A raw compare made the client's own anchors lose to a
+    richer competitor sample filed under the same site.
+    """
+
+    def _block(self, client_spelling):
+        return {
+            "generated_at": "2026-11-17T00:00:00Z",
+            "domains": {
+                "livingsystems.ca": {
+                    "anchor_texts": {"items": [{"anchor_text": "a"},
+                                               {"anchor_text": "b"},
+                                               {"anchor_text": "c"}]}},
+            },
+            "client": {
+                "domain": client_spelling,
+                "anchor_texts": {"items": [{"anchor_text": "own"}]}},
+        }
+
+    def test_the_client_entry_wins_whatever_form_it_is_written_in(self):
+        for spelling in ("livingsystems.ca", "WWW.LivingSystems.ca",
+                         "m.livingsystems.ca"):
+            anchors = anchor_texts_by_domain(self._block(spelling))
+            self.assertEqual(
+                [i["anchor_text"] for i in anchors["livingsystems.ca"]["items"]],
+                ["own"], spelling)
+
+
+class TestTheHandoffsClientIsCheckedAgainstThisRepos(unittest.TestCase):
+    """Review chunk Y1 — a handoff produced for another client is reported.
+
+    Tool 1 publishes `client_domain`; nothing here read it, so a handoff for
+    one site could be audited against another site's `shared_config`, and
+    every figure compared one client's SERPs with another's configuration.
+    """
+
+    def setUp(self):
+        remember_client_domain({})
+
+    tearDown = setUp
+
+    def test_a_handoff_for_another_client_is_named_as_a_mismatch(self):
+        remember_client_domain({"client_domain": "someoneelse.ca"})
+        self.assertEqual(validated_client_domain(), "someoneelse.ca")
+        note = client_domain_mismatch("livingsystems.ca")
+        self.assertIn("someoneelse.ca", note)
+        self.assertIn("livingsystems.ca", note)
+
+    def test_the_same_client_in_another_form_is_not_a_mismatch(self):
+        remember_client_domain({"client_domain": "WWW.LivingSystems.ca"})
+        self.assertEqual(client_domain_mismatch("livingsystems.ca"), "")
+
+    def test_a_handoff_that_does_not_say_is_not_a_disagreement(self):
+        """The legacy and manual paths carry no client domain. Silence is not
+        a mismatch (P1)."""
+        remember_client_domain({})
+        self.assertEqual(validated_client_domain(), "")
+        self.assertEqual(client_domain_mismatch("livingsystems.ca"), "")
+
+    def test_the_previous_handoffs_client_is_not_inherited(self):
+        remember_client_domain({"client_domain": "someoneelse.ca"})
+        remember_client_domain({})
+        self.assertEqual(client_domain_mismatch("livingsystems.ca"), "")
+
+    def test_the_report_carries_the_mismatch_not_just_the_console(self):
+        """The console line is read once; the report is what is still here
+        weeks later, and without the caveat it reads clean."""
+        from src.reporting import client_mismatch_line
+
+        remember_client_domain({"client_domain": "someoneelse.ca"})
+        note = client_domain_mismatch("livingsystems.ca")
+        line = client_mismatch_line({"client_domain_mismatch": note})
+        self.assertIn("Client mismatch", line)
+        self.assertIn("someoneelse.ca", line)
+        self.assertEqual(client_mismatch_line({}), "")
+        self.assertEqual(client_mismatch_line(None), "")
+
+    def test_the_report_header_renders_that_line(self):
+        """`generate_summary` writes the workbook and needs a populated
+        database, so the call is asserted on the assembly rather than by
+        standing the whole report up."""
+        import inspect
+
+        from src.reporting import ReportGenerator
+
+        source = inspect.getsource(ReportGenerator.generate_summary)
+        self.assertIn("client_mismatch_line(run_coverage)", source)
+
+    def test_the_check_runs_before_the_no_targets_abort(self):
+        """A handoff for the wrong client is a likely reason for there to be
+        no targets at all; behind the abort the run died without naming it."""
+        import inspect
+
+        from src import main
+
+        source = inspect.getsource(main.run_audit)
+        self.assertIn("client_domain_mismatch", source)
+        self.assertLess(source.index("client_domain_mismatch("),
+                        source.index("No competitors identified"))
+        self.assertIn('"client_domain_mismatch": client_mismatch',
+                      inspect.getsource(main))
+
+
+class TestTheHostRuleIsTheProducersRule(unittest.TestCase):
+    """Review chunk Y1 cold review — mirroring the prefix list is not enough.
+
+    `normalise_domain` kept the scheme, the path, the port and the userinfo
+    while the producer stripped all four, so `https://m.x.ca/p` was `x.ca`
+    there and the whole string here. `tests/host_canonical_cases.json` is the
+    one definition both repos are checked against, byte-identical on both
+    sides the way `handoff_schema.json` is.
+    """
+
+    def _table(self):
+        import os
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "host_canonical_cases.json"),
+                  encoding="utf-8") as f:
+            return json.load(f)["cases"], here
+
+    def test_every_case_comes_out_canonical(self):
+        cases, _ = self._table()
+        for raw, expected in cases.items():
+            self.assertEqual(normalise_domain(raw), expected, repr(raw))
+
+    def test_the_table_has_not_drifted_from_the_producers(self):
+        import os
+
+        _, here = self._table()
+        theirs = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(here))), "serp-discover", "tests",
+            "host_canonical_cases.json")
+        if not os.path.exists(theirs):          # the sibling repo is optional
+            self.skipTest("serp-discover not checked out beside this repo")
+        with open(theirs, "rb") as f:
+            a = f.read()
+        with open(os.path.join(here, "host_canonical_cases.json"), "rb") as f:
+            b = f.read()
+        self.assertEqual(a, b,
+                         "the two repos' host case tables have drifted")
+
+    def test_the_handoff_module_has_no_weaker_copy_of_the_rule(self):
+        """`handoff_moz` carried an `ImportError` fallback that stripped
+        `www.` only, so under it the client compare, the mismatch check and
+        every anchor key silently reverted to the pre-Y1 rule (P45)."""
+        import inspect
+
+        from src import handoff_moz
+
+        self.assertIs(handoff_moz.normalise_domain, normalise_domain)
+        self.assertNotIn("removeprefix", inspect.getsource(handoff_moz))
