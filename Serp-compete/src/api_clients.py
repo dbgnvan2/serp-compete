@@ -18,6 +18,30 @@ DEFAULT_ATTEMPTS = 3
 RETRY_STATUS = (429, 500, 502, 503, 504)
 
 
+# Review chunk X: the market every DataForSEO SERP call requests. It was the
+# literal `location_code: 2124` at four call sites and `device: "desktop"` at
+# one, so the GSC pull note beside those figures could only ASSERT that the two
+# sides describe the same population (P4/P6). Editorial — a client in another
+# market changes it — so it lives in `shared_config.json` under
+# `dataforseo_snapshot`, and the fallbacks here mirror that file.
+DEFAULT_SNAPSHOT = {"location_code": 2124, "country": "can", "device": "desktop"}
+
+
+def snapshot_market() -> Dict[str, Any]:
+    """The location/device the DataForSEO calls request, from shared config."""
+    try:
+        from src.database import load_shared_config
+        configured = (load_shared_config() or {}).get("dataforseo_snapshot")
+    except Exception:                       # config unreadable: use the default
+        configured = None
+    market = dict(DEFAULT_SNAPSHOT)
+    if isinstance(configured, dict):
+        for key in DEFAULT_SNAPSHOT:
+            if configured.get(key):
+                market[key] = configured[key]
+    return market
+
+
 def post_with_retries(url: str, label: str, attempts: int = DEFAULT_ATTEMPTS,
                       timeout: int = DEFAULT_TIMEOUT,
                       **kwargs) -> Tuple[Optional[requests.Response], Optional[str]]:
@@ -75,7 +99,7 @@ class DataForSEOClient:
         url = f"{self.base_url}/dataforseo_labs/google/ranked_keywords/live"
         payload = [{
             "target": domain,
-            "location_code": 2124, # Canada
+            "location_code": snapshot_market()["location_code"],
             "language_code": "en",
             "limit": int(limit)
         }]
@@ -134,7 +158,8 @@ class DataForSEOClient:
             return {}
         url = f"{self.base_url}/keywords_data/google_ads/search_volume/live"
         payload = [{"keywords": [str(k) for k in keywords][:1000],
-                    "location_code": 2124, "language_code": "en"}]
+                    "location_code": snapshot_market()["location_code"],
+                    "language_code": "en"}]
         response, error = post_with_retries(
             url, "DataForSEO search_volume", auth=(self.login, self.password),
             json=payload)
@@ -187,7 +212,7 @@ class DataForSEOClient:
         url = f"{self.base_url}/dataforseo_labs/google/relevant_pages/live"
         payload = [{
             "target": domain,
-            "location_code": 2124, # Canada
+            "location_code": snapshot_market()["location_code"],
             "language_code": "en",
             "limit": limit
         }]
@@ -236,9 +261,9 @@ class DataForSEOClient:
         url = f"{self.base_url}/serp/google/organic/live/advanced"
         payload = [{
             "keyword": keyword,
-            "location_code": 2124, # Canada
+            "location_code": snapshot_market()["location_code"],
             "language_code": "en",
-            "device": "desktop",
+            "device": snapshot_market()["device"],
             "os": "windows",
             "depth": 20
         }]

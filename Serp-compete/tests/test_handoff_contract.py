@@ -563,11 +563,209 @@ class TestGscPullIsStated(unittest.TestCase):
         source = inspect.getsource(ReportGenerator.generate_summary)
         self.assertIn("gsc_pull_note(self.config)", source)
 
-    def test_the_window_and_country_are_printed(self):
+    def test_the_window_country_and_device_are_printed(self):
         markdown = self._markdown({"date_range_days": 90, "country": "can"})
         self.assertIn("last 90 days", markdown)
         self.assertIn("country `can`", markdown)
-        self.assertIn("all devices", markdown)
+        # Chunk X: the pull filters the device too, and the default when the
+        # key is absent is the `desktop` the DataForSEO snapshot requests.
+        self.assertIn("desktop only", markdown)
+        self.assertNotIn("all devices", markdown)
+
+    def test_an_unfiltered_device_is_declared_as_not_comparable(self):
+        """Clicks averaged over desktop and mobile are not comparable with a
+        desktop-only SERP snapshot, so the report says so rather than printing
+        the CTR beside the rank in silence."""
+        markdown = self._markdown({"date_range_days": 90, "country": "can",
+                                   "device": "all"})
+        self.assertIn("every device", markdown)
+        self.assertIn("desktop and mobile clicks averaged together", markdown)
+
+    @staticmethod
+    def _request(gsc_settings):
+        """Build a real GSC request body and hand it back.
+
+        A source-text guard proves nothing here: the mutation that matters
+        leaves the filter text in place inside a dead branch. So the request
+        is built by the real method against a service that records the body.
+        """
+        from types import SimpleNamespace
+
+        from src.gsc_performance import GSCManager
+
+        class _Recorder:
+            def __init__(self):
+                self.bodies = []
+
+            def searchanalytics(self):
+                return self
+
+            def query(self, siteUrl=None, body=None):
+                self.bodies.append(body)
+                return SimpleNamespace(execute=lambda: {"rows": []})
+
+        service = _Recorder()
+        manager = GSCManager.__new__(GSCManager)
+        manager.config = {
+            "auth": {"gsc_property_url": "https://livingsystems.ca/"},
+            "gsc_settings": gsc_settings,
+        }
+        manager.service = service
+        manager._cached_sites = None
+        manager.fetch_performance_data()
+        return service.bodies[0]
+
+    def _filters(self, gsc_settings):
+        groups = self._request(gsc_settings).get("dimensionFilterGroups") or []
+        return groups[0]["filters"] if groups else []
+
+    def test_the_request_filters_the_device_the_line_claims(self):
+        """The caveat is only true if the request carries the filter."""
+        from src.gsc_performance import GSC_DEVICES
+
+        self.assertEqual(GSC_DEVICES["desktop"], "DESKTOP")
+        filters = self._filters({"date_range_days": 90, "country": "can"})
+        self.assertIn({"dimension": "device", "operator": "equals",
+                       "expression": "DESKTOP"}, filters)
+
+    def test_the_country_filter_is_not_lost_when_the_device_one_is_added(self):
+        """Both filters live in one group, so the request carries both."""
+        filters = self._filters({"date_range_days": 90, "country": "can"})
+        self.assertIn({"dimension": "country", "operator": "equals",
+                       "expression": "can"}, filters)
+        self.assertEqual(len(filters), 2, filters)
+
+    def test_an_unfiltered_device_sends_no_device_filter(self):
+        """`device: all` is the state the report calls not comparable; the
+        request must actually be unfiltered, or the line is wrong."""
+        filters = self._filters({"date_range_days": 90, "country": "can",
+                                 "device": "all"})
+        self.assertEqual([f["dimension"] for f in filters], ["country"])
+
+    def test_the_line_does_not_assert_the_other_tools_filters(self):
+        """Nothing here reads serp-discover's config, so this report cannot
+        state its country or device as fact (P6). It said "all devices,
+        global", which stopped being true at that tool's chunk D5."""
+        markdown = self._markdown({"date_range_days": 90, "country": "can"})
+        self.assertNotIn("global", markdown)
+        self.assertIn("states in its own report", markdown)
+
+    def test_a_typo_is_not_printed_as_a_deliberate_choice(self):
+        """An unrecognised `gsc_settings.device` pulls every device, exactly as
+        `all` does, but it is a misconfiguration. Printing the two identically
+        hid it behind a sentence that read deliberate."""
+        markdown = self._markdown({"date_range_days": 90, "country": "can",
+                                   "device": "deksotp"})
+        self.assertIn("which GSC does not accept", markdown)
+        self.assertIn("NOT comparable", markdown)
+        self.assertIn("not by choice", markdown)
+        # Not the wording a deliberate `all` gets.
+        self.assertNotIn("averaged together, while", markdown)
+
+    def test_a_non_desktop_device_is_declared_not_comparable(self):
+        """`mobile` printed "mobile only" and then said nothing, which is the
+        one case that is certainly not comparable with the SERP snapshot."""
+        markdown = self._markdown({"date_range_days": 90, "country": "can",
+                                   "device": "mobile"})
+        self.assertIn("mobile only", markdown)
+        self.assertIn("NOT comparable", markdown)
+
+    def test_comparability_is_checked_against_the_snapshot_not_asserted(self):
+        """"The country filter matches the DataForSEO snapshot" was printed for
+        any non-empty country, so `usa` claimed comparability with a Canada
+        snapshot. The claim is now a comparison with the config the DataForSEO
+        calls read."""
+        from src.api_clients import snapshot_market
+
+        self.assertEqual(snapshot_market()["country"], "can")
+        matching = self._markdown({"date_range_days": 90, "country": "can"})
+        self.assertIn("so the two are comparable", matching)
+        other = self._markdown({"date_range_days": 90, "country": "usa"})
+        self.assertIn("NOT the same market", other)
+        self.assertNotIn("so the two are comparable", other)
+
+    def test_the_serp_calls_read_the_same_snapshot_config(self):
+        """The two sides of the comparability claim must be one value, not a
+        config key beside a Python literal (P4/P6)."""
+        import inspect
+
+        from src import api_clients
+
+        source = inspect.getsource(api_clients)
+        # One literal only: the documented fallback beside the config key.
+        self.assertEqual(source.count('"location_code": 2124'), 1, source.count(
+            '"location_code": 2124'))
+        self.assertIn('snapshot_market()["location_code"]', source)
+        self.assertIn('snapshot_market()["device"]', source)
+
+    @staticmethod
+    def _written(render):
+        """Run a report writer against a stubbed `open` and return its text.
+
+        The writers put their files in the project root, so this must not let
+        them run for real. Asserting over the source text instead was vacuous:
+        the strike report also names `_pull_note()` in a `print`, so dropping
+        it from the markdown left a green guard.
+        """
+        from unittest import mock
+
+        chunks = []
+        handle = mock.MagicMock()
+        handle.write.side_effect = chunks.append
+        opener = mock.MagicMock()
+        opener.return_value.__enter__.return_value = handle
+        with mock.patch("builtins.open", opener):
+            render()
+        return "".join(chunks)
+
+    def _manager(self):
+        from src.gsc_performance import GSCManager
+
+        manager = GSCManager.__new__(GSCManager)
+        manager.config = {
+            "auth": {"gsc_property_url": "https://livingsystems.ca/"},
+            "gsc_settings": {"date_range_days": 90, "country": "can"},
+        }
+        return manager
+
+    def test_the_strike_list_states_the_pull(self):
+        """Only the summary carried the note; the strike list prints positions
+        and impressions from the same narrowed pull."""
+        import pandas as pd
+
+        manager = self._manager()
+        text = self._written(
+            lambda: manager.generate_strike_report(pd.DataFrame()))
+        self.assertIn("_Pull: last 90 days", text)
+        self.assertIn("desktop only", text)
+
+    def test_the_gap_report_states_the_pull(self):
+        import pandas as pd
+
+        manager = self._manager()
+        text = self._written(lambda: manager.generate_report(
+            pd.DataFrame(), pd.DataFrame(), []))
+        self.assertIn("_Pull: last 90 days", text)
+
+    def test_an_empty_gsc_report_does_not_read_as_nothing_to_do(self):
+        """Zero rows is also what a failed pull prints, so the empty state
+        names the filters rather than standing alone (P1)."""
+        import inspect
+
+        from src.gsc_performance import GSCManager
+
+        source = inspect.getsource(GSCManager.generate_strike_report)
+        self.assertIn("also what a failed pull", source)
+
+    def test_the_report_path_does_not_import_the_gsc_dependencies(self):
+        """`GSC_DEVICES` at module scope pulled google-auth, googleapiclient,
+        spacy and openai into every report render."""
+        import inspect
+
+        from src import reporting
+
+        head = inspect.getsource(reporting).split("def md_table")[0]
+        self.assertNotIn("from src.gsc_performance import", head)
 
     def test_a_non_default_window_is_printed_as_configured(self):
         """The line is read from the key `GSCManager` reads, so changing the

@@ -176,13 +176,21 @@ All settings in `shared_config.json`:
   "Systems (Tier 2 only)" rather than "Trace" (default 3; editorial, uncalibrated 2026-11-15)
 - `orchestrator.reports_dir` — Where the briefing and workbook are written (set in the GUI's
   Settings tab; honoured by the writer since 2026-11-15)
-- `handoff.supported_versions` — Tool 1 handoff formats accepted (`1.0`, `1.1`). **Enforced**
-  since 2026-11-15: an unlisted `schema_version` is a hard fail, not a silent audit
+- `handoff.supported_versions` — Tool 1 handoff formats accepted (`1.0`, `1.1`, `2.0`,
+  `2.1`; Tool 1 writes 2.0, or 2.1 with the Moz block, and the 1.x files on disk are the
+  same shape with page-relative ranks). **Enforced** since 2026-11-15: an unlisted
+  `schema_version` is a hard fail, not a silent audit. `handoff.absolute_rank_versions`
+  lists the versions whose `rank` counts across the whole SERP
 - `technical.feasibility_threshold` / `high_authority_max_pa` / `risk_signals.volatility_min_shift`
   — the DA head-start, the "too entrenched to audit" PA line, and the Volatility Alert trigger.
   All three were literals in Python until 2026-11-15
-- `gsc_settings.date_range_days` / `country` — the GSC window (now read; it was hard-coded at 90)
-  and the market filter, so your positions come from the same country as the SERP snapshot
+- `gsc_settings.date_range_days` / `country` / `device` — the GSC window (now read; it was hard-coded at 90),
+  the market filter and the device filter, so your positions and your CTRs come from the same
+  country and the same device as the SERP snapshot. `device: all` turns that filter off and the
+  report then states the figures are not comparable (chunk X)
+- `dataforseo_snapshot.location_code` / `country` / `device` — the market every DataForSEO SERP
+  call requests. Promoted out of four `api_clients.py` literals in chunk X so the GSC pull note
+  can CHECK that the two sides describe the same population instead of asserting it
 - `eeat_weights`, `cluster_thresholds`, `scoring_weights` — tuning for the scoring engines
 
 > **Note:** the handoff source directory and reports directory are **not** stored in

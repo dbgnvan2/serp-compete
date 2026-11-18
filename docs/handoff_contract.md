@@ -14,8 +14,12 @@ number in a real report.
 
 **Status:** written 2026-11-16 as the serp-compete half of review chunk X
 (`review_2026-11-04/REVIEW_WORKPLAN_2026-11-04.md` §3 Chunk X). The serp-discover
-half — the producer-side contract test and the `www.`/rank decisions that belong
-there — is **not done**; it needs that repo open.
+half landed 2026-11-17: `serp-discover/tests/test_handoff_contract.py` is the
+producer-side contract test, and owner decision 4 is settled there — **the
+producer canonicalises every host it publishes** (`targets[].domain`,
+`client_domain` and every `moz.domains` key), and this tool keeps normalising
+what it reads, because handoff files already on disk carry the older `www.`
+form. Both sides normalise; neither depends on the other having done it.
 
 **Held to by:** `Serp-compete/tests/test_handoff_contract.py` (semantics) and
 `tests/test_handoff_ingestion.py` (schema). Both call the real consumer. A
@@ -30,7 +34,7 @@ contract test that re-implements the contract tests nothing, which is how
 
 | | |
 |---|---|
-| Producer writes | `schema_version`: `"1.0"` or `"1.1"` (1.1 adds the optional `moz` block) |
+| Producer writes | `schema_version`: `"2.0"`, or `"2.1"` with the optional `moz` block (since serp-discover's chunk D1, 2026-11-16). `"1.0"` / `"1.1"` are the same shape with page-relative ranks and still validate, because files on disk carry them |
 | Consumer accepts | exactly the versions in `shared_config.json` → `handoff.supported_versions` |
 | On an unlisted version | **hard fail**, before any API call — `main._unsupported_handoff_version` |
 | On an absent version | hard fail |
@@ -68,14 +72,21 @@ DataForSEO reports the same url **and** keyword), and no PAA questions — see �
 
 ### 1.3 Domain canonical form
 
-> **Owner decision 4 is OPEN:** whether Tool 1 strips `www.` at write time or
-> Tool 2 normalises at ingest. This section describes what Tool 2 does, which the
-> workplan says is right either way; it does not settle the decision.
+> **Owner decision 4 is SETTLED (2026-11-17, serp-discover's half of chunk X):**
+> the producer strips `www.` at write time, in every host it publishes, and Tool 2
+> keeps normalising at ingest. Both sides normalise. Tool 2's rule below is
+> unchanged — it is what lets a handoff file written before that date, and any
+> future breach of the producer's half, still group correctly.
 
-Tool 1 writes `targets[].domain` and the `moz.domains` keys as `netloc.lower()`
-with `www.` **kept**, while its own citation and brand paths strip it. So one
-handoff can carry both spellings of one site, and the producer is internally
-inconsistent about which is canonical.
+Tool 1 now writes `targets[].domain`, `client_domain` and every `moz.domains` key
+in the canonical form (`domain_utils.normalize_domain`), held to by
+`serp-discover/tests/test_handoff_contract.py`. Until then `targets[].domain` was
+canonical while the `moz.domains` keys beside it were `netloc.lower()` with `www.`
+kept, so one handoff carried both spellings of one site; in the same function the
+producer's client test was a substring test, so a bare `livingsystems.ca` in its
+config dropped `notlivingsystems.ca` as "the client" and its omit list only
+matched a host written in the same form. Handoff files already on disk carry the
+old spellings.
 
 **Tool 2's rule: the canonical form is lower-cased and `www.`-stripped, and it is
 applied at the grouping boundary** — `audit_universe.group_targets_by_domain`.
@@ -281,18 +292,26 @@ though both described the same traffic.
 
 | | serp-discover | serp-compete |
 |---|---|---|
-| Window | 90 days | `gsc_settings.date_range_days` (90) |
-| Country | global | `gsc_settings.country` (`can`) |
-| Devices | all | all |
-| Paging | — | `startRow`, `GSC_PAGE_SIZE` × `GSC_MAX_PAGES`, with a partial-data warning |
+| Window | `gsc.lookback_days` (90) | `gsc_settings.date_range_days` (90) |
+| Country | `gsc.country` (`ca` → `CAN`) | `gsc_settings.country` (`can`) |
+| Device | `gsc.device` (`desktop`) | `gsc_settings.device` (`desktop`) |
+| Paging | `GSC_PAGE_SIZE` × `GSC_MAX_PAGES` | `startRow`, `GSC_PAGE_SIZE` × `GSC_MAX_PAGES`, with a partial-data warning |
 
-The country filter exists so the client's own positions come from the same market
-as the Canada-scoped DataForSEO snapshot (`location_code` 2124). Compete's report
-now states the window, the country and the device scope on the GSC section
-(`reporting.gsc_pull_note`), read from the same config keys the fetcher reads so
-the line cannot drift from the request actually made. **Agreeing one window
-across both tools, and stating it in serp-discover's report too, is still open**
-— it needs the other repo.
+The serp-discover column names that tool's config keys, not values this repo has
+read: nothing here can see them, so this table is the key to look in, and that
+tool's own report states the pull it made (review chunk X; its filters were added
+by its review chunk D5).
+
+Both filters exist so the client's own clicks come from the same population as
+the DataForSEO snapshot this repo requests — `dataforseo_snapshot` in
+`shared_config.json` (`location_code` 2124, `device: desktop`), promoted out of
+`api_clients.py` literals in chunk X. Every GSC report here —the briefing's GSC
+section, `gsc_strike_list.md` and `gsc_strategic_gap.md` — prints the window,
+country and device the pull used (`reporting.gsc_pull_note`, read from the same
+config keys the fetcher reads) and **compares** each against that block rather
+than asserting they agree: a country or device that does not match is printed as
+not comparable, and a value GSC does not accept is named as a misconfiguration
+rather than printed as a deliberate `all`.
 
 ---
 

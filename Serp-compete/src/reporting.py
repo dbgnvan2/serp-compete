@@ -64,10 +64,18 @@ def gsc_pull_note(config) -> str:
              (GSC bullet); docs/handoff_contract.md §GSC
     Tests:   Serp-compete/tests/test_handoff_contract.py::TestGscPullIsStated
 
-    serp-discover pulls 90 days, all devices, global; this tool pulls the
-    `gsc_settings.date_range_days` window with a `gsc_settings.country` filter
-    so the client's own positions come from the same market as the Canada-scoped
-    DataForSEO snapshot. Neither report said which pull it was.
+    This tool pulls the `gsc_settings.date_range_days` window with the
+    `gsc_settings.country` and `gsc_settings.device` filters, so the client's
+    own clicks come from the same market and the same device as the
+    Canada-scoped, desktop DataForSEO snapshot. Neither report said which pull
+    it was.
+
+    It does not state serp-discover's filters. This line said serp-discover
+    pulled "90 days, all devices, global", which stopped being true when that
+    tool's review chunk D5 gave it `gsc.country` and `gsc.device`: nothing here
+    reads that config, so asserting it was a claim this tool cannot check (P6).
+    Each report states its own pull and says the two are comparable only where
+    both state the same one.
 
     The values are read from the keys `GSCManager.fetch_performance_data` reads,
     not restated here, so this line cannot drift from the request that was
@@ -75,23 +83,79 @@ def gsc_pull_note(config) -> str:
     `anchor_caveat_lines` is one: the decision is then testable without
     standing up a whole report.
     """
+    # `GSC_DEVICES` is imported here, not at module scope: `gsc_performance`
+    # pulls in google-auth, googleapiclient, spacy and openai transitively, and
+    # a report should not fail to render because an optional GSC dependency is
+    # missing (cold review of chunk X). It is still read from the module that
+    # makes the request, so the caveat cannot name a filter the pull did not use.
+    from src.api_clients import snapshot_market
+    from src.gsc_performance import GSC_DEVICES
+
     settings = ((config or {}).get("gsc_settings", {}) or {})
     try:
         days = int(settings.get("date_range_days", 90))
     except (TypeError, ValueError):
         days = 90
     country = str(settings.get("country", "can") or "").strip().lower()
+    raw_device = str(settings.get("device", "desktop") or "").strip().lower()
+    off = raw_device in ("all", "none", "any")
+    # Three states, not two. An unrecognised value pulls every device exactly
+    # as `all` does, but it is a typo, not a decision, and a report that prints
+    # the two the same way hides the misconfiguration behind a sentence that
+    # reads deliberate (P1, cold review of chunk X).
+    device = "" if off else raw_device if raw_device in GSC_DEVICES else ""
+    bad_device = bool(raw_device) and not off and raw_device not in GSC_DEVICES
+
+    # What the SERP side of these figures actually asked for, read from the
+    # config the DataForSEO calls read — not asserted here. Claiming "the two
+    # match" for any non-empty value is the same P6 breach this note fixed.
+    snapshot = snapshot_market()
+    snap_country = str(snapshot.get("country") or "").strip().lower()
+    snap_device = str(snapshot.get("device") or "").strip().lower()
+
+    if not country:
+        country_line = (f"No country filter, so this is global traffic and is "
+                        f"NOT comparable with the DataForSEO SERP snapshot, "
+                        f"which requests `{snap_country or 'unset'}`. ")
+    elif country == snap_country:
+        country_line = (f"The country filter matches the DataForSEO SERP "
+                        f"snapshot, which also requests `{snap_country}`, so "
+                        f"the two are comparable. ")
+    else:
+        country_line = (f"The DataForSEO SERP snapshot requests "
+                        f"`{snap_country or 'unset'}`, so these clicks and "
+                        f"those ranks are NOT the same market and are NOT "
+                        f"comparable. ")
+
+    if bad_device:
+        device_line = (f"`gsc_settings.device` is `{raw_device}`, which GSC "
+                       f"does not accept, so NO device filter was applied — "
+                       f"these are all-device clicks by misconfiguration, not "
+                       f"by choice, and are NOT comparable with the "
+                       f"`{snap_device or 'unset'}` SERP snapshot. ")
+    elif not device:
+        device_line = (f"No device filter, so these are desktop and mobile "
+                       f"clicks averaged together, while the SERP snapshot is "
+                       f"`{snap_device or 'unset'}` only. ")
+    elif device == snap_device:
+        device_line = (f"The device filter matches the `{snap_device}` SERP "
+                       f"snapshot. ")
+    else:
+        device_line = (f"The SERP snapshot requests `{snap_device or 'unset'}`, "
+                       f"so a {device}-only CTR is NOT comparable with the "
+                       f"ranks beside it. ")
+
     return (
         f"_Pull: last {days} days, "
         + (f"country `{country}`" if country else "no country filter")
-        + ", all devices, query × page. "
-        + ("The country filter matches the DataForSEO SERP snapshot, which is a "
-           "Canada snapshot, so the two are comparable. " if country else
-           "No country filter, so this is global traffic and is NOT comparable "
-           "with the Canada-scoped DataForSEO SERP snapshot. ")
-        + "serp-discover pulls GSC over its own window; figures from the two "
-          "reports are comparable only where both state the same window and "
-          "filter._")
+        + ", " + (f"{device} only" if device else "every device")
+        + ", query × page. "
+        + country_line
+        + device_line
+        + "serp-discover pulls GSC on its own window, country and device, "
+          "which it states in its own report; figures from the two reports are "
+          "comparable only where both state the same pull._"
+    )
 
 
 class ReportGenerator:

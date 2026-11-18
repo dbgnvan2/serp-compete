@@ -247,6 +247,16 @@ missing — and `serp_overlap` read every missing query as "you are absent"), it
 the DataForSEO SERP snapshot, and the window comes from `gsc_settings.date_range_days`
 instead of being hard-coded at 90 (C-C-17, C-M-11, C-C-14).
 
+Review chunk X added the matching **device filter** (`gsc_settings.device`, default
+`desktop`): the DataForSEO snapshot requests `device: desktop`, so a CTR averaged over
+desktop and mobile is not comparable with the ranks printed beside it. Every GSC report —
+the briefing's GSC section, `gsc_strike_list.md` and `gsc_strategic_gap.md` — now prints
+the window, country and device the pull actually used, says whether each one matches the
+`dataforseo_snapshot` block the SERP calls read, and states the case plainly when it does
+not (an unrecognised device value, for instance, pulls every device and is named as a
+misconfiguration rather than printed as a choice). No report states serp-discover's
+filters: that tool states its own.
+
 > ⚠️ **Important — GSC credentials are mandatory for the command-line audit.**
 > The `step_dag` block that used to mark this step `optional` was removed on
 > 2026-11-15 (nothing read it). The CLI audit (`src/main.py`)
@@ -467,7 +477,8 @@ trigger, previously a literal `3` in the query).
 ### **handoff**
 ```json
 "handoff": {
-  "supported_versions": ["1.0", "1.1"]
+  "supported_versions": ["1.0", "1.1", "2.0", "2.1"],
+  "absolute_rank_versions": ["2.0", "2.1"]
 }
 ```
 Controls compatibility with Tool 1 (Serp-Discover) data formats, and **is enforced**

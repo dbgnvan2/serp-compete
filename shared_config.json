@@ -14,12 +14,19 @@
     ],
     "_gsc_client_secrets_comment": "Where the OAuth client secret file is. EMPTY is the right value in a committed file: _authenticate then finds `gsc_auth.json` or any `client_secret_*.json` in the repo root by itself. This held an absolute path on one developer's machine, which (a) published that developer's username and the OAuth client ID in a file that is committed and pushed, and (b) broke GSC auth everywhere else — a configured-but-missing path is truthy, so the discovery fallback was skipped and auth failed with \"GSC Client Secrets file not found.\" even with a usable secret in the root. Set it only to point at a file OUTSIDE the repo, and prefer a path relative to the repo root. The secret file itself is gitignored; this key never holds a secret VALUE."
   },
+  "dataforseo_snapshot": {
+    "_comment": "Review chunk X: the market the DataForSEO SERP calls request, promoted out of api_clients.py literals so the GSC pull note can CHECK that the two sides describe the same population instead of asserting it. `country` is the GSC alpha-3 form of `location_code`; change the two together.",
+    "location_code": 2124,
+    "country": "can",
+    "device": "desktop"
+  },
   "gsc_settings": {
     "date_range_days": 90,
     "ctr_threshold": 0.01,
     "position_target_max": 20,
-    "_comment": "C-C-14: `date_range_days` is read by gsc_performance.fetch_performance_data since 2026-11-15 (it was hard-coded at 90), and `country` is the GSC country filter added by C-M-11 so the client's positions come from the same market as the DataForSEO snapshot (location_code 2124 = Canada). `position_target_max` is read by get_striking_distance_keywords.",
-    "country": "can"
+    "_comment": "C-C-14: `date_range_days` is read by gsc_performance.fetch_performance_data since 2026-11-15 (it was hard-coded at 90), and `country` is the GSC country filter added by C-M-11 so the client's positions come from the same market as the DataForSEO snapshot (location_code 2124 = Canada). `position_target_max` is read by get_striking_distance_keywords. `device` is the chunk X device filter: the DataForSEO snapshot requests `device: desktop`, so a GSC CTR averaged over desktop and mobile is not comparable with it; 'all' turns the filter off deliberately.",
+    "country": "can",
+    "device": "desktop"
   },
   "technical": {
     "database_path": "living_systems_intel.db",

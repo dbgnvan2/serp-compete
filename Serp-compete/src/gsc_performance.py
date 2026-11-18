@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import datetime
 from typing import Optional
 import pandas as pd
@@ -53,6 +54,11 @@ def find_client_secrets(config: dict) -> Optional[str]:
         if candidate and os.path.exists(candidate):
             return candidate
     return None
+
+
+#: GSC's device dimension takes these three values; `gsc_settings.device`
+#: holds the lower-case name a reader would write. Chunk X.
+GSC_DEVICES = {"desktop": "DESKTOP", "mobile": "MOBILE", "tablet": "TABLET"}
 
 
 class GSCManager:
@@ -122,6 +128,26 @@ class GSCManager:
         country = str((self.config.get("gsc_settings", {}) or {}).get(
             "country", "can") or "").strip().lower()
 
+        # Chunk X: the window and the country were filtered and the device was
+        # not, so this pull averaged desktop and mobile click-through rates
+        # while the DataForSEO snapshot it is compared against requests
+        # `device: desktop` (api_clients) and serp-discover's own GSC pull
+        # restricts to one device too. A CTR over every device is not
+        # comparable with a desktop rank. `all` turns the filter off
+        # deliberately; an unknown value is reported and not applied, because
+        # silently pulling every device is the thing this prevents.
+        raw_device = (self.config.get("gsc_settings", {}) or {}).get(
+            "device", "desktop")
+        device = ""
+        if raw_device and str(raw_device).strip().lower() not in (
+                "all", "none", "any"):
+            device = GSC_DEVICES.get(str(raw_device).strip().lower(), "")
+            if not device:
+                logging.warning(
+                    "GSC device filter not applied: %r is not one of "
+                    "desktop/mobile/tablet. Set gsc_settings.device, or "
+                    "'all' to pull every device on purpose.", raw_device)
+
         rows = []
         start_row = 0
         for _page in range(self.GSC_MAX_PAGES):
@@ -132,11 +158,15 @@ class GSCManager:
                 'rowLimit': self.GSC_PAGE_SIZE,
                 'startRow': start_row,
             }
+            filters = []
             if country:
-                request['dimensionFilterGroups'] = [{
-                    'filters': [{'dimension': 'country', 'operator': 'equals',
-                                 'expression': country}]
-                }]
+                filters.append({'dimension': 'country', 'operator': 'equals',
+                                'expression': country})
+            if device:
+                filters.append({'dimension': 'device', 'operator': 'equals',
+                                'expression': device})
+            if filters:
+                request['dimensionFilterGroups'] = [{'filters': filters}]
             try:
                 response = self.service.searchanalytics().query(
                     siteUrl=site_url, body=request).execute()
@@ -300,6 +330,20 @@ class GSCManager:
             
         return f"A Systems View of {query.title()}"
 
+    def _pull_note(self) -> str:
+        """The population every figure in these reports was measured over.
+
+        Only `generate_summary` carried it. The strike list and the gap report
+        print positions, impressions and CTR from the same device-narrowed and
+        country-narrowed pull, and their empty state ("No data", "No
+        significant gaps found") is what a FAILED pull, a correctly filtered
+        pull over a site with no desktop traffic, and a genuinely empty
+        property all print (P1/P9, cold review of chunk X).
+        """
+        from src.reporting import gsc_pull_note
+
+        return gsc_pull_note(self.config)
+
     def generate_strike_report(self, striking_df):
         """
         Spec 6: Generate gsc_strike_list.md
@@ -307,6 +351,7 @@ class GSCManager:
         report = [
             "# GSC Intelligence: The Reality Check (Strike List)",
             f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d')}",
+            self._pull_note(),
             "\n## 🎯 Striking Distance Opportunities (Positions 11-25)",
             "These keywords are almost winning. Moving them to Page 1 could cause a massive traffic spike.",
             "\n| Query | Current Position | Impressions | Associated URL | Clinical Pivot | Systemic Title recommendation |",
@@ -315,7 +360,13 @@ class GSCManager:
 
         if striking_df.empty:
             report.append("| No data | - | - | - | - | - |")
-            print("No striking distance keywords found. Generating empty report.")
+            report.append(
+                "\n**No rows.** Zero queries came back in positions 11-25 under "
+                "the pull stated above — which is also what a failed pull and a "
+                "site with no traffic on the filtered device print. Check the "
+                "filters before reading this as nothing to do.")
+            print("No striking distance keywords found under the pull: "
+                  + self._pull_note())
         else:
             # Limit to top 20 for the report
             for _, row in striking_df.head(20).iterrows():
@@ -452,6 +503,7 @@ class GSCManager:
         report = [
             "# GSC Strategic Gap Report: The Reality Check",
             f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d')}",
+            self._pull_note(),
             "\n## 1. High Impression / Low CTR Gaps (Tier 1 & 2)",
             "These keywords are being seen but not clicked. We need to reframe the Meta Titles with systemic depth."
         ]
@@ -459,7 +511,10 @@ class GSCManager:
         if not target_gaps.empty:
             report.append(target_gaps[['query', 'impressions', 'ctr', 'tier']].to_markdown(index=False))
         else:
-            report.append("No significant gaps found.")
+            report.append(
+                "No significant gaps found under the pull stated above. That "
+                "is not the same as none existing: a failed pull and a site "
+                "with no traffic on the filtered device print this too.")
 
         report.append("\n## 2. Low-Hanging Fruit (Page 2 Targets)")
         report.append("These pages are ranking in positions 11-20. A small systemic boost could push them to Page 1.")
