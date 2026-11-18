@@ -20,8 +20,10 @@ Tests: Serp-compete/tests/test_y10_tool2_closes_its_handles.py,
        Serp-compete/tests/test_y11_a_rollback_is_not_the_diagnosis.py
 """
 
+import atexit
 import logging
 import sqlite3
+import sys
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,111 @@ def lock_timeout_from_config(config) -> float:
     return seconds
 
 
+#: The words for the tally below. Tool 1 keeps the same sentence in
+#: `serp_vocab.yml` under `db_cleanup`, because that repo has a vocabulary
+#: file; this one has no editorial text file at all, so the wording is here
+#: and the two have to be changed together.
+CLEANUP_WARNING = (
+    "{failures} database cleanup step(s) failed during this run ({detail}). "
+    "{consequence} A cleanup that keeps failing usually means the database "
+    "file or its directory has become unwritable, and each failed close holds "
+    "a file handle open until the process exits")
+#: Which consequence the sentence may claim. A failed `close` comes after the
+#: commit, so the writes are durable; a failed `roll back` means a block
+#: raised and its transaction was abandoned, which is not "the figures stand".
+#: The first version said the figures stood in both cases (the cold review of
+#: this chunk, P6 — a claim has to be checked against what happened).
+CLEANUP_CONSEQUENCE_COMMITTED = (
+    "The run's own writes were committed and its figures stand.")
+CLEANUP_CONSEQUENCE_ROLLED_BACK = (
+    "At least one of them was a failed rollback, which means a block raised "
+    "and abandoned its transaction: what that step was writing is incomplete, "
+    "and the earlier steps' committed figures stand.")
+CLEANUP_DETAIL_ITEM = "{count} x {what}"
+#: The step name `_safely` records for a rollback, so the consequence can be
+#: chosen by what actually failed rather than by a string literal repeated in
+#: two places (P32).
+ROLL_BACK = "roll back"
+CLOSE = "close"
+
+#: How many times each cleanup step failed in this process, keyed by
+#: `(what, db_path)`. One log line per occurrence is not the same fact as
+#: "this happened 437 times", and only the second is actionable: the audit
+#: opens and closes a connection inside its per-domain loop, so a `close()`
+#: that fails once has usually failed every time, each one holding a file
+#: handle open (P2, review chunk Y13).
+_CLEANUP_FAILURES: dict = {}
+_REPORTED = False
+
+
+def cleanup_failures() -> dict:
+    """A copy of this process's tally, keyed by `(what, db_path)`."""
+    return dict(_CLEANUP_FAILURES)
+
+
+def cleanup_failure_count() -> int:
+    """How many cleanup steps failed in this process, in total."""
+    return sum(_CLEANUP_FAILURES.values())
+
+
+def reset_cleanup_failures() -> None:
+    """Start a fresh tally, and let it be reported again.
+
+    Clearing the tally without clearing "already reported" would leave a
+    second run in the same process unable to report at exit — which the test
+    suite, running both in one process, is exactly the case for.
+    """
+    global _REPORTED
+    _CLEANUP_FAILURES.clear()
+    _REPORTED = False
+
+
+def cleanup_failure_warning():
+    """The reader-facing sentence for this process's tally, or None."""
+    if not _CLEANUP_FAILURES:
+        return None
+    # Steps, not paths: "3 x close" is the actionable fact.
+    by_step: dict = {}
+    for (what, _db_path), count in _CLEANUP_FAILURES.items():
+        by_step[what] = by_step.get(what, 0) + count
+    detail = ", ".join(CLEANUP_DETAIL_ITEM.format(count=count, what=what)
+                       for what, count in sorted(by_step.items()))
+    consequence = (CLEANUP_CONSEQUENCE_ROLLED_BACK if ROLL_BACK in by_step
+                   else CLEANUP_CONSEQUENCE_COMMITTED)
+    return CLEANUP_WARNING.format(failures=cleanup_failure_count(),
+                                  detail=detail, consequence=consequence)
+
+
+def report_cleanup_failures(printer=None) -> str | None:
+    """Print the tally once, wherever a run ends, and return what was printed.
+
+    Every entry point in this repo opens the database through `connection`, so
+    every one of them can accumulate a tally; only `run_audit` reports it in
+    its artefact. This is the floor for the rest: called from `run_audit`'s
+    `finally` and registered at exit, so an abort, an early return, or a
+    script with no briefing at all still says it happened rather than leaving
+    it in the log (P5/P2, the cold review of this chunk). Marked reported, so
+    the exit hook does not repeat what a caller already printed.
+    """
+    global _REPORTED
+    warning = cleanup_failure_warning()
+    _REPORTED = True
+    if not warning:
+        return None
+    (printer or (lambda line: print(line, file=sys.stderr)))(
+        f"\u26a0\ufe0f {warning}.")
+    return warning
+
+
+def _report_cleanup_failures_at_exit() -> None:
+    """Say it on the way out if nothing else did."""
+    if _CLEANUP_FAILURES and not _REPORTED:
+        report_cleanup_failures()
+
+
+atexit.register(_report_cleanup_failures_at_exit)
+
+
 def _safely(cleanup, what: str, db_path) -> None:
     """Run one cleanup step so it cannot replace the caller's exception.
 
@@ -79,10 +186,16 @@ def _safely(cleanup, what: str, db_path) -> None:
     try:
         cleanup()
     except Exception:
+        try:
+            key = (what, str(db_path))
+            _CLEANUP_FAILURES[key] = _CLEANUP_FAILURES.get(key, 0) + 1
+        except Exception:
+            key = None
         logger.exception(
-            "Could not %s the connection to %s. The original outcome of the "
-            "block stands; this is a failure of the cleanup, not of the work.",
-            what, db_path)
+            "Could not %s the connection to %s (%s time(s) in this run). The "
+            "original outcome of the block stands; this is a failure of the "
+            "cleanup, not of the work.",
+            what, db_path, _CLEANUP_FAILURES.get(key, "an uncounted"))
 
 
 @contextmanager
@@ -100,7 +213,7 @@ def connection(db_path, **kwargs):
         yield conn
         conn.commit()
     except BaseException:
-        _safely(conn.rollback, "roll back", db_path)
+        _safely(conn.rollback, ROLL_BACK, db_path)
         raise
     finally:
-        _safely(conn.close, "close", db_path)
+        _safely(conn.close, CLOSE, db_path)

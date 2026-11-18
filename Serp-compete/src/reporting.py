@@ -304,6 +304,9 @@ class ReportGenerator:
             if skipped:
                 report.append("**Skipped domains:** "
                               + "; ".join(f"{d} — {r}" for d, r in skipped) + ".")
+            db_cleanup = run_coverage.get("db_cleanup")
+            if db_cleanup:
+                report.append(f"> ⚠️ **Database cleanup:** {db_cleanup}.")
             unmeasured = run_coverage.get("unmeasured_pa_domains") or []
             if unmeasured:
                 report.append(

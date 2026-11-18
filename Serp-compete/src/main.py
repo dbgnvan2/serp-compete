@@ -24,6 +24,7 @@ from src.reporting import ReportGenerator
 from src.reframe_engine import ReframeEngine
 from src.velocity_module import VelocityTracker
 from src.gsc_performance import GSCManager
+from src import db_connect
 
 # Paths relative to the project root
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -393,6 +394,25 @@ def parse_args(argv: List[str]) -> Dict[str, Any]:
 
 
 def run_audit(handoff_path: str = None):
+    """Run the audit, and say on the way out if a cleanup step failed.
+
+    The briefing's coverage block carries the tally as it stood when the
+    report was generated; the report itself then reads the database several
+    more times, and `pre_flight_check` opens it before this function can
+    return early. So the tally is also read in a `finally`, where an abort and
+    the report's own reads are both still covered (P2, the cold review of
+    chunk Y13).
+    """
+    # A tally left by an earlier run in this process would be reported as
+    # this run's (P6, review chunk Y13).
+    db_connect.reset_cleanup_failures()
+    try:
+        return _run_audit(handoff_path)
+    finally:
+        db_connect.report_cleanup_failures()
+
+
+def _run_audit(handoff_path: str = None):
     gsc = pre_flight_check()
     if not gsc:
         print("🛑 Pre-flight check failed. Aborting run.")
@@ -939,6 +959,15 @@ def run_audit(handoff_path: str = None):
     # a URL that left the competitive set kept its last recorded drop in every later
     # briefing, forever.
     market_alerts = velocity.get_market_alerts(run_id=run_id)
+
+    # P2 — a database cleanup step that failed is a fact this run has to
+    # report. `db_connect._safely` logs each one so a failed close cannot
+    # replace the exception that caused it (chunk Y11), but a log line is not
+    # where the reader of the briefing looks, and the audit opens and closes a
+    # connection per domain: one failed close is usually many. Read after the
+    # audit's own work, not where run_coverage is built; `run_audit`'s
+    # `finally` covers what the report generator then does.
+    run_coverage["db_cleanup"] = db_connect.cleanup_failure_warning()
 
     reporter.generate_summary(
         client_domain, 

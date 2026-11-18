@@ -886,7 +886,10 @@ class TestTheHandoffsClientIsCheckedAgainstThisRepos(unittest.TestCase):
 
         from src import main
 
-        source = inspect.getsource(main.run_audit)
+        # The audit's body moved into `_run_audit` when review chunk
+        # Y13 wrapped `run_audit` to report a failed database cleanup
+        # on every exit path; the ordering this checks is in the body.
+        source = inspect.getsource(main._run_audit)
         self.assertIn("client_domain_mismatch", source)
         self.assertLess(source.index("client_domain_mismatch("),
                         source.index("No competitors identified"))

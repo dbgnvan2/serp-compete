@@ -248,6 +248,7 @@ See section above.
   - `get_volatility_alerts()` → list — Trending indicators for reporting
   - `get_feasibility_drift()` → list — Revision 4: PA drift detection (Fragile Magnets)
   - `connection()` — a managed connection: committed on a clean exit, rolled back on an exception, and **closed** on every path (review chunk Y10). It was `_get_connection()`, which returned a bare `sqlite3.connect`: used as `with ... as conn:` that commits and never closes, and twice taken bare and never closed at all. `db_connect.connection` holds the pairing, because `closing(sqlite3.connect(...))` is the opposite trap — it closes the handle and discards the commit
+  - `cleanup_failure_warning()` — a failing `rollback()` or `close()` is logged and does not replace the caller's exception (review chunk Y11), and is now also **counted** per process, keyed by step and database path. `run_audit` clears the tally where the run begins and reads it into `run_coverage["db_cleanup"]` just before the briefing is generated, so the coverage block carries it: the audit opens and closes a connection inside its per-domain loop, so a `close()` that fails once has usually failed every time, each one holding a file handle open until the process exits (review chunk Y13). The run's figures stand — the writes were committed before the cleanup failed — so the run's exit code does not change
 
 **Database Tables & Schema:**
 1. **runs** (run_id, client_domain, created_at) — Run metadata
