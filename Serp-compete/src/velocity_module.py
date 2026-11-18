@@ -32,7 +32,7 @@ import os
 import json
 from typing import List, Dict, Any, Optional, Tuple
 
-from src import db_connect
+from src import database, db_connect
 
 # Editorial default, uncalibrated, 2026-11-15 (shared_config
 # `risk_signals.pa_drop_min`): the smallest Moz Page-Authority drop between two
@@ -43,10 +43,11 @@ DEFAULT_PA_DROP_MIN = 3
 class VelocityTracker:
     def __init__(self, shared_config_path: str):
         self.config = self._load_config(shared_config_path)
-        # DB path is relative to the root if not absolute
-        db_name = self.config.get("technical", {}).get("database_path", "living_systems_intel.db")
-        # Ensure we are pointing to the root
-        self.db_path = os.path.abspath(os.path.join(os.path.dirname(shared_config_path), db_name))
+        # One resolver, shared with `DatabaseManager`: this was a second copy
+        # of its body with a different default name, so a config missing the
+        # key sent the two at different databases (the cold review of chunk
+        # Y12).
+        self.db_path = database.resolve_db_path(self.config, shared_config_path)
         # The same configured wait as `DatabaseManager`, read from the config
         # this instance already loaded (review chunk Y11).
         self.lock_timeout = db_connect.lock_timeout_from_config(self.config)

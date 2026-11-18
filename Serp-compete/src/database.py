@@ -114,13 +114,70 @@ def magnet_sql(vacuum_only: bool = False, columns: str = _MAGNET_COLUMNS,
     return sql
 
 
+DEFAULT_DATABASE_NAME = "competitor_history.db"
+
+
+def resolve_db_path(config, config_path=None):
+    """The configured database, as an absolute path.
+
+    One resolver for `technical.database_path`, called by `load_db_path` and
+    by `VelocityTracker`. Those were two hand-rolled copies with two
+    *different* default names, so a config with the key deleted sent the
+    competitor rows to `competitor_history.db` and the velocity reads to
+    `living_systems_intel.db` — one run writing an empty file while the other
+    read the live one, with no warning on either side (P5/P32, the cold review
+    of chunk Y12).
+
+    A relative name resolves against the directory holding the config, never
+    the current working directory. An absolute name is used as given, `~` is
+    expanded, and a blank, non-string or malformed value is reported and the
+    default used — the section too, not only the leaf: `"technical": null` was
+    an `AttributeError` from a `.get` on `None` while a blank leaf got the
+    designed warning. Tool 1 resolves `database.path` the same way
+    (`db_connect.resolve_database_path`).
+    """
+    if config_path is None:
+        config_path = SHARED_CONFIG_PATH
+    section = config.get("technical") if isinstance(config, dict) else None
+    if not isinstance(section, dict):
+        if section is not None:
+            logging.warning(
+                "%s `technical` is %r, which is not a block of settings; "
+                "using the default database %s.",
+                os.path.basename(config_path), section, DEFAULT_DATABASE_NAME)
+        section = {}
+    db_name = section.get("database_path", DEFAULT_DATABASE_NAME)
+    if not isinstance(db_name, str) or not db_name.strip():
+        logging.warning(
+            "%s technical.database_path is %r, which is not a path; using "
+            "the default %s.", os.path.basename(config_path), db_name,
+            DEFAULT_DATABASE_NAME)
+        db_name = DEFAULT_DATABASE_NAME
+    db_name = os.path.expanduser(db_name.strip())
+    if os.path.isabs(db_name):
+        return db_name
+    return os.path.abspath(os.path.join(os.path.dirname(config_path), db_name))
+
+
 def load_db_path():
+    """The configured database for this repo's own `shared_config.json`.
+
+    With no config present the name was returned bare — relative to the
+    current working directory — so a reader run from another directory opened
+    a new empty database beside itself rather than reporting that the history
+    was missing (review chunk Y12). It is reported now: a run with no config
+    is a run on defaults, and the database it lands on is the thing worth
+    knowing.
+    """
     if os.path.exists(SHARED_CONFIG_PATH):
-        config = load_shared_config()
-        db_name = config.get("technical", {}).get("database_path", "competitor_history.db")
-        # Return absolute path relative to shared_config.json
-        return os.path.abspath(os.path.join(os.path.dirname(SHARED_CONFIG_PATH), db_name))
-    return "competitor_history.db"
+        return resolve_db_path(load_shared_config())
+    resolved = resolve_db_path({})
+    logging.warning(
+        "No %s found, so technical.database_path is unset: using %s. If the "
+        "history looks empty, this is the file it was read from.",
+        SHARED_CONFIG_PATH, resolved)
+    return resolved
+
 
 class DatabaseManager:
     def __init__(self, db_path: str = None, config: Dict[str, Any] = None):
