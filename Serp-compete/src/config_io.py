@@ -11,11 +11,12 @@ two functions it held each had a defect:
 
 * **The write was not atomic.** `open(path, 'w')` truncates immediately, so a
   process killed mid-write, a full disk, or two GUI interactions racing leaves
-  `shared_config.json` truncated. That is not a loud failure:
-  `scoring_logic.load_shared_config` swallows every exception and returns `{}`,
-  so the next audit would run with **every threshold at its Python default and
-  an EMPTY clinical vocabulary** — scoring every page 0 and reporting nothing
-  wrong. The file is written to a temporary file in the same directory and
+  `shared_config.json` truncated. That used not to be a loud failure:
+  `scoring_logic.load_shared_config` swallowed every exception and returned
+  `{}`, so the next audit would run with **every threshold at its Python
+  default and an EMPTY clinical vocabulary** — scoring every page 0 and
+  reporting nothing wrong. That reader is gone: `load_config` below is the one
+  reader every module uses, and it raises (review chunk Y16). The file is written to a temporary file in the same directory and
   moved into place with `os.replace`, which is atomic on POSIX and on Windows.
 * **It escaped non-ASCII.** `json.dump` defaults to `ensure_ascii=True`, and
   `shared_config.json` is now full of provenance notes containing em dashes and
@@ -43,12 +44,19 @@ SHARED_CONFIG_PATH = os.path.join(PROJECT_ROOT, "shared_config.json")
 def load_config(path: str = None) -> Dict[str, Any]:
     """The parsed config, or `{}` when the file is absent.
 
-    A file that exists but is unparseable RAISES, unlike
-    `scoring_logic.load_shared_config`, which swallows it. The difference is
-    deliberate: that one is on the scoring path, where an abort mid-audit is
-    worse than a default; this one is used before a write, where silently
-    treating a corrupt file as `{}` would then overwrite it with `{}` and
-    destroy the config for good.
+    A file that exists but cannot be parsed RAISES. This is the ONE reader of
+    `shared_config.json`, and that is the one rule (review chunk Y16). There
+    used to be a second policy: `scoring_logic.load_shared_config` swallowed
+    the error and returned `{}`, on the argument that an abort mid-audit is
+    worse than a default. It is not — the default was every threshold at its
+    Python value and an EMPTY clinical vocabulary, which scored every page 0
+    and reported that as a measurement. Before a write the rule matters for a
+    second reason: treating a corrupt file as `{}` and then saving would
+    overwrite it with the one key the GUI changed and lose everything else.
+
+    The one named exception is `database.config_for_lock_timeout`, where the
+    config is read to decide how long to wait for a lock rather than to score
+    anything (review chunk Y11).
     """
     path = path or SHARED_CONFIG_PATH
     if not os.path.exists(path):

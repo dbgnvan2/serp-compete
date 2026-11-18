@@ -5,10 +5,13 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from src import config_io
 from src import db_connect
 
-# Paths relative to serp-compete/src/
-SHARED_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "shared_config.json"))
+#: One definition of where this file is (review chunk Y16): five modules
+#: each built the same path from their own `__file__`, so a reader could
+#: not tell whether they agreed without computing all five.
+SHARED_CONFIG_PATH = config_io.SHARED_CONFIG_PATH
 
 def config_for_lock_timeout() -> Dict[str, Any]:
     """`shared_config.json` for the lock wait alone, never raising.
@@ -37,11 +40,20 @@ def load_shared_config() -> Dict[str, Any]:
     Here rather than only in main.py so a consumer that is handed a DB but not a
     config (ReportGenerator) reads the same editorial thresholds the audit wrote
     with, instead of hard-coding them (P4).
+
+    One reader, `config_io.load_config` (review chunk Y16). There were three
+    functions of this name doing three different things with the same file, so
+    the same corrupt `shared_config.json` produced three outcomes depending on
+    which module read it first: this one raised, `main`'s raised, and
+    `scoring_logic`'s swallowed the failure and scored the whole run against
+    Python defaults. Raising is the rule, and the docstring above is why: a
+    caller reading an editorial threshold must not silently score against a
+    default. A caller holding the config passes it rather than calling this
+    again — the read is 0.1 ms over 34 KB, measured, so there is no cache to
+    invalidate, and the GUI edits this file while the process that reads it is
+    running.
     """
-    if os.path.exists(SHARED_CONFIG_PATH):
-        with open(SHARED_CONFIG_PATH, 'r') as f:
-            return json.load(f)
-    return {}
+    return config_io.load_config(SHARED_CONFIG_PATH)
 
 
 # C-M-02 / owner decision 2 (2026-11-14): the magnet floor and the "ranks well"

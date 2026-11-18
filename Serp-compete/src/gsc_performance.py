@@ -11,9 +11,10 @@ from googleapiclient.discovery import build
 from src.semantic import SemanticAuditor
 from src.reframe_engine import ReframeEngine
 from src.database import DatabaseManager
+from src import config_io
 
 # Paths relative to serp-compete/src/
-SHARED_CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "shared_config.json"))
+SHARED_CONFIG_PATH = config_io.SHARED_CONFIG_PATH  # review chunk Y16
 CLINICAL_DICT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "clinical_dictionary.json"))
 # Move token.json to root of serp-main
 #: The repo root, so the OAuth client secret can be found from any working
@@ -63,7 +64,9 @@ GSC_DEVICES = {"desktop": "DESKTOP", "mobile": "MOBILE", "tablet": "TABLET"}
 
 class GSCManager:
     def __init__(self):
-        self.config = self._load_json(SHARED_CONFIG_PATH)
+        # The one reader (review chunk Y16). `_load_json` stays for the
+        # clinical dictionary, which is a different file.
+        self.config = config_io.load_config(SHARED_CONFIG_PATH)
         self.clinical_dict = self._load_json(CLINICAL_DICT_PATH)
         self.creds = self._authenticate()
         self.service = build('searchconsole', 'v1', credentials=self.creds)

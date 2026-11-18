@@ -5,10 +5,12 @@ script, so importing it runs the UI; it is at 0% coverage and nothing in it can
 be tested. These two functions were the part that could do damage, and each had
 a defect:
 
-* the write was not atomic, and a truncated `shared_config.json` is not a loud
-  failure — `scoring_logic.load_shared_config` swallows it and returns `{}`, so
-  the next audit runs with every threshold at its Python default and an EMPTY
-  clinical vocabulary, scoring every page 0 and reporting nothing wrong;
+* the write was not atomic, and a truncated `shared_config.json` was not a
+  loud failure — `scoring_logic.load_shared_config` swallowed it and returned
+  `{}`, so the next audit ran with every threshold at its Python default and
+  an EMPTY clinical vocabulary, scoring every page 0 and reporting nothing
+  wrong. That reader is gone; `load_config` is the only one and it raises
+  (review chunk Y16);
 * `json.dump` defaults to `ensure_ascii=True`, and the config is now full of
   provenance notes with em dashes and arrows in them.
 """
@@ -140,10 +142,12 @@ class TestItRefusesToDestroyTheConfig(unittest.TestCase):
             self.assertEqual(config_io.load_config(path), SAMPLE)
 
     def test_a_corrupt_file_raises_on_load_rather_than_reading_as_empty(self):
-        """`scoring_logic.load_shared_config` swallows this and returns {},
-        which is right on the scoring path. Here it must NOT: treating a
-        corrupt file as empty and then saving would overwrite it with the one
-        key the GUI changed and lose everything else."""
+        """`scoring_logic.load_shared_config` used to swallow this and return
+        {}, on the argument that a default beats an abort on the scoring path.
+        Review chunk Y16 removed that reader: one rule, and this is it. Before
+        a write it matters twice over — treating a corrupt file as empty and
+        then saving would overwrite it with the one key the GUI changed and
+        lose everything else."""
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "shared_config.json")
             with open(path, "w", encoding="utf-8") as f:

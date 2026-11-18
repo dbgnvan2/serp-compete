@@ -8,7 +8,6 @@ from datetime import datetime
 # --- CONFIGURATION ---
 ST_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SERP_COMPETE_DIR = os.path.join(ST_ROOT, "Serp-compete")
-SHARED_CONFIG_PATH = os.path.join(ST_ROOT, "shared_config.json")
 
 # Load shared config. The read/write pair lives in src/config_io.py, which is
 # importable and therefore testable — this module is a Streamlit script, so
@@ -29,6 +28,12 @@ try:
 except ImportError:  # pragma: no cover - the `streamlit run` path
     from config_io import (load_config, save_config,  # noqa: F401
                            set_orchestrator_setting)
+    import config_io
+else:
+    from src import config_io
+
+#: One definition of where this file is (review chunk Y16).
+SHARED_CONFIG_PATH = config_io.SHARED_CONFIG_PATH
 
 shared_config = load_config()
 default_handoff_dir = shared_config.get("orchestrator", {}).get("handoff_source_dir",

@@ -143,7 +143,19 @@ reframing content, and the input to the automated reframes, which are the same q
 
 ## Configuration
 
-All settings in `shared_config.json`:
+All settings in `shared_config.json`. They are read **when the step that uses
+them starts** — the scoring vocabulary and weights once per run, when the
+analyser is built — not when the code is loaded, so editing the file and running
+again in the same GUI session uses the new values. Editing it while a run is in
+progress does not change that run. One reader opens the file
+(`src/config_io.py`) and it **raises** on a file that will not parse rather
+than running on defaults: until review chunk Y16 the scoring path swallowed
+that failure and scored every competitor with an empty clinical vocabulary
+while reporting the result as a measurement. The single exception is the
+database lock wait, which is not an editorial threshold and is logged when it
+falls back.
+
+Settings:
 - `client.domain` — Your domain (for comparison)
 - `client.da` — Your Domain Authority (for feasibility scoring)
 - `clinical_pivots` — Bowen concepts for reframing (non-code editable)

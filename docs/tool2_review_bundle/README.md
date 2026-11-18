@@ -11,7 +11,14 @@
 > bundle's `database.py` and `velocity_module.py` still define
 > `_get_connection()` returning a bare `sqlite3.connect`, which review chunk
 > Y10 replaced with the managed `connection()` because the bare form commits
-> and never closes the handle.
+> and never closes the handle. A second, as of 2026-11-18: this bundle's
+> `scoring_logic.py` and `main.py` each define their own `load_shared_config`,
+> and the `scoring_logic` one reads the config at import time behind an
+> `except Exception: pass`. Review chunk Y16 deleted both — there is one
+> reader now (`src/config_io.py::load_config`), it raises on a file it cannot
+> parse, and the scoring values are read once per run, when the analyser is
+> built. The bundle's `database.py` and `gsc_performance.py` also still build
+> their own path to `shared_config.json`; there is one definition of it now.
 
 ---
 

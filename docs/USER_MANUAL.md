@@ -351,7 +351,27 @@ Automated content outlines that reframe competitor content using Bowen Family Sy
 
 ## Configuration
 
-All behavior is controlled via `shared_config.json`:
+All behavior is controlled via `shared_config.json`. Two things worth knowing
+before you edit it (both changed in review chunk Y16):
+
+- **An edit takes effect on the next step, not the next restart.** The values
+  are read when the step that uses them starts — for the scoring vocabulary
+  and weights, once per run. They used to be read once when the code loaded,
+  so changing a weight and running again in the same GUI session changed
+  nothing. Editing the file *while* a run is in progress does not change that
+  run; it changes the next one.
+- **A file that will not parse stops the run.** One reader opens this file and
+  it raises on a syntax error. On the scoring path it raises before the first
+  page is fetched, so you get a stopped run rather than a set of rows saying
+  the competitors' pages could not be read. It used to be read by five different pieces of
+  code with three different behaviours, and the one on the scoring path
+  swallowed the failure: a stray comma meant every competitor was scored with
+  the built-in defaults and an **empty** clinical vocabulary — every page
+  scoring 0, the run finishing, and the briefing presenting it as a
+  measurement. The one exception is the database lock wait, which is not an
+  editorial threshold and is logged when it falls back to its default.
+
+### Settings
 
 ### **technical** (magnet / vacuum definition)
 ```json
@@ -382,7 +402,10 @@ Tier 1". Reading that ceiling as a floor would invert its sense.
 
 ### **clinical** / clinical_dictionary.json (the vocabulary)
 The live vocabulary is `shared_config.json → clinical`; `clinical_dictionary.json` is
-the fallback the scorer uses when that block is absent. **Both files are kept in step**
+the fallback the scorer uses when that block is absent. "Absent" means the block
+is not there — a `shared_config.json` that will not parse is an error, not an
+absence, and stops the run rather than falling through to the dictionary file or
+to an empty vocabulary (review chunk Y16). **Both files are kept in step**
 — changing only the dictionary file has no effect on a normal run, which is worth
 knowing before editing it.
 

@@ -301,6 +301,29 @@ Newest first. Format:
   reason is not the write — it is the reader. Ask what the consumer does with a corrupt file
   before deciding how careful the producer has to be. Here the consumer was deliberately
   forgiving, which is exactly what made the producer's carelessness invisible.
+- **Follow-up (review chunk Y16): the forgiving consumer was the defect, and it is gone.**
+  The entry above left the swallow in place and hardened the writer. That was half a fix: the
+  write is one of several ways the file can end up unreadable, and the audit still scored every
+  competitor against Python defaults for any of the others. `scoring_logic.load_shared_config`
+  is deleted; there is one reader (`config_io.load_config`) and it raises. Two further facts
+  surfaced on the way: the file had FIVE readers, not two — `velocity_module` and
+  `gsc_performance` each had their own body with the same shape — and `scoring_logic` read the
+  file at **import time** into module globals, so editing the config and re-running inside one
+  Streamlit process changed nothing at all (P16 again, in the other direction). **Rule:** when
+  you decide a reader may degrade, say what it degrades TO and assert it equals the documented
+  value — and count the readers before calling one of them "the" reader.
+- **Follow-up to the follow-up: making a reader raise is only half the change; find out what
+  catches it.** The first cut of Y16 moved the scoring-path read from import time to per call,
+  and one of those calls sat inside `scrape_content`'s `try` / `except Exception`. So a config
+  that would not parse mid-run did not stop the run: every page was recorded as unreadable,
+  with `rank` / `systems_score` / `medical_score` all NULL, and the run completed — the new
+  loud failure was converted into a persisted false negative about the COMPETITOR one layer
+  below the test that proved it raised (P40 + P1 + P11). The read now happens once per run,
+  when the analyser is built, which is outside every per-page handler. **Rule:** after you make
+  a read raise, walk out from each call site through every enclosing handler and ask what the
+  caller writes down when it catches. A guard on the function that raises is not a guard on the
+  run path. And prefer one read per run, held, over a read per item: it is also the only way a
+  single score comes from a single version of an editable file.
 
 **A committed config file carried the path to a developer's machine, published their username and the OAuth client ID, broke GSC auth everywhere else — and a test required it to be that way.**
 - **Root cause (P4 / P19):** `shared_config.json` is committed and pushed. Its

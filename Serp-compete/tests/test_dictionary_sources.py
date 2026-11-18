@@ -82,25 +82,29 @@ class TestTheTwoSourcesAgree(unittest.TestCase):
 
 
 class TestTheLoaderPrefersConfigAndFallsBack(unittest.TestCase):
-    """`scoring_logic.py:29-41` — the fallback branch, untested until now."""
+    """`scoring_logic.load_dictionary` — the fallback branch, untested until
+    the chunk that wrote this file.
+
+    The config is passed in rather than patched onto the module since review
+    chunk Y16: it used to be a module global read at import time, so these
+    tests had to patch the global, and a run that could not read the file
+    scored every page with an empty vocabulary.
+    """
 
     def test_config_wins_when_present(self):
         from src import scoring_logic
 
-        with unittest.mock.patch.object(
-                scoring_logic, "SHARED_CONFIG",
-                {"clinical": {"tier_1_medical": ["symptom"],
-                              "tier_2_systems": ["differentiation"],
-                              "tier_3_bowen": ["emotional cutoff"]}}):
-            loaded = scoring_logic.load_dictionary()
+        loaded = scoring_logic.load_dictionary(
+            {"clinical": {"tier_1_medical": ["symptom"],
+                          "tier_2_systems": ["differentiation"],
+                          "tier_3_bowen": ["emotional cutoff"]}})
         self.assertEqual(loaded["tier_1_medical"], ["symptom"])
         self.assertEqual(loaded["tier_3_bowen_expert"], ["emotional cutoff"])
 
     def test_the_dictionary_file_is_used_when_config_has_no_clinical_block(self):
         from src import scoring_logic
 
-        with unittest.mock.patch.object(scoring_logic, "SHARED_CONFIG", {}):
-            loaded = scoring_logic.load_dictionary()
+        loaded = scoring_logic.load_dictionary({})
         # Not empty: that is the whole point of the fallback.
         self.assertTrue(loaded["tier_1_medical"])
         self.assertEqual(set(loaded["tier_1_medical"]),
@@ -111,31 +115,41 @@ class TestTheLoaderPrefersConfigAndFallsBack(unittest.TestCase):
         `tier_3_bowen_expert`. A reader of either file would not guess."""
         from src import scoring_logic
 
-        with unittest.mock.patch.object(scoring_logic, "SHARED_CONFIG", {}):
-            loaded = scoring_logic.load_dictionary()
+        loaded = scoring_logic.load_dictionary({})
         self.assertIn("tier_3_bowen_expert", loaded)
         self.assertNotIn("tier_3_bowen", loaded)
 
     def test_a_missing_dictionary_file_yields_empty_tiers_not_a_crash(self):
         from src import scoring_logic
 
-        with unittest.mock.patch.object(scoring_logic, "SHARED_CONFIG", {}), \
-             unittest.mock.patch.object(scoring_logic, "DICTIONARY_PATH",
+        with unittest.mock.patch.object(scoring_logic, "DICTIONARY_PATH",
                                         "/nonexistent/clinical.json"):
-            loaded = scoring_logic.load_dictionary()
+            loaded = scoring_logic.load_dictionary({})
         self.assertEqual(loaded, {"tier_1_medical": [], "tier_2_systems": [],
                                   "tier_3_bowen_expert": []})
 
-    def test_an_unreadable_config_does_not_stop_the_import(self):
-        """`load_shared_config` swallows everything and returns {} — which is
-        correct here, but it means a corrupt config scores every page with an
-        EMPTY vocabulary rather than failing. Asserted so that the behaviour is
-        a decision rather than an accident."""
+    def test_a_config_that_cannot_be_parsed_stops_the_scoring(self):
+        """It used to return `{}`, so a `shared_config.json` with a trailing
+        comma scored every competitor in the run with the Python fallback
+        weights and an EMPTY clinical vocabulary — page scores of 0, a
+        completed run, and nothing logged, because the `except Exception:
+        pass` was the only place that could have said so (review chunk Y16).
+        """
+        import tempfile
         from src import scoring_logic
 
-        with unittest.mock.patch("builtins.open",
-                                 side_effect=OSError("disk gone")):
-            self.assertEqual(scoring_logic.load_shared_config(), {})
+        handle, path = tempfile.mkstemp(suffix=".json")
+        self.addCleanup(os.unlink, path)
+        with os.fdopen(handle, "w", encoding="utf-8") as f:
+            f.write('{"technical": {,}\n')
+
+        with unittest.mock.patch("src.config_io.SHARED_CONFIG_PATH", path):
+            with self.assertRaises(json.JSONDecodeError):
+                scoring_logic.shared_config()
+            with self.assertRaises(json.JSONDecodeError):
+                scoring_logic.weights()
+            with self.assertRaises(json.JSONDecodeError):
+                scoring_logic.clinical_tiers()
 
 
 if __name__ == "__main__":

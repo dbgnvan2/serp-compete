@@ -24,20 +24,19 @@ from src.reporting import ReportGenerator
 from src.reframe_engine import ReframeEngine
 from src.velocity_module import VelocityTracker
 from src.gsc_performance import GSCManager
+from src import config_io
 from src import db_connect
 
 # Paths relative to the project root
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-SHARED_CONFIG_PATH = os.path.join(PROJECT_ROOT, "shared_config.json")
+SHARED_CONFIG_PATH = config_io.SHARED_CONFIG_PATH  # review chunk Y16
 MANUAL_TARGETS_PATH = os.path.join(PROJECT_ROOT, "manual_targets.json")
 HANDOFF_SCHEMA_PATH = os.path.join(PROJECT_ROOT, "handoff_schema.json")
 KEYWORD_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "serp-keyword", "output")
 
-def load_shared_config():
-    if os.path.exists(SHARED_CONFIG_PATH):
-        with open(SHARED_CONFIG_PATH, 'r') as f:
-            return json.load(f)
-    return {}
+# One reader for this file (review chunk Y16): `src.database.load_shared_config`,
+# which is `config_io.load_config`. This module had its own copy.
+from src.database import load_shared_config  # noqa: E402
 
 def load_handoff_schema():
     """Load the JSON Schema for handoff validation."""

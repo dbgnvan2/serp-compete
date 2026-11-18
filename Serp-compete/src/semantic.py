@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 import json
 from urllib.parse import urlparse
 
-from src.scoring_logic import TIER_1_MEDICAL, TIER_2_SYSTEMS, TIER_3_BOWEN_EXPERT, calculate_weighted_score
+from src.scoring_logic import (calculate_weighted_score, clinical_tiers,
+                               shared_config)
 
 #: Fallback only — `shared_config.json` → `stock_image_hosts` is the editorial
 #: source of record, and `eeat_scorer` has always read it from there.
@@ -24,16 +25,20 @@ DEFAULT_STOCK_IMAGE_HOSTS = frozenset({
 })
 
 
-def stock_image_hosts() -> frozenset:
-    """The hosts whose images are not the site's own work."""
-    try:
-        from src.database import load_shared_config
-    except ImportError:  # pragma: no cover - standalone use
-        return DEFAULT_STOCK_IMAGE_HOSTS
-    try:
-        configured = load_shared_config().get("stock_image_hosts")
-    except Exception:  # noqa: BLE001 - a config read must not break a scrape
-        return DEFAULT_STOCK_IMAGE_HOSTS
+def stock_image_hosts(config=None) -> frozenset:
+    """The hosts whose images are not the site's own work.
+
+    *config* is the already-loaded config (P25). With none it reads now,
+    and a file that will not parse RAISES — this used to swallow every
+    exception "so a config read must not break a scrape", which is the
+    opposite of the rule the same module's other two config reads follow.
+    Two opposite policies for one file, 280 lines apart, is what review
+    chunk Y16 exists to remove; the read is now done once when the
+    analyser is built, outside every per-page handler, so there is no
+    scrape for it to break (Y16 cold review, F2).
+    """
+    config = shared_config() if config is None else config
+    configured = config.get("stock_image_hosts")
     if isinstance(configured, (list, tuple, set, frozenset)) and configured:
         return frozenset(str(host).strip().lower() for host in configured if host)
     return DEFAULT_STOCK_IMAGE_HOSTS
@@ -110,9 +115,25 @@ class SemanticAuditor:
 
     def __init__(self, model: str = "en_core_web_sm"):
         self.nlp = spacy.load(model)
-        self.medical_terms = TIER_1_MEDICAL
-        self.systems_t2 = TIER_2_SYSTEMS
-        self.systems_t3 = TIER_3_BOWEN_EXPERT
+        # ONE read, when the analyser is built. Not when the module is
+        # imported: an import-time read scored a whole run with an empty
+        # vocabulary when the file would not parse (review chunk Y16). And
+        # not per page either: `scrape_content` catches `Exception` to keep
+        # one bad page from ending a run, so a config read inside it turned
+        # "I cannot parse my own config" into a per-URL record saying the
+        # PAGE was unreadable, with `rank`/`systems_score`/`medical_score`
+        # all NULL and the run completing (P40 + P1 + P11; Y16 cold review,
+        # F1). Built here, the read is outside every per-page handler, so a
+        # corrupt file stops the run where the owner can see it.
+        #
+        # Holding it also means one auditor scores every page against ONE
+        # version of the file: the vocabulary and the weights can no longer
+        # come from two different reads either side of a GUI edit (F8).
+        self.config = shared_config()
+        (self.medical_terms, self.systems_t2,
+         self.systems_t3) = clinical_tiers(self.config)
+        self.scoring_window_words = self._scoring_window_words(self.config)
+        self.stock_image_hosts = stock_image_hosts(self.config)
         self._exact_tiers: Dict[str, str] = {}
         self._matcher, self._pattern_tiers = self._build_matcher()
 
@@ -200,10 +221,14 @@ class SemanticAuditor:
                 "matches": matches}
 
     @staticmethod
-    def _scoring_window_words() -> int:
-        """`technical.scoring_window_words` — how many body words are scored."""
-        from src.scoring_logic import SHARED_CONFIG
-        return int((SHARED_CONFIG.get("technical", {}) or {}).get(
+    def _scoring_window_words(config=None) -> int:
+        """`technical.scoring_window_words` — how many body words are scored.
+
+        *config* is the already-loaded config (P25). `__init__` passes the
+        one it holds, so this is not read again per page.
+        """
+        config = shared_config() if config is None else config
+        return int((config.get("technical", {}) or {}).get(
             "scoring_window_words", DEFAULT_SCORING_WINDOW_WORDS))
 
     @staticmethod
@@ -312,7 +337,7 @@ class SemanticAuditor:
             self._strip_boilerplate(soup)
             full_text = soup.get_text(separator=' ')
             full_text_words = full_text.split()
-            window = self._scoring_window_words()
+            window = self.scoring_window_words
             scoring_words = full_text_words[:window]
             first_500_words_list = full_text_words[:500]
 
@@ -501,8 +526,8 @@ class SemanticAuditor:
         # Images
         image_hosts_set = set()
         # The config key, not a second copy of the list (see
-        # DEFAULT_STOCK_IMAGE_HOSTS). Read once per page, not per image.
-        stock_hosts = stock_image_hosts()
+        # DEFAULT_STOCK_IMAGE_HOSTS). Read once per run, not per page.
+        stock_hosts = self.stock_image_hosts
         for img in soup.find_all('img'):
             metadata["image_count"] += 1
             src = img.get('src', '')
@@ -635,8 +660,11 @@ class SemanticAuditor:
         t3_count = counts["t3_count"]
         window_words = declared_window or counts["word_count"]
 
+        # The config this auditor was built with, so the weights and the
+        # vocabulary that produced one score came from one read (F8).
         weighted_systems_score, systemic_label = calculate_weighted_score(
-            medical_count, t2_count, t3_count, window_words=window_words)
+            medical_count, t2_count, t3_count, window_words=window_words,
+            config=self.config)
 
         def per_1000(hits: float) -> float:
             # Length normalisation (C-M-19): 5 medical words meant the same thing in

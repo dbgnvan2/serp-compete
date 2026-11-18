@@ -32,6 +32,7 @@ import os
 import json
 from typing import List, Dict, Any, Optional, Tuple
 
+from src import config_io
 from src import database, db_connect
 
 # Editorial default, uncalibrated, 2026-11-15 (shared_config
@@ -54,10 +55,10 @@ class VelocityTracker:
         self._initialize_db()
 
     def _load_config(self, path: str):
-        if os.path.exists(path):
-            with open(path, 'r') as f:
-                return json.load(f)
-        return {}
+        """The one reader (review chunk Y16). This was a fifth copy of the
+        same body: `{}` for an absent file, a raise for a corrupt one —
+        `config_io.load_config`'s contract exactly, written out again."""
+        return config_io.load_config(path)
 
     def connection(self):
         """A managed connection: committed on a clean exit, always closed

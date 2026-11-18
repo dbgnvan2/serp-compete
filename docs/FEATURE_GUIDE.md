@@ -135,7 +135,15 @@ It produces a **Medical Score** and a weighted **Systems Score** (Tier 3 counts 
 than Tier 2), then assigns a **Systemic Label** of **Standard** or **Surface-Level**.
 A page is **Surface-Level** when it leans heavily on medical language *for its length*
 and has no deep Bowen (Tier 3) content at all. (Exact weights/thresholds live in
-`shared_config.json` and `src/scoring_logic.py` — editable without code changes.)
+`shared_config.json` — editable without code changes. They are read **once
+per run, when the analyser is built**, not when the code is loaded, so editing
+the file and running again in the same GUI session uses the new numbers. One
+read per run rather than one per page is deliberate: the weights and the
+vocabulary that produce a single page's score then come from the same version
+of the file, which an edit made while a run is in progress could otherwise
+split. `src/scoring_logic.py` holds only the fallback each key degrades to,
+and a test fails when one of those drifts from the file's own value. Review
+chunk Y16.)
 
 **What is counted, and how** (all of this changed on 2026-11-15):
 - **"therapy" is not medical-model vocabulary** (owner decision 3). Nor are
@@ -907,6 +915,20 @@ sufficient; no calibration is scheduled.** Every threshold below carries the sam
 in `shared_config.json` beside the key itself, and the report says so once per section
 that depends on one. "Editorial" means somebody chose it; "uncalibrated" means it has
 never been checked against an outcome.
+
+**A file that will not parse stops the run before it scores anything; it does
+not quietly change these numbers.** The read happens when the analyser is
+built, which is before the first page is fetched, so the failure is a stopped
+run and not a page-by-page record saying the pages were unreadable. Until
+review chunk Y16 there were three functions named
+`load_shared_config` doing three different things with this file, and the one
+on the scoring path swallowed every exception and returned `{}` — so a trailing
+comma meant every competitor was scored with the Python fallback weights and an
+**empty** clinical vocabulary: page scores of 0, a run that completed, and a
+briefing whose numbers reconciled with nothing in this table. There is one
+reader now (`src/config_io.py`), and it raises. The single named exception is
+the database lock wait, which is not an editorial threshold and is logged when
+it falls back.
 
 | Threshold | Value | Basis | Last set |
 |---|---|---|---|
