@@ -1,19 +1,31 @@
+import logging
 import os
 
 import pandas as pd
 from src.database import DatabaseManager, load_shared_config, magnet_sql, magnet_thresholds
 import datetime
 
+from src.briefing_messages import Messages
+from src.serp_overlap import DEFAULT_TOP_N
 from src.risk_radar import anchor_caveat_lines, anchor_data_unreadable
 
 
-#: What an unknown value reads as in a rendered markdown table. An em dash,
-#: not an empty cell: a blank is indistinguishable from a rendering fault, and
-#: the briefing's whole convention is that absence is stated.
-UNKNOWN_CELL = "—"
+def unknown_cell(messages=None) -> str:
+    """What an unknown value reads as in a rendered markdown table.
+
+    An em dash, not an empty cell: a blank is indistinguishable from a
+    rendering fault, and the briefing's whole convention is that absence is
+    stated. The word is `icons.unknown_cell` in `briefing_messages.json`
+    (chunk Y17), because it was a module constant with a bare duplicate of
+    itself in the cluster table bypassing it.
+
+    *messages* is the render's already-loaded `Messages` (P25). With none it
+    reads the file now, which is what a direct caller in a test gets.
+    """
+    return (messages or Messages()).get("icons.unknown_cell")
 
 
-def md_table(df, **kwargs) -> str:
+def md_table(df, messages=None, **kwargs) -> str:
     """`df.to_markdown` with missing values rendered as `—` rather than `nan`.
 
     Purpose: stop a float artefact appearing in the owner's tables.
@@ -34,6 +46,7 @@ def md_table(df, **kwargs) -> str:
     """
     if df is None:
         return ""
+    unknown = unknown_cell(messages)
     # Work on a copy: filling in place would put the em dash into the frame the
     # Excel writer gets, where it must stay a real NULL so the column keeps its
     # type.
@@ -49,13 +62,13 @@ def md_table(df, **kwargs) -> str:
         # (medical_per_1000, shares) are left alone.
         if not present.empty and (present == present.round()).all():
             out[column] = series.map(
-                lambda v: UNKNOWN_CELL if pd.isna(v) else str(int(v)))
+                lambda v: unknown if pd.isna(v) else str(int(v)))
     # `fillna` on a numeric column upcasts to object, which is what we want for
     # display.
-    return out.fillna(UNKNOWN_CELL).to_markdown(**kwargs)
+    return out.fillna(unknown).to_markdown(**kwargs)
 
 
-def gsc_pull_note(config) -> str:
+def gsc_pull_note(config, messages=None) -> str:
     """The line that states which Google Search Console pull a section used.
 
     Purpose: stop a figure from this tool being read beside a figure from
@@ -91,6 +104,11 @@ def gsc_pull_note(config) -> str:
     from src.api_clients import snapshot_market
     from src.gsc_performance import GSC_DEVICES
 
+    # The words, from `briefing_messages.json` (chunk Y17). The DECISIONS stay
+    # here: which of the three country clauses and which of the four device
+    # clauses this pull earns is a fact about the config, not wording.
+    m = messages or Messages()
+
     settings = ((config or {}).get("gsc_settings", {}) or {})
     try:
         days = int(settings.get("date_range_days", 90))
@@ -113,52 +131,46 @@ def gsc_pull_note(config) -> str:
     snap_country = str(snapshot.get("country") or "").strip().lower()
     snap_device = str(snapshot.get("device") or "").strip().lower()
 
+    unset = m.get("gsc_comparability.unset")
     if not country:
-        country_line = (f"No country filter, so this is global traffic and is "
-                        f"NOT comparable with the DataForSEO SERP snapshot, "
-                        f"which requests `{snap_country or 'unset'}`. ")
+        country_line = m.get("gsc_comparability.country.absent",
+                             snap_country=snap_country or unset)
     elif country == snap_country:
-        country_line = (f"The country filter matches the DataForSEO SERP "
-                        f"snapshot, which also requests `{snap_country}`, so "
-                        f"the two are comparable. ")
+        country_line = m.get("gsc_comparability.country.matches",
+                             snap_country=snap_country)
     else:
-        country_line = (f"The DataForSEO SERP snapshot requests "
-                        f"`{snap_country or 'unset'}`, so these clicks and "
-                        f"those ranks are NOT the same market and are NOT "
-                        f"comparable. ")
+        country_line = m.get("gsc_comparability.country.differs",
+                             snap_country=snap_country or unset)
 
     if bad_device:
-        device_line = (f"`gsc_settings.device` is `{raw_device}`, which GSC "
-                       f"does not accept, so NO device filter was applied — "
-                       f"these are all-device clicks by misconfiguration, not "
-                       f"by choice, and are NOT comparable with the "
-                       f"`{snap_device or 'unset'}` SERP snapshot. ")
+        device_line = m.get("gsc_comparability.device.unrecognised",
+                            raw_device=raw_device,
+                            snap_device=snap_device or unset)
     elif not device:
-        device_line = (f"No device filter, so these are desktop and mobile "
-                       f"clicks averaged together, while the SERP snapshot is "
-                       f"`{snap_device or 'unset'}` only. ")
+        device_line = m.get("gsc_comparability.device.absent",
+                            snap_device=snap_device or unset)
     elif device == snap_device:
-        device_line = (f"The device filter matches the `{snap_device}` SERP "
-                       f"snapshot. ")
+        device_line = m.get("gsc_comparability.device.matches",
+                            snap_device=snap_device)
     else:
-        device_line = (f"The SERP snapshot requests `{snap_device or 'unset'}`, "
-                       f"so a {device}-only CTR is NOT comparable with the "
-                       f"ranks beside it. ")
+        device_line = m.get("gsc_comparability.device.differs",
+                            device=device, snap_device=snap_device or unset)
 
-    return (
-        f"_Pull: last {days} days, "
-        + (f"country `{country}`" if country else "no country filter")
-        + ", " + (f"{device} only" if device else "every device")
-        + ", query × page. "
-        + country_line
-        + device_line
-        + "serp-discover pulls GSC on its own window, country and device, "
-          "which it states in its own report; figures from the two reports are "
-          "comparable only where both state the same pull._"
+    return m.get(
+        "gsc_comparability.pull_line",
+        days=days,
+        country_phrase=(m.get("gsc_comparability.country_phrase.present",
+                              country=country) if country
+                        else m.get("gsc_comparability.country_phrase.absent")),
+        device_phrase=(m.get("gsc_comparability.device_phrase.present",
+                             device=device) if device
+                       else m.get("gsc_comparability.device_phrase.absent")),
+        country_line=country_line,
+        device_line=device_line,
     )
 
 
-def client_mismatch_line(run_coverage: dict = None) -> str:
+def client_mismatch_line(run_coverage: dict = None, messages=None) -> str:
     """The report's client-mismatch caveat, or `""` when the two agree.
 
     The sentence itself comes from `handoff_moz.client_domain_mismatch`; this
@@ -169,7 +181,8 @@ def client_mismatch_line(run_coverage: dict = None) -> str:
     mismatch = (run_coverage or {}).get("client_domain_mismatch")
     if not mismatch:
         return ""
-    return f"> \u26a0\ufe0f **Client mismatch:** {mismatch}."
+    return (messages or Messages()).get("gsc_comparability.client_mismatch",
+                                       mismatch=mismatch)
 
 
 class ReportGenerator:
@@ -185,6 +198,11 @@ class ReportGenerator:
         # report must render the same definition the audit wrote with rather than
         # re-inventing thresholds of its own (P4).
         self.config = load_shared_config()
+        # Chunk Y17: every sentence this report renders, read ONCE and held.
+        # Here rather than inside a section because a messages file that will
+        # not parse must stop the render before the first section, not become a
+        # per-section blank (the shape chunk Y16's cold review arrived at).
+        self.messages = Messages()
         self.vacuum_min_medical, self.magnet_max_position = magnet_thresholds(self.config)
         # C-C-16: honour `orchestrator.reports_dir`. The GUI wrote the setting into
         # shared_config.json and nothing read it, so new reports kept landing in
@@ -216,28 +234,89 @@ class ReportGenerator:
                 (run_id,)).fetchall() if row[0]}
         except Exception:  # noqa: BLE001 - an optional cross-check, never fatal
             cited = set()
+        m = self.messages
         if not cited:
-            return ("_No AI-visibility export was consumed this run, so no page here "
-                    "can be checked against a real citation._")
+            return m.get("extractability.citation_check.no_export")
         strong = df_geo[df_geo["extractability_tier"] == "Strong"]
         if strong.empty:
-            return ("_No Strong-tier pages this run, so there is nothing to check "
-                    "against the citation data._")
+            return m.get("extractability.citation_check.no_strong_tier")
         from src.brand_utils import normalise_domain
         cited_norm = {normalise_domain(entity) for entity in cited}
         strong_domains = {normalise_domain(str(url).split("/")[2])
                           for url in strong["url"] if str(url).count("/") >= 2}
         confirmed = sorted(strong_domains & cited_norm)
         unconfirmed = sorted(strong_domains - cited_norm)
-        return (f"_Checked against the AI-visibility export: of the Strong-tier "
-                f"domains, {len(confirmed)} of {len(strong_domains)} were actually "
-                f"cited by an engine"
-                + (f" ({', '.join(confirmed)})" if confirmed else "")
-                + (f"; not cited: {', '.join(unconfirmed)}" if unconfirmed else "")
-                + ". A Strong tier with no citation is evidence against the "
-                  "heuristic, not against the page._")
+        return m.get(
+            "extractability.citation_check.result",
+            confirmed=len(confirmed), total=len(strong_domains),
+            confirmed_clause=(
+                m.get("extractability.citation_check.confirmed_clause",
+                      names=", ".join(confirmed)) if confirmed else ""),
+            unconfirmed_clause=(
+                m.get("extractability.citation_check.unconfirmed_clause",
+                      names=", ".join(unconfirmed)) if unconfirmed else ""),
+        )
 
-    def _capped(self, df, cap: int, label: str):
+    #: What the action queues print when `shared_config.json` says nothing.
+    #: 15 is what the briefing printed before the number had a key.
+    DEFAULT_ACTION_QUEUE_ROW_CAP = 15
+
+    def action_queue_row_cap(self) -> int:
+        """How many action-queue rows the briefing prints.
+
+        A threshold, so it is in `shared_config.json` beside its two siblings
+        `reporting.markdown_row_cap` and `reporting.magnet_markdown_row_cap`,
+        not in the file of sentences — the sentence that quotes it
+        interpolates it, which is what stops the prose claiming one cap while
+        the slice takes another. It was a literal `15` in both places before
+        chunk Y17, and briefly a key in the messages file, where it was read
+        with `raw()` and so defaulted silently (cold review, M2).
+
+        A value that is absent, zero, negative or not a number falls back and
+        SAYS SO in the log, the way `db_connect.lock_timeout_from_config`
+        does: a cap of 0 would print an empty action queue, which reads as
+        "no keywords qualify".
+        """
+        configured = (self.config.get("serp_overlap") or {}).get(
+            "action_queue_row_cap")
+        if configured is None:
+            return self.DEFAULT_ACTION_QUEUE_ROW_CAP
+        try:
+            cap = int(configured)
+        except (TypeError, ValueError):
+            cap = 0
+        if cap < 1:
+            logging.warning(
+                "shared_config.json serp_overlap.action_queue_row_cap is %r, "
+                "which is not a row count; printing %d rows per action queue.",
+                configured, self.DEFAULT_ACTION_QUEUE_ROW_CAP)
+            return self.DEFAULT_ACTION_QUEUE_ROW_CAP
+        return cap
+
+    def action_queue_note(self, total: int, row_cap: int) -> str:
+        """`_(top N of M)_`, or `""` when nothing was cut.
+
+        A method rather than a closure so a test can call it with a cap of its
+        own: as a closure it was reachable only through a full render, and a
+        mutation that hardcoded the number passed every guard.
+        """
+        if total <= row_cap:
+            return ""
+        return self.messages.get("serp_overlap.action_queue_truncated",
+                                 shown=row_cap, total=total)
+
+    def shortfall_lines(self) -> list:
+        """The "N message(s) missing" line, or nothing.
+
+        Asked for last, after every section has asked for its words. The
+        markers are already in the body; this is the count, so the reader does
+        not have to hunt for them (P2). A method for the same reason as
+        `action_queue_note`.
+        """
+        line = self.messages.shortfall_line()
+        return [line] if line else []
+
+    def _capped(self, df, cap: int, label_key: str):
         """(display frame, "showing N of M" note) — C-C-07.
 
         A LIMIT in the SQL truncated the markdown AND the Excel sheet identically and
@@ -246,11 +325,13 @@ class ReportGenerator:
         export, was cut to the same 30 rows.
         """
         total = len(df)
+        label = self.messages.get("capped.labels.%s" % label_key)
         if total <= cap:
-            return df, f"_{total} {label}._"
+            return df, self.messages.get("capped.complete", total=total,
+                                         label=label)
         return (df.head(cap),
-                f"_Showing the first {cap} of {total} {label} — the full set is in "
-                f"the Excel workbook._")
+                self.messages.get("capped.truncated", cap=cap, total=total,
+                                  label=label))
 
     def generate_summary(self, client_domain: str, expected_competitors: list = None, run_id: int = None, reframes: list = None, token_usage: dict = None, market_alerts: list = None, gsc_findings: dict = None, run_coverage: dict = None):
         """
@@ -271,15 +352,19 @@ class ReportGenerator:
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         handoff_name = (run_coverage or {}).get("handoff_file")
+        # The words, held: one read for the whole render (chunk Y17).
+        m = self.messages
         report = [
-            f"# Serp-comp Strategic Briefing (Run ID: {run_id})",
-            f"**Client:** {client_domain}",
-            f"**Date:** {timestamp}",
+            m.get("headings.title", run_id=run_id),
+            m.get("headings.client", client_domain=client_domain),
+            m.get("headings.date", timestamp=timestamp),
             # C-C-16: name the input. Two handoffs in the project root differ only by
             # timestamp, and the briefing used to be silent about which one it read.
-            f"**Handoff:** {os.path.basename(handoff_name) if handoff_name else 'not recorded for this run'}",
-            "\n## Executive Summary",
-            "This report identifies strategic openings where competitors rely on the 'Medical Model' and provides automated Bowen-based reframes."
+            m.get("headings.handoff",
+                  handoff=(os.path.basename(handoff_name) if handoff_name
+                           else m.get("headings.handoff_not_recorded"))),
+            m.get("headings.executive_summary"),
+            m.get("executive_summary.intro"),
         ]
 
         # The handoff names the client it was produced for. A disagreement with
@@ -288,92 +373,75 @@ class ReportGenerator:
         # still here weeks later, and without this it reads clean while every
         # figure in it compares one client's SERPs with another's configuration
         # (cold review of chunk Y1).
-        mismatch_line = client_mismatch_line(run_coverage)
+        mismatch_line = client_mismatch_line(run_coverage, m)
         if mismatch_line:
             report.insert(4, mismatch_line)
 
         # Run coverage, in the artefact rather than only in the console (P2).
         if run_coverage:
             skipped = run_coverage.get("skipped_domains") or []
-            report.append(
-                f"\n**Run coverage:** audited "
-                f"{run_coverage.get('domains_audited', 0)} of "
-                f"{run_coverage.get('domains_in_handoff', 0)} handoff domain(s); "
-                f"Page Authority measured for {run_coverage.get('pa_measured', 0)} of "
-                f"{run_coverage.get('pa_total', 0)} audited URL(s).")
+            report.append(m.get(
+                "run_coverage.line",
+                domains_audited=run_coverage.get("domains_audited", 0),
+                domains_in_handoff=run_coverage.get("domains_in_handoff", 0),
+                pa_measured=run_coverage.get("pa_measured", 0),
+                pa_total=run_coverage.get("pa_total", 0)))
             if skipped:
-                report.append("**Skipped domains:** "
-                              + "; ".join(f"{d} — {r}" for d, r in skipped) + ".")
+                report.append(m.get("run_coverage.skipped", domains="; ".join(
+                    m.get("run_coverage.skipped_item", domain=d, reason=r)
+                    for d, r in skipped)))
             db_cleanup = run_coverage.get("db_cleanup")
             if db_cleanup:
-                report.append(f"> ⚠️ **Database cleanup:** {db_cleanup}.")
+                report.append(m.get("run_coverage.db_cleanup",
+                                    db_cleanup=db_cleanup))
             unmeasured = run_coverage.get("unmeasured_pa_domains") or []
             if unmeasured:
-                report.append(
-                    "> ⚠️ **Page Authority was unmeasured** for "
-                    + ", ".join(unmeasured)
-                    + ". The `avg PA > 50` high-authority filter could not be applied "
-                      "to them, and their authority figures are NULL (unknown), not 0.")
+                report.append(m.get("run_coverage.pa_unmeasured",
+                                    domains=", ".join(unmeasured)))
             enrichment_failures = run_coverage.get("enrichment_failures") or []
             if enrichment_failures:
-                report.append(
-                    "> ℹ️ **Keyword enrichment was unavailable** for "
-                    + "; ".join(f"{d} ({r})" for d, r in enrichment_failures)
-                    + ". Those domains were audited on their handoff targets only.")
+                report.append(m.get(
+                    "run_coverage.enrichment_unavailable",
+                    items="; ".join(m.get("run_coverage.enrichment_item",
+                                          domain=d, reason=r)
+                                    for d, r in enrichment_failures)))
             blocked = run_coverage.get("blocked_domains") or []
             if blocked:
-                report.append(
-                    "> 🛑 **Blocked by the 429 circuit breaker** (remaining pages not "
-                    "audited): " + ", ".join(blocked) + ".")
+                report.append(m.get("run_coverage.blocked",
+                                    domains=", ".join(blocked)))
             cached = run_coverage.get("cached_domains") or []
             if cached:
-                report.append(
-                    "> ⚡ **Served at least one page from the 7-day semantic cache:** "
-                    + ", ".join(cached)
-                    + ". Their scores are as fresh as that cached scrape, not as this run.")
+                report.append(m.get("run_coverage.cached",
+                                    domains=", ".join(cached)))
             incomplete = run_coverage.get("incomplete_tier_domains") or []
             if incomplete:
-                report.append(
-                    "> ℹ️ **Tier counts incomplete** for " + ", ".join(incomplete)
-                    + " (pages cached before the counts were persisted), so their "
-                      "`market_position` classification is withheld this run.")
+                report.append(m.get("run_coverage.incomplete_tiers",
+                                    domains=", ".join(incomplete)))
             universe = run_coverage.get("universe") or {}
             if universe:
-                report.append(
-                    f"**Keyword universe:** {universe.get('handoff', 0)} handoff "
-                    f"target(s); {universe.get('enrichment_kept', 0)} enrichment "
-                    f"keyword(s) kept, "
-                    f"{universe.get('enrichment_dropped_brand', 0)} dropped as the "
-                    f"competitor's own brand and "
-                    f"{universe.get('enrichment_dropped_irrelevant', 0)} as off-topic.")
+                report.append(m.get(
+                    "run_coverage.universe",
+                    handoff=universe.get("handoff", 0),
+                    kept=universe.get("enrichment_kept", 0),
+                    dropped_brand=universe.get("enrichment_dropped_brand", 0),
+                    dropped_irrelevant=universe.get(
+                        "enrichment_dropped_irrelevant", 0)))
             # Chunk X (rank semantics / H1): serp-discover stores SerpAPI's
             # per-page `position` verbatim and concatenates paginated pages
             # without an offset, so the handoff's ranks restart at 1 on every
             # page. Until its chunk D1 lands and bumps `schema_version`, a
             # "rank 2" in this report may be the second result of page 3.
             if run_coverage.get("rank_semantics_error"):
-                report.append(
-                    f"> ⚠️ **The handoff's rank convention could not be determined** "
-                    f"({run_coverage['rank_semantics_error']}), so whether the `rank` "
-                    f"column holds an absolute SERP position or serp-discover's "
-                    f"per-page one is unknown for this run. Treat it as page-relative "
-                    f"until checked — that is what every shipped handoff version "
-                    f"carries.")
+                report.append(m.get("rank_semantics.undetermined",
+                                    error=run_coverage["rank_semantics_error"]))
             elif run_coverage.get("rank_is_absolute") is False:
-                report.append(
-                    f"> ⚠️ **Handoff ranks are page-relative.** This handoff is "
-                    f"schema v{run_coverage.get('handoff_version') or '?'}, which "
-                    f"carries serp-discover's per-page SERP `position` rather than an "
-                    f"absolute one (review finding H1 / D-C-01, open on the "
-                    f"serp-discover side). Several targets can therefore share a rank, "
-                    f"and a rank of 2 may be the second result of page 3. Read the "
-                    f"`rank` column below as \"where on its SERP page\", not as a "
-                    f"market position; `handoff.absolute_rank_versions` in "
-                    f"`shared_config.json` is what retires this warning.")
+                report.append(m.get(
+                    "rank_semantics.page_relative",
+                    version=(run_coverage.get("handoff_version")
+                             or m.get("rank_semantics.version_unknown")),
+                    citation=m.get("rank_semantics.finding_citation")))
         else:
-            report.append("\n_Run coverage was not recorded for this run — how many "
-                          "handoff domains were audited, skipped or unmeasured is "
-                          "unknown here, not zero._")
+            report.append(m.get("run_coverage.unrecorded"))
 
         # Initialize dataframes for later use in Excel export
         df_eeat = pd.DataFrame()
@@ -389,51 +457,51 @@ class ReportGenerator:
         df_risk = pd.DataFrame()
 
         if gsc_findings:
-            report.append("\n## 📈 Internal GSC Performance Gaps")
-            report.append("Analysis of our own site's performance in Google Search Console.")
-            report.append(gsc_pull_note(self.config))
-
+            report.append(m.get("headings.gsc_section"))
+            report.append(m.get("gsc_section.intro"))
+            report.append(gsc_pull_note(self.config, m))
 
             target_gaps = gsc_findings.get("target_gaps")
             if target_gaps is not None and not target_gaps.empty:
-                report.append("\n### High Impression / Low CTR Gaps")
-                report.append("These internal keywords are being seen but not clicked. Reframe the Meta Titles with systemic depth.")
+                report.append(m.get("headings.gsc_target_gaps"))
+                report.append(m.get("gsc_section.target_gaps_intro"))
                 report.append(md_table(target_gaps[['query', 'impressions', 'ctr', 'tier']],
-                                       index=False))
+                                       messages=m, index=False))
 
             low_hanging = gsc_findings.get("low_hanging")
             if low_hanging is not None and not low_hanging.empty:
-                report.append("\n### Low-Hanging Fruit (Page 2 Targets)")
-                report.append("Internal pages ranking in positions 11-20. A systemic boost could push them to Page 1.")
+                report.append(m.get("headings.gsc_low_hanging"))
+                report.append(m.get("gsc_section.low_hanging_intro"))
                 report.append(md_table(
                     low_hanging[['query', 'page', 'position', 'impressions']],
-                    index=False))
+                    messages=m, index=False))
 
             mismatches = gsc_findings.get("mismatches")
             if mismatches:
-                report.append("\n### Clinical Mismatches")
-                report.append("Detected instances where our Systems-heavy pages are being found via Medical Model queries.")
-                report.append(md_table(pd.DataFrame(mismatches), index=False))
+                report.append(m.get("headings.gsc_mismatches"))
+                report.append(m.get("gsc_section.mismatches_intro"))
+                report.append(md_table(pd.DataFrame(mismatches), messages=m,
+                                       index=False))
 
         if token_usage:
-            report.append("\n## 💰 AI Token Usage")
-            report.append(f"- **Prompt Tokens:** {token_usage.get('prompt_tokens', 0)}")
-            report.append(f"- **Completion Tokens:** {token_usage.get('completion_tokens', 0)}")
-            report.append(f"- **Total Tokens:** {token_usage.get('total_tokens', 0)}")
+            report.append(m.get("headings.token_usage"))
+            report.append(m.get("token_usage.prompt",
+                                count=token_usage.get("prompt_tokens", 0)))
+            report.append(m.get("token_usage.completion",
+                                count=token_usage.get("completion_tokens", 0)))
+            report.append(m.get("token_usage.total",
+                                count=token_usage.get("total_tokens", 0)))
 
         with self.db.connection() as conn:
             # 1. Volatility Alerts
             volatility = self.db.get_volatility_alerts(run_id)
             if volatility:
-                report.append("\n## 📉 Volatility Alerts")
+                report.append(m.get("headings.volatility"))
                 # C-M-20: the sign convention was never stated, and in SERP positions
                 # a bigger number is worse — the opposite of most metrics.
-                report.append("_`shift` is the change in the domain's average "
-                              "position since the previous run: **positive = moved "
-                              "DOWN** (worse), negative = moved up. Averaged over the "
-                              "keywords both runs measured._")
+                report.append(m.get("volatility.sign_convention"))
                 df_vol = pd.DataFrame(volatility)
-                report.append(md_table(df_vol, index=False))
+                report.append(md_table(df_vol, messages=m, index=False))
 
             # Spec 4: Fragile Magnets — ONE authority-drift detector (C-C-05 / C-M-06).
             # There used to be two, under two headings, for the same event:
@@ -441,29 +509,34 @@ class ReportGenerator:
             # `VelocityTracker.get_market_alerts` (da_drift < 0, unscoped). The first
             # is gone; this is the survivor, run-scoped and thresholded.
             if market_alerts:
-                report.append("\n## 🚩 Expert Alerts: Fragile Magnets (authority drift)")
+                report.append(m.get("headings.fragile_magnets"))
                 threshold = next((a.get('pa_drop_min') for a in market_alerts
                                   if a.get('pa_drop_min') is not None), None)
-                report.append(
-                    "Competitor pages whose Moz Page Authority fell measurably between "
-                    "this run and the previous run that saw the same page"
-                    + (f", by at least {threshold:g} point(s) "
-                       f"(`risk_signals.pa_drop_min`, editorial and uncalibrated)"
-                       if threshold is not None else "")
-                    + ". _A page whose authority was not measured in both runs is "
-                      "absent from this list — unknown, not unchanged._")
+                report.append(m.get(
+                    "fragile_magnets.intro",
+                    threshold_clause=(
+                        m.get("fragile_magnets.threshold_clause",
+                              threshold=threshold) if threshold is not None
+                        else "")))
                 for alert in market_alerts:
                     if alert['type'] == 'Fragile Magnet':
                         rank_drift = alert.get('rank_drift')
-                        rank_note = ("rank unchanged" if rank_drift == 0
-                                     else (f"rank drift {rank_drift}" if rank_drift is not None
-                                           else "rank not measured in both runs"))
-                        report.append(
-                            f"- **{alert['domain']}** ({alert['keyword']}): Page Authority "
-                            f"drift {alert['da_drift']:g}, {rank_note}. "
-                            f"**Strategic Advice:** {alert['advice']}")
+                        if rank_drift == 0:
+                            rank_note = m.get("fragile_magnets.rank_unchanged")
+                        elif rank_drift is not None:
+                            rank_note = m.get("fragile_magnets.rank_drift",
+                                              rank_drift=rank_drift)
+                        else:
+                            rank_note = m.get("fragile_magnets.rank_not_measured")
+                        report.append(m.get(
+                            "fragile_magnets.row", domain=alert['domain'],
+                            keyword=alert['keyword'], da_drift=alert['da_drift'],
+                            rank_note=rank_note, advice=alert['advice']))
                     else:
-                        report.append(f"- **{alert['type']}**: {alert['domain']} ({alert['keyword']})")
+                        report.append(m.get("fragile_magnets.other_row",
+                                            type=alert['type'],
+                                            domain=alert['domain'],
+                                            keyword=alert['keyword']))
 
             # Revision 3: Competitor Overview with Market Position & Systemic Depth.
             #
@@ -522,16 +595,16 @@ class ReportGenerator:
                 targets with this column.
                 """
                 if not row.get('tier_counts_known'):
-                    return "Not recorded"
+                    return m.get("systemic_depth.not_recorded")
                 if (row.get('max_t3') or 0) >= 1:
-                    return "Bowen (Tier 3 present)"
+                    return m.get("systemic_depth.bowen")
                 if (row.get('t2_total') or 0) >= self.t2_depth_min:
-                    return "Systems (Tier 2 only)"
+                    return m.get("systemic_depth.systems")
                 if row.get('has_surface') == 1:
-                    return "Surface-Level"
+                    return m.get("systemic_depth.surface")
                 if (row.get('t2_total') or 0) > 0:
-                    return "Trace (1-2 Tier 2 terms)"
-                return "None detected"
+                    return m.get("systemic_depth.trace")
+                return m.get("systemic_depth.none")
 
             if not df_metrics.empty:
                 df_metrics['systemic_depth'] = df_metrics.apply(get_systemic_depth, axis=1)
@@ -546,38 +619,29 @@ class ReportGenerator:
                 found_domains = df_metrics['domain'].tolist()
                 missing = [d for d in expected_competitors if d not in found_domains]
                 if missing:
-                    report.append("\n### ⚠️ Missing Data Alert")
-                    report.append(f"No ranking data found for: {', '.join(missing)}")
+                    report.append(m.get("headings.missing_data"))
+                    report.append(m.get("competitor_summary.missing_data",
+                                        domains=", ".join(missing)))
 
             if not df_metrics.empty:
-                report.append("\n## Competitor Ranking Summary")
-                report.append(
-                    "_`sampled_keywords` is the number of DISTINCT keywords this run "
-                    "audited for the domain — its handoff targets plus any enrichment "
-                    "keywords that passed the relevance filter — not the keywords it "
-                    "ranks for in total. `pages_audited` is how many of its pages were "
-                    "scored (capped by `technical.max_audit_pages_per_domain`). "
-                    "`avg_pos` averages whatever each keyword's source measured: the "
-                    # C-C-17 changed the enrichment rank to `rank_group`, the
-                    # organic position; this caveat still named `rank_absolute`,
-                    # so the report described a scale it had stopped using.
-                    "handoff rank for a handoff keyword, DataForSEO's `rank_group` "
-                    "for an enrichment one. `systemic_depth` reads the Tier-2/Tier-3 "
-                    "counts; `Not recorded` means a cached page predates those counts._")
-                report.append(md_table(df_metrics, index=False))
+                report.append(m.get("headings.competitor_summary"))
+                # C-C-17 changed the enrichment rank to `rank_group`, the organic
+                # position; this caveat still named `rank_absolute`, so the report
+                # described a scale it had stopped using.
+                report.append(m.get("competitor_summary.column_caveat"))
+                report.append(md_table(df_metrics, messages=m, index=False))
                 # C-M-01: say where this run's keywords came from. `handoff` =
                 # Tool 1 measured the URL ranking for it; `ranked_keywords` = a
                 # DataForSEO enrichment keyword that passed the relevance filter;
                 # `unlabelled` = written before provenance was recorded.
                 sources = self.db.keyword_source_counts(run_id)
                 if sources:
-                    report.append(
-                        "\n**Keyword provenance:** "
-                        + ", ".join(f"{src}: {n}" for src, n in sorted(sources.items()))
-                        + ". `handoff` keywords are what Serp-Discover measured ranking; "
-                          "`ranked_keywords` are DataForSEO enrichment keywords kept only "
-                          "when they are in the handoff set or carry a clinical term, and "
-                          "never when they contain the competitor's own brand token.")
+                    report.append(m.get(
+                        "competitor_summary.keyword_provenance",
+                        counts=", ".join(
+                            m.get("competitor_summary.provenance_item",
+                                  source=src, count=n)
+                            for src, n in sorted(sources.items()))))
 
             # 2b. EEAT Scores (Gap 3 enhancement).
             # C-C-07: no LIMIT in the SQL — the Excel sheet gets every row and the
@@ -596,8 +660,8 @@ class ReportGenerator:
             ''', conn, params=(run_id,))
 
             if not df_eeat.empty:
-                report.append("\n## EEAT Competitive Analysis (Heuristic)")
-                report.append("Experience, Expertise, Authoritativeness, and Trustworthiness heuristic scores.")
+                report.append(m.get("headings.eeat"))
+                report.append(m.get("eeat.intro"))
                 # C-M-12: 1 dp, not 2. These composites are weighted sums of
                 # BOOLEANS — trustworthiness can only take the values
                 # {0, .3, .4, .6, .7, 1.0}, and 0.4 of it is the scheme of the URL
@@ -621,39 +685,25 @@ class ReportGenerator:
                 # the sheet wants numbers and real NULLs. Same reason `md_table`
                 # fills a copy.
                 display_eeat = df_eeat.copy()
+                unknown = unknown_cell(m)
                 for col in ['experience_score', 'expertise_score', 'authoritativeness_score', 'trustworthiness_score']:
                     display_eeat[col] = display_eeat[col].apply(
-                        lambda x: f"{x:.1f}" if pd.notna(x) else UNKNOWN_CELL)
+                        lambda x: f"{x:.1f}" if pd.notna(x) else unknown)
                 # A table of dashes with no stated cause is the failure mode
                 # this report exists to avoid. The usual cause is an absent
                 # `eeat_weights` block: EEATScorer then has nothing to weight
                 # with and correctly computes nothing, silently.
                 _dimensions = ['experience_score', 'expertise_score',
                                'authoritativeness_score', 'trustworthiness_score']
-                if all((display_eeat[col] == UNKNOWN_CELL).all()
+                if all((display_eeat[col] == unknown).all()
                        for col in _dimensions):
-                    report.append(
-                        "> ⚠️ **No EEAT composite could be computed for any page.** The "
-                        "signals below were read, but the scores were not: check that "
-                        "`eeat_weights` is present in `shared_config.json` — without it "
-                        "there is nothing to weight the signals with, and the scorer "
-                        "returns unknown for every dimension. This is not a finding "
-                        "about the competitors.")
-                report.append(
-                    "_Each score is a weighted sum of BOOLEAN signals, so it moves in "
-                    "steps, not continuously — trustworthiness, for example, can only "
-                    "be 0, 0.3, 0.4, 0.6, 0.7 or 1.0, and 0.4 of it is simply whether "
-                    "the URL is https. `score_confidence` is now **signal coverage** "
-                    "(the share of weighted signals that could be read at all), and it "
-                    "is capped below `high` whenever one of the four composites could "
-                    "not be computed — it used to read `high` for every page that "
-                    "loaded. Authoritativeness uses the domain's Moz Domain Authority; "
-                    "it was being given the individual URL's Page Authority._")
+                    report.append(m.get("eeat.no_composite"))
+                report.append(m.get("eeat.score_caveat"))
                 disp_eeat, eeat_note = self._capped(display_eeat, self.markdown_row_cap,
-                                                    "scored page(s)")
+                                                    "scored_pages")
                 report.append(eeat_note)
-                report.append(md_table(disp_eeat, index=False))
-                report.append("\n_Note: These scores are heuristic proxies based on SEO industry conventions, not Google's proprietary EEAT model._")
+                report.append(md_table(disp_eeat, messages=m, index=False))
+                report.append(m.get("eeat.caveat"))
 
             # 2c. Cluster Analysis (Gap 4 enhancement)
             df_clusters = pd.read_sql_query('''
@@ -664,11 +714,14 @@ class ReportGenerator:
             ''', conn, params=(run_id,))
 
             if not df_clusters.empty:
-                report.append("\n## Internal Linking Cluster Analysis")
-                report.append("Detection of hub pages and linking patterns within competitor sites.")
-                df_clusters['avg_in_degree'] = df_clusters['avg_in_degree'].apply(lambda x: f"{x:.2f}" if x is not None else "—")
-                report.append(md_table(df_clusters, index=False))
-                report.append("\n_Note: Analysis based on N≤3 scraped pages per domain. Full site structure not visible._")
+                report.append(m.get("headings.clusters"))
+                report.append(m.get("clusters.intro"))
+                # `unknown_cell(m)`, not a second bare em dash: this literal used to
+                # bypass the constant beside it (chunk Y17).
+                df_clusters['avg_in_degree'] = df_clusters['avg_in_degree'].apply(
+                    lambda x: f"{x:.2f}" if x is not None else unknown_cell(m))
+                report.append(md_table(df_clusters, messages=m, index=False))
+                report.append(m.get("clusters.sample_caveat"))
 
             # 3. Traffic Magnets with Systemic Label.
             # C-M-02 (owner decision 2, 2026-11-14): the documented definition is now
@@ -699,16 +752,10 @@ class ReportGenerator:
             # section which is not there (found by rendering the total-outage
             # scenario).
             vacuums_rendered = False
-            magnet_filter_note = (
-                f"_Filter: handoff rank ≤ {max_pos}, medical_score ≥ {floor} "
-                f"(`technical.vacuum_min_medical`, editorial and uncalibrated), and the "
-                f"keyword is in the handoff set or carries a clinical term and not the "
-                f"competitor's own brand token. `est_traffic` is DataForSEO's estimated "
-                f"monthly visits for that keyword×position, 0 when it was not measured. "
-                f"`medical_score` is a COUNT of Tier-1 terms and `medical_per_1000` the "
-                f"same count per 1000 scored words (`words` is the window it was counted "
-                f"over) — the count alone meant different things in a short page and a "
-                f"long one._")
+            # ONE message, composed from two keys: the filter sentence and the
+            # clause saying its rank half is inoperative. It used to be built with
+            # `+=` in two statements, so the second was a conditional half of a
+            # sentence living in Python (chunk Y17).
 
             # The "rank ≤ N" half of that filter is INOPERATIVE while the
             # handoff's ranks are page-relative, and saying so belongs here
@@ -723,31 +770,24 @@ class ReportGenerator:
             # and the USER_MANUAL describe as "ranks well" therefore filters
             # nothing at all, and `technical.magnet_max_position` is a knob with
             # no effect until the producer is fixed.
+            magnet_filter_note = m.get("magnets.filter_note", max_pos=max_pos,
+                                       floor=floor)
             if (run_coverage or {}).get("rank_is_absolute") is False:
-                magnet_filter_note += (
-                    f"\n\n> ⚠️ **The `rank ≤ {max_pos}` criterion is not in force.** "
-                    f"This handoff's ranks restart at 1 on every SERP page "
-                    f"(schema v{(run_coverage or {}).get('handoff_version') or '?'}; "
-                    f"review finding H1 / D-C-01, open on the serp-discover side), so a "
-                    f"result at true position 25 carries a rank of 5 and passes. On the "
-                    f"reference run's rank distribution the filter admits **every** "
-                    f"result, including true position 29. Read the list below as "
-                    f"\"handoff pages that clear the medical floor and the relevance "
-                    f"test\" — NOT as \"competitor pages that rank well\". It is longer "
-                    f"than the definition implies, and some of these pages are on page 2 "
-                    f"or 3 of the SERP. The Systemic Vacuums and the gpt-4o reframe "
-                    f"targets below share this filter and inherit the same "
-                    f"qualification."
-                )
+                magnet_filter_note += m.get(
+                    "magnets.rank_filter_inoperative", max_pos=max_pos,
+                    version=((run_coverage or {}).get("handoff_version")
+                             or m.get("rank_semantics.version_unknown")),
+                    citation=m.get("rank_semantics.finding_citation"))
 
             if not df_magnets.empty:
                 disp_magnets, magnet_note = self._capped(
-                    df_magnets, self.magnet_row_cap, "qualifying page(s)")
-                report.append("\n## Identified 'Traffic Magnets'")
-                report.append(f"{len(df_magnets)} of {audited_pages} audited page(s) "
-                              f"meet the magnet definition. {magnet_note}")
+                    df_magnets, self.magnet_row_cap, "qualifying_pages")
+                report.append(m.get("headings.magnets"))
+                report.append(m.get("magnets.count_line", n=len(df_magnets),
+                                    audited=audited_pages,
+                                    capped_note=magnet_note))
                 report.append(magnet_filter_note)
-                report.append(md_table(disp_magnets, index=False))
+                report.append(md_table(disp_magnets, messages=m, index=False))
 
                 # Spec 2: Highlight Systemic Vacuums — the magnets with no systemic
                 # language. Same predicate as the reframe targets, by construction.
@@ -755,23 +795,29 @@ class ReportGenerator:
                 vacuums_rendered = not vacuums.empty
                 if not vacuums.empty:
                     disp_vacuums, vacuum_note = self._capped(
-                        vacuums, self.markdown_row_cap, "vacuum(s)")
-                    report.append("\n### ⚡ Strategic Targets: Systemic Vacuums")
-                    report.append("These competitors rank on a handed-over keyword using medical language and show no real systemic framing. They are our **primary targets** for content reframing.")
+                        vacuums, self.markdown_row_cap, "vacuums")
+                    report.append(m.get("headings.vacuums"))
+                    report.append(m.get("magnets.vacuums_intro"))
                     report.append(vacuum_note)
                     for _, v in disp_vacuums.iterrows():
-                        label_str = f" [{v['systemic_label']}]" if v['systemic_label'] != 'Standard' else ""
-                        report.append(
-                            f"- **{v['domain']}** ({v['primary_keyword']} — "
-                            f"{v['keyword_source']}, rank {v['rank']}): Medical Score "
-                            f"{v['medical_score']}, Systems Score {v['systems_score']}{label_str}")
+                        label_clause = (
+                            m.get("magnets.vacuum_label_clause",
+                                  label=v['systemic_label'])
+                            if v['systemic_label'] != 'Standard' else "")
+                        report.append(m.get(
+                            "magnets.vacuum_row", domain=v['domain'],
+                            keyword=v['primary_keyword'],
+                            source=v['keyword_source'], rank=v['rank'],
+                            medical_score=v['medical_score'],
+                            systems_score=v['systems_score'],
+                            label_clause=label_clause))
             elif audited_pages:
                 # Absence stated, not implied: 100 audited pages and no magnet is a
                 # fact about the filter, and the reader cannot otherwise tell it from
                 # "nothing was audited" (P2).
-                report.append("\n## Identified 'Traffic Magnets'")
-                report.append(f"None of the {audited_pages} audited page(s) met the "
-                              f"magnet definition this run.")
+                report.append(m.get("headings.magnets"))
+                report.append(m.get("magnets.none_qualified",
+                                    audited=audited_pages))
                 report.append(magnet_filter_note)
             else:
                 # …and the third case, which the branch above names but did not
@@ -781,12 +827,8 @@ class ReportGenerator:
                 # could be read", and this is the report's primary action list.
                 # Found by rendering the total-outage scenario and reading it
                 # (tools/render_sample_briefing.py).
-                report.append("\n## Identified 'Traffic Magnets'")
-                report.append(
-                    "**No page could be scored this run**, so there is nothing to "
-                    "qualify or to rule out. This is not a finding that competitors "
-                    "have no Traffic Magnets — see the run coverage in the Executive "
-                    "Summary for which domains were blocked, skipped or unmeasured.")
+                report.append(m.get("headings.magnets"))
+                report.append(m.get("magnets.nothing_scored"))
 
             # 3b. GEO / Extractability — Why Competitors Get Cited (SC-1)
             df_geo = pd.read_sql_query('''
@@ -804,22 +846,19 @@ class ReportGenerator:
                 # C-M-14: the section used to be headed "Why Competitors Get Cited"
                 # and told the owner these structures are *why* rivals get cited,
                 # while nothing here checks whether any page is cited by anything.
-                report.append("\n## Extractability signals (structural, unvalidated)")
-                report.append("Structural features associated with being quoted by AI answer engines "
-                              "(FAQ schema, question-shaped headings, credentialed authorship, "
-                              "freshness). **Nothing in this section measures citations** — it reads "
-                              "page structure and nothing else. Treat it as a build checklist, not as "
-                              "an explanation of why a rival is cited.")
+                report.append(m.get("headings.extractability"))
+                report.append(m.get("extractability.intro"))
                 report.append(self._geo_citation_check(conn, run_id, df_geo))
                 # C-C-07: capped for display only (tier order, then url); the sheet
                 # carries all of them.
                 disp_geo, geo_note = self._capped(df_geo, self.markdown_row_cap,
-                                                  "profiled page(s)")
+                                                  "profiled_pages")
                 report.append(geo_note)
                 for _, g in disp_geo.iterrows():
-                    report.append(f"- **{g['url']}** — _{g['extractability_tier']}_: {g['why_cited']}")
-                report.append("\n_Heuristic structural proxies for AI citability, not measured citations. "
-                              "Answer-first placement and FAQ-answers-in-HTML are not yet measured._")
+                    report.append(m.get("extractability.row", url=g['url'],
+                                        tier=g['extractability_tier'],
+                                        why_cited=g['why_cited']))
+                report.append(m.get("extractability.footnote"))
 
             # 3c. SERP Overlap & Differentiation Gap (C4 / SC-6)
             df_overlap = pd.read_sql_query('''
@@ -832,13 +871,13 @@ class ReportGenerator:
             ''', conn, params=(run_id,))
 
             if not df_overlap.empty:
-                report.append("\n## SERP Overlap & Differentiation Gap")
-                report.append("Where you and tracked competitors collide on shared SERPs "
-                              "(AI-absorption risk) vs. where you're uniquely present "
-                              "(defensible). Cells: `shared_commodity` / `shared_defensible` / "
-                              "`exclusive_self` / `exclusive_competitor` / `absent`. "
-                              "_'Commodity' is a local overlap-density proxy — a strategic "
-                              "framing, not a measured index._")
+                # The same `top_n` the classification used, from the same
+                # section of the config, so the warning cannot name a
+                # different number than the test it describes.
+                overlap_top_n = int((self.config.get("serp_overlap", {}) or {})
+                                    .get("top_n", DEFAULT_TOP_N))
+                report.append(m.get("headings.serp_overlap"))
+                report.append(m.get("serp_overlap.intro"))
                 # The top-N test is ASYMMETRIC while the handoff's ranks are
                 # page-relative, and this section's `exclusive_competitor` cell
                 # is described as the top action queue — so the distortion has
@@ -862,60 +901,58 @@ class ReportGenerator:
                 # mismatch (rank_group over rank_absolute); the pagination
                 # mismatch is this one, and it is upstream.
                 if (run_coverage or {}).get("rank_is_absolute") is False:
-                    report.append(
-                        "\n> ⚠️ **The top-10 test is asymmetric, so the cells are "
-                        "skewed against you.** Competitor positions come from the "
-                        "handoff, whose ranks restart at 1 on every SERP page (H1 / "
-                        "D-C-01, open on the serp-discover side); your own position "
-                        "comes from Search Console and is absolute. A rival therefore "
-                        "counts as \"in the top 10\" at any true position, while you "
-                        "count only if you genuinely are. Rivals at true positions 14, "
-                        "22 and 27 with you at 12 is reported as "
-                        "`exclusive_competitor` — \"your clearest content gaps\" — for "
-                        "a keyword where nobody is in the top 10 and you are the "
-                        "closest. `exclusive_competitor` and `shared_commodity` are "
-                        "therefore overstated and `exclusive_self` understated. The "
-                        "competitor column also mixes scales: handoff keywords are "
-                        "page-relative, enrichment keywords are absolute.")
+                    report.append(m.get(
+                        "serp_overlap.asymmetric_warning",
+                        top_n=overlap_top_n,
+                        citation=m.get("rank_semantics.finding_citation")))
                 # If the client's GSC positions were unavailable this run, self-presence
                 # is UNKNOWN — say so loudly rather than imply "you're absent".
                 if 'self_unknown' in set(df_overlap['cell']):
-                    report.append("\n> ⚠️ **Client GSC positions were unavailable this run** — "
-                                  "self-presence is UNKNOWN for these keywords (shown as "
-                                  "`self_unknown`); exclusive-competitor / exclusive-self "
-                                  "classifications are withheld to avoid a false 'you're absent'.")
+                    report.append(m.get("serp_overlap.self_unknown_warning"))
                 counts = df_overlap['cell'].value_counts().to_dict()
-                report.append("\n**Cell distribution:** "
-                              + ", ".join(f"{cell}: {n}" for cell, n in sorted(counts.items())))
+                report.append(m.get(
+                    "serp_overlap.cell_distribution",
+                    counts=", ".join(f"{cell}: {n}"
+                                     for cell, n in sorted(counts.items()))))
                 # C-M-20: this is not a search volume and not your traffic. It is
                 # MAX(competitor_metrics.traffic) per keyword — the best-ranking
                 # RIVAL's DataForSEO ETV — summed per cell.
                 vol = df_overlap.groupby('cell')['best_rival_etv'].sum().to_dict()
-                report.append("**Best-rival ETV by cell** (summed DataForSEO estimated "
-                              "monthly visits of the best-ranking competitor per "
-                              "keyword — not search volume, not your traffic): "
-                              + ", ".join(f"{cell}: {int(v)}" for cell, v in sorted(vol.items())))
+                report.append(m.get(
+                    "serp_overlap.best_rival_etv",
+                    values=", ".join(f"{cell}: {int(v)}"
+                                     for cell, v in sorted(vol.items()))))
+                # The row cap is in the file beside the sentence that quotes it, so
+                # the prose cannot say "top 15" while the slice takes another number
+                # (chunk Y17).
+                row_cap = self.action_queue_row_cap()
+
+                def _queue_note(total):
+                    return self.action_queue_note(total, row_cap)
+
                 excl = df_overlap[df_overlap['cell'] == 'exclusive_competitor']
                 if not excl.empty:
-                    n = len(excl)
-                    report.append("\n### ⚔️ Action queue — exclusive-competitor (rivals rank, you're absent)"
-                                  + (f"  _(top 15 of {n})_" if n > 15 else ""))
-                    for _, r in excl.head(15).iterrows():
-                        gap = " — **every tracked rival ranks**" if r['all_competitor_gap'] else ""
-                        report.append(f"- **{r['keyword']}** ({int(r['overlap_count'])} rivals in top-N){gap}")
+                    report.append(m.get("headings.action_queue_exclusive")
+                                  + _queue_note(len(excl)))
+                    for _, r in excl.head(row_cap).iterrows():
+                        gap = (m.get("serp_overlap.exclusive_row_gap_clause")
+                               if r['all_competitor_gap'] else "")
+                        report.append(m.get("serp_overlap.exclusive_row",
+                                            keyword=r['keyword'],
+                                            n=int(r['overlap_count']),
+                                            gap_clause=gap))
                 comm = df_overlap[df_overlap['cell'] == 'shared_commodity']
                 if not comm.empty:
-                    n = len(comm)
-                    report.append("\n### 🔁 Action queue — shared-commodity (differentiate or deprioritize)"
-                                  + (f"  _(top 15 of {n})_" if n > 15 else ""))
-                    for _, r in comm.head(15).iterrows():
-                        report.append(f"- **{r['keyword']}** (you + {int(r['overlap_count'])} rivals; commoditized SERP)")
-                report.append(
-                    "\n_"
-                    + ("Folds in the Systemic Vacuum list above (not duplicated). "
-                       if vacuums_rendered else "")
-                    + "Competitor positions are SERP-measured; self_position is "
-                      "first-party GSC (see estimation_basis in the Excel sheet)._")
+                    report.append(m.get("headings.action_queue_commodity")
+                                  + _queue_note(len(comm)))
+                    for _, r in comm.head(row_cap).iterrows():
+                        report.append(m.get("serp_overlap.commodity_row",
+                                            keyword=r['keyword'],
+                                            n=int(r['overlap_count'])))
+                report.append(m.get(
+                    "serp_overlap.footnote",
+                    vacuum_clause=(m.get("serp_overlap.footnote_vacuum_clause")
+                                   if vacuums_rendered else "")))
 
             # 3d. Competitor Feasibility (C4 / SC-6: check_feasibility, surfaced)
             df_feasibility = pd.read_sql_query('''
@@ -930,22 +967,19 @@ class ReportGenerator:
                 # was scorable". The commonest cause is an unmeasured client DA:
                 # `feasibility_by_competitor` now withholds every verdict rather
                 # than computing them all from a default of 0.
-                report.append("\n### 🎯 Competitor Feasibility (your DA vs. each competitor)")
-                report.append(
-                    "_Not computed this run. Feasibility needs **your** Domain Authority "
-                    "and each competitor's; if `client.da` is absent from "
-                    "`shared_config.json` (decision 6 makes it an override to a live "
-                    "provider lookup) every verdict is withheld rather than computed "
-                    "from a default of 0, which would have read \"not feasible — "
-                    "Hyper-Local Pivot\" for every rival. This is not a finding that "
-                    "no competitor is beatable._")
+                report.append(m.get("headings.feasibility"))
+                report.append(m.get("feasibility.not_computed"))
             if not df_feasibility.empty:
-                report.append("\n### 🎯 Competitor Feasibility (your DA vs. each competitor)")
-                report.append("Whether a systemic counter-page can realistically compete, from "
-                              "the Domain Authority gap (feasible when client DA + 5 ≥ competitor DA).")
+                report.append(m.get("headings.feasibility"))
+                # The margin comes from the key `analysis.check_feasibility` reads,
+                # not from a second literal: the sentence said "+ 5" while the knob
+                # was `technical.feasibility_threshold` (chunk Y17).
+                from src.analysis import feasibility_threshold
+                report.append(m.get("feasibility.intro",
+                                    threshold=f"{feasibility_threshold():g}"))
                 df_feasibility['feasible'] = df_feasibility['feasible'].apply(
                     lambda x: "✅" if x else "❌")
-                report.append(md_table(df_feasibility, index=False))
+                report.append(md_table(df_feasibility, messages=m, index=False))
 
             # 3e. Barbell Positioning Diagnostic (C2 / SC-4)
             df_positioning = pd.read_sql_query('''
@@ -958,16 +992,8 @@ class ReportGenerator:
             ''', conn, params=(run_id,))
 
             if not df_positioning.empty:
-                report.append("\n## Barbell Positioning Diagnostic")
-                report.append("Each domain on an **authority** (Moz DA + top-10 ranking count, "
-                              "the same formula for you and competitors) vs. **focus** "
-                              "(medical/systems tier-identity concentration) 2×2. "
-                              "_Barbell framing: winners are large-and-authoritative "
-                              "(`authoritative`) or small-and-niche (`niche_owner`); the "
-                              "undifferentiated `middle` is the danger zone. `emerging` / "
-                              "`insufficient_data` = too little signal to place, never silently "
-                              "`middle`. Rivals with avg PA > 50 are filtered upstream, so an "
-                              "empty `authoritative` quadrant does not mean none exist._")
+                report.append(m.get("headings.positioning"))
+                report.append(m.get("positioning.intro"))
                 # The authority axis is INFLATED while the handoff's ranks are
                 # page-relative, and by enough to move a domain across
                 # `positioning.authority_threshold` (50). `top10_count` is
@@ -981,24 +1007,23 @@ class ReportGenerator:
                 # verdict this section exists to give, so this cannot live in
                 # the coverage block.
                 if (run_coverage or {}).get("rank_is_absolute") is False:
-                    report.append(
-                        "\n> ⚠️ **The authority axis is overstated, and the quadrants "
-                        "with it.** `top10_count` counts handoff keywords whose rank is "
-                        "≤ 10, and this handoff's ranks restart at 1 on every SERP page "
-                        "(H1 / D-C-01, open on the serp-discover side) — so *every* "
-                        "handoff keyword counts as a top-10 ranking. A domain with ten "
-                        "or more of them saturates the component whatever its real "
-                        "positions: at Moz DA 30 with no genuine top-10 ranking at all, "
-                        "authority reads **51** instead of 30, which crosses "
-                        "`positioning.authority_threshold` (50). Treat `authority_score` "
-                        "and `quadrant` below as upper bounds, and `top10_count` as "
-                        "\"handoff keywords\", not \"top-10 rankings\".")
+                    # The threshold the sentence quotes comes from the key
+                    # `positioning.classify` reads, not from a second literal.
+                    from src.positioning import DEFAULT_AUTHORITY_THRESHOLD
+                    report.append(m.get(
+                        "positioning.authority_inflated_warning",
+                        citation=m.get("rank_semantics.finding_citation"),
+                        threshold=(self.config.get("positioning", {}) or {}).get(
+                            "authority_threshold", DEFAULT_AUTHORITY_THRESHOLD)))
                 quad_counts = df_positioning['quadrant'].value_counts().to_dict()
-                report.append("\n**Quadrant distribution:** "
-                              + ", ".join(f"{q}: {n}" for q, n in sorted(quad_counts.items())))
+                report.append(m.get(
+                    "positioning.quadrant_distribution",
+                    counts=", ".join(f"{q}: {n}"
+                                     for q, n in sorted(quad_counts.items()))))
                 disp = df_positioning.copy()
                 disp['domain'] = disp.apply(
-                    lambda r: f"⭐ {r['domain']} (you)" if r['is_client'] else r['domain'], axis=1)
+                    lambda r: m.get("icons.you", value=r['domain'])
+                    if r['is_client'] else r['domain'], axis=1)
                 # C-M-10: print the counts the focus figure came from, and the floor
                 # it had to clear, so a quadrant can be checked rather than trusted.
                 import json as _json
@@ -1018,22 +1043,16 @@ class ReportGenerator:
                 report.append(md_table(
                     disp[['domain', 'authority_score', 'focus_score',
                           'quadrant', 'top10_count', 'tier_tokens',
-                          'authority_basis']], index=False))
+                          'authority_basis']], messages=m, index=False))
                 floors = {str(_rationale(r, 'min_focus_tokens', '')) for _, r in
                           df_positioning.iterrows()} - {''}
                 if floors:
-                    report.append(
-                        f"\n_`tier_tokens` is the unweighted Tier-1 + Tier-2/3 term "
-                        f"count the focus figure was computed from; below "
-                        f"{sorted(floors)[0]} (`positioning.min_focus_tokens`) focus is "
-                        f"withheld and the domain reads `insufficient_data` rather than "
-                        f"being placed on a handful of generic tokens. `top10_count` is "
-                        f"over the handoff's keywords — the same universe for you and "
-                        f"for competitors._")
+                    report.append(m.get("positioning.focus_floor_footnote",
+                                        floor=sorted(floors)[0]))
                 mid = df_positioning[df_positioning['quadrant'] == 'middle']
                 if not mid.empty:
-                    report.append("\n⚠️ **Danger zone (undifferentiated middle):** "
-                                  + ", ".join(mid['domain'].tolist()) + ".")
+                    report.append(m.get("positioning.danger_zone",
+                                        domains=", ".join(mid['domain'].tolist())))
 
             # 3f. Competitive AI Share-of-Voice (C1 / SC-3)
             df_sov = pd.read_sql_query('''
@@ -1060,31 +1079,19 @@ class ReportGenerator:
                            if c["measured"] is None]
 
             if not df_sov.empty:
-                report.append("\n## Competitive AI Share-of-Voice")
-                report.append("When the AI engines answer category questions, whose brand and "
-                              "sources come back. Consumed from serp-discover's AI-visibility "
-                              "probes (not re-probed here). _Rolling snapshots — LLM answers vary._")
+                report.append(m.get("headings.sov"))
+                report.append(m.get("sov.intro"))
                 if sov_unmeasured:
-                    report.append(
-                        f"\n_Not measured this run: {', '.join(sorted(sov_unmeasured))} — "
-                        f"the export carried no answered questions for "
-                        f"{'these engines' if len(sov_unmeasured) > 1 else 'this engine'}, so "
-                        f"{'they are' if len(sov_unmeasured) > 1 else 'it is'} excluded from "
-                        f"the shares below rather than shown at 0%. Absence here is not "
-                        f"evidence that the engine does not name these brands._")
+                    report.append(m.plural(
+                        "sov.not_measured", len(sov_unmeasured),
+                        engines=", ".join(sorted(sov_unmeasured))))
                 if sov_unknown:
-                    report.append(
-                        f"\n_Coverage unknown: {', '.join(sorted(sov_unknown))} — the "
-                        f"export listed "
-                        f"{'these engines' if len(sov_unknown) > 1 else 'this engine'} "
-                        f"but carried no brand mentions for "
-                        f"{'them' if len(sov_unknown) > 1 else 'it'}, which from the "
-                        f"export alone could mean the questions were asked and no "
-                        f"tracked brand came back, or that the engine did not run. "
-                        f"Not counted either way._")
+                    report.append(m.plural(
+                        "sov.coverage_unknown", len(sov_unknown),
+                        engines=", ".join(sorted(sov_unknown))))
                 for engine in sorted(df_sov['engine'].dropna().unique()):
                     eng = df_sov[df_sov['engine'] == engine]
-                    report.append(f"\n### {engine}")
+                    report.append(m.get("headings.sov_engine", engine=engine))
                     brands = eng[eng['entity_type'] == 'brand']
                     men = brands[brands['category'] != 'other']
                     men = men.sort_values('mention_share', ascending=False).head(10)
@@ -1093,34 +1100,41 @@ class ReportGenerator:
                         # ("whose brand the models return") — named in k of n answers —
                         # and it was computed and never printed. `mention_share` is a
                         # share of all brand mentions, including "other".
-                        report.append("**Mention share** (share of all brand mentions "
-                                      "this engine made) **and presence** (the share of "
-                                      "answers the brand was named in): " + ", ".join(
-                            f"{r['entity']}{' (you)' if r['is_client'] else ''} "
-                            f"{(r['mention_share'] or 0):.0f}%"
-                            # pd.notna, not `is not None`: a SQL NULL arrives
-                            # from pandas as NaN, which IS not None and would
-                            # have rendered "named in nan% of answers". A brand
-                            # row can now carry NULL here — the export gave no
-                            # question count for it (Chunk X).
-                            + (f" / named in {r['presence_rate'] * 100:.0f}% of answers"
-                               if pd.notna(r['presence_rate']) else "")
-                            for _, r in men.iterrows()))
+                        # pd.notna, not `is not None`: a SQL NULL arrives from
+                        # pandas as NaN, which IS not None and would have rendered
+                        # "named in nan% of answers". A brand row can carry NULL
+                        # here — the export gave no question count for it (Chunk X).
+                        report.append(m.get(
+                            "sov.mention_share_intro",
+                            values=", ".join(
+                                m.get("sov.mention_share_value",
+                                      entity=r['entity'],
+                                      you_clause=(
+                                          m.get("sov.mention_share_you_clause")
+                                          if r['is_client'] else ""),
+                                      share=(r['mention_share'] or 0),
+                                      presence_clause=(
+                                          m.get("sov.mention_share_presence_clause",
+                                                presence=r['presence_rate'] * 100)
+                                          if pd.notna(r['presence_rate']) else ""))
+                                for _, r in men.iterrows())))
                     # …and the remainder, so the shares visibly sum to 100.
                     other_share = brands[brands['category'] == 'other']['mention_share'].sum()
                     if other_share:
                         other_names = sorted(
                             brands[brands['category'] == 'other']['entity'].dropna().unique())
-                        report.append(
-                            f"**Other brands (not you, not a tracked competitor):** "
-                            f"{other_share:.0f}% of mentions"
-                            + (f" — {', '.join(other_names[:8])}" if other_names else "")
-                            + ". A tracked rival that is mentioned but never cited used "
-                              "to land here and be filtered out of the line above.")
+                        report.append(m.get(
+                            "sov.other_brands", share=other_share,
+                            names_clause=(
+                                m.get("sov.other_brands_names_clause",
+                                      names=", ".join(other_names[:8]))
+                                if other_names else "")))
                     gap_rows = eng[eng['cited_gap'] == 1]   # single source: the persisted flag
                     if not gap_rows.empty:
-                        report.append("⚔️ **Cited but you're not:** "
-                                      + ", ".join(sorted(gap_rows['entity'].dropna().unique())))
+                        report.append(m.get(
+                            "sov.cited_gap",
+                            entities=", ".join(
+                                sorted(gap_rows['entity'].dropna().unique()))))
 
             # 3g. Branded-Demand Benchmark (C3 / SC-5)
             df_brand = pd.read_sql_query('''
@@ -1132,37 +1146,27 @@ class ReportGenerator:
             ''', conn, params=(run_id,))
 
             if not df_brand.empty:
-                report.append("\n## Branded-Demand Benchmark")
-                report.append("Brand-search demand, you vs competitors, estimated from public "
-                              "search volume for each practice's **display brand** (e.g. "
-                              "\"Lavender Counselling\", not the bare stem \"lavender\"). "
-                              "_Competitor figures are volume-estimated (not click-measured); "
-                              "the exact query strings are in the `queries` column of the "
-                              "Branded Demand Excel sheet — see `estimation_basis`._")
+                report.append(m.get("headings.brand_demand"))
+                report.append(m.get("brand_demand.intro"))
                 n_unavailable = int((df_brand['estimation_basis'] == 'volume_unavailable').sum())
                 if n_unavailable:
                     # C-C-11: this used to be an all-or-nothing caveat, because a
                     # per-brand provider failure was stored as 0 volume and a 0.00%
                     # share. Now each unmeasured brand is NULL and says so.
-                    report.append(f"\n> ⚠️ **{n_unavailable} of {len(df_brand)} brand(s) could not "
-                                  f"be measured this run** — the search-volume source did not "
-                                  f"answer for them (likely a DataForSEO outage). Their volume is "
-                                  f"unknown, not zero, and they are excluded from the share "
-                                  f"denominator.")
+                    report.append(m.get("brand_demand.unavailable",
+                                        n=n_unavailable, total=len(df_brand)))
                 n_ambiguous = int((df_brand['estimation_basis'] == 'ambiguous_brand').sum())
                 if n_ambiguous:
-                    report.append(f"\n> ⚠️ **{n_ambiguous} brand name(s) are ambiguous** — the bare "
-                                  f"stem's search volume swamps the practice name's "
-                                  f"(`branded_demand.ambiguous_brand_ratio`), so the demand cannot "
-                                  f"be attributed to the practice. Their share and growth are "
-                                  f"withheld and they are excluded from the share denominator.")
+                    report.append(m.get("brand_demand.ambiguous", n=n_ambiguous))
                 disp = df_brand.copy()
                 disp['brand'] = disp.apply(
-                    lambda r: (f"⭐ {r['brand']} (you)" if r['domain'] == client_domain
+                    lambda r: (m.get("icons.you", value=r['brand'])
+                               if r['domain'] == client_domain
                                else r['brand']), axis=1)   # own row identifiable regardless of anchor
                 # `queries` is Excel-only: one row can carry seven query strings, which
                 # would make the markdown table unreadable.
-                report.append(md_table(disp.drop(columns=['queries']), index=False))
+                report.append(md_table(disp.drop(columns=['queries']),
+                                       messages=m, index=False))
 
             # 3h. Reputation-Risk Radar (C6 / SC-8)
             df_risk = pd.read_sql_query('''
@@ -1183,11 +1187,8 @@ class ReportGenerator:
                 risk_coverage = {"unrecorded": True}
             unreadable = anchor_data_unreadable(risk_coverage)
             if not df_risk.empty or unreadable:
-                report.append("\n## Reputation-Risk Radar")
-                report.append("Patterns Google is known to penalize — visibility cliffs, off-topic "
-                              "commercial subfolders (site-reputation abuse), ranking volatility, "
-                              "and paid-link/PBN footprints in inbound anchor text. "
-                              "_**Pattern detections, not confirmed Google penalties.**_")
+                report.append(m.get("headings.risk_radar"))
+                report.append(m.get("risk_radar.intro"))
                 # C-C-06 / C-M-07: say why a cliff may be absent. The series is now
                 # per RUN (not per calendar day) and normalised by how many keywords
                 # were measured, and it is withheld entirely below
@@ -1195,31 +1196,31 @@ class ReportGenerator:
                 # be readable as "we looked and the visibility held".
                 cliff_floor = (self.config.get("risk_signals", {}) or {}).get("cliff_min_sample")
                 if cliff_floor:
-                    report.append(
-                        f"\n_`visibility_cliff` is computed per RUN from every ranked "
-                        f"keyword of that run, as the share in the top 10, and only for "
-                        f"domains with at least {cliff_floor} measured keywords in two or "
-                        f"more runs (`risk_signals.cliff_min_sample`). Below that the "
-                        f"signal is withheld, not reported as stable._")
+                    report.append(m.get("risk_radar.cliff_floor",
+                                        floor=cliff_floor))
                 report.extend(anchor_caveat_lines(
                     df_risk['signal_type'].tolist() if not df_risk.empty else [],
-                    risk_coverage))
+                    risk_coverage, m))
                 if df_risk.empty:
-                    report.append("_No risk signals detected in this run._")
+                    report.append(m.get("risk_radar.none_detected"))
                 own = df_risk[df_risk['is_own_site'] == 1]
                 if not own.empty:
-                    report.append("\n### ⚠️ Own-site warnings")
+                    report.append(m.get("headings.risk_own_site"))
                     for _, r in own.iterrows():
-                        report.append(f"- **{r['signal_type']}** ({r['severity']}) on "
-                                      f"{r['domain']}: {r['evidence_json']}")
+                        report.append(m.get("risk_radar.own_row",
+                                            signal_type=r['signal_type'],
+                                            severity=r['severity'],
+                                            domain=r['domain'],
+                                            evidence=r['evidence_json']))
                 comp = df_risk[df_risk['is_own_site'] == 0]
                 if not comp.empty:
-                    report.append("\n### 🔎 Competitor risk signals (opportunity intel)")
+                    report.append(m.get("headings.risk_competitors"))
                     report.append(md_table(comp[['domain', 'signal_type', 'severity']],
-                                           index=False))
+                                           messages=m, index=False))
                     for _, r in comp[comp['signal_type'] == 'anchor_text_spam'].iterrows():
-                        report.append(f"- **{r['domain']}** anchor-text evidence: "
-                                      f"{r['evidence_json']}")
+                        report.append(m.get("risk_radar.anchor_evidence_row",
+                                            domain=r['domain'],
+                                            evidence=r['evidence_json']))
 
             # 3i. YouTube Presence (SC-7-YT Phase 1). is_client is derived by domain match
             # (the branded-demand precedent), so the table carries no is_client column.
@@ -1232,49 +1233,37 @@ class ReportGenerator:
             ''', conn, params=(run_id,))
 
             if not df_yt.empty:
-                report.append("\n## YouTube Presence")
-                report.append("Which of your competitors run a YouTube channel, and how active — "
-                              "from the official YouTube **Data API** (a sanctioned metadata check, "
-                              "**not** scraping). _`confirmed` = the domain appears in the channel's "
-                              "About or the handle equals the domain stem; `candidate` = a name-only "
-                              "match **awaiting your confirmation** (see `TEST_RUN_CHECKLIST.md`); "
-                              "`none_found` = **none matched by a name search of the top 3 results** "
-                              "— not a measured 'no channel'; `error` = couldn't check this run "
-                              "(retryable). `channel?` reads `?` for both, because neither is "
-                              "evidence that the practice has no channel._")
+                report.append(m.get("headings.youtube"))
+                report.append(m.get("youtube.intro"))
                 disp = df_yt.copy()
                 disp['channel?'] = disp['has_channel'].apply(
                     lambda v: '✓' if v == 1 else ('✗' if v == 0 else '?'))
                 disp['domain'] = disp['domain'].apply(
-                    lambda d: f"⭐ {d} (you)" if d == client_domain else d)
+                    lambda d: m.get("icons.you", value=d) if d == client_domain
+                    else d)
                 cols = ['domain', 'channel?', 'handle', 'channel_title', 'subscriber_count',
                         'last_upload_date', 'uploads_recent', 'match_confidence', 'check_status']
-                report.append(md_table(disp[cols], index=False))
+                report.append(md_table(disp[cols], messages=m, index=False))
                 n_cand = int((df_yt['check_status'] == 'candidate').sum())
                 if n_cand:
-                    report.append(f"\n> ℹ️ **{n_cand} candidate channel(s)** matched by name only — "
-                                  "confirm identity before treating as the competitor's channel, "
-                                  "then seed `youtube_presence.channel_map` so future runs cost 1 "
-                                  "quota unit instead of ~100.")
+                    report.append(m.get("youtube.candidates", n=n_cand))
                 n_err = int((df_yt['check_status'] == 'error').sum())
                 if n_err:
-                    report.append(f"\n> ⚠️ **{n_err} check(s) errored** this run (quota/network) — "
-                                  "retryable, not recorded as 'no channel'.")
+                    report.append(m.get("youtube.errors", n=n_err))
 
             # 4. Strategic Openings & Reframes
             if reframes:
-                report.append("\n## 🎯 Automated Bowen Reframes")
-                report.append("_AI-drafted scaffolds for the Systemic Vacuums above. Each "
-                              "carries its own provenance line; People-Also-Ask context "
-                              "appears only on the legacy `market_analysis` path, because "
-                              "the Tool 1 handoff carries no PAA field._")
+                report.append(m.get("headings.reframes"))
+                report.append(m.get("reframes.intro"))
                 for r in reframes:
-                    report.append(f"\n### Reframe: {r['keyword']}")
-                    report.append(f"**Target URL:** {r['url']}")
+                    report.append(m.get("headings.reframe_entry",
+                                        keyword=r['keyword']))
+                    report.append(m.get("headings.reframe_url", url=r['url']))
                     if r.get('paa'):
-                        report.append(f"**User Anxieties (PAA):** {', '.join(r['paa'][:5])}")
+                        report.append(m.get("headings.reframe_paa",
+                                            paa=", ".join(r['paa'][:5])))
                     report.append("\n" + r['reframe'])
-                    report.append("\n---")
+                    report.append(m.get("headings.reframe_separator"))
 
         # Output paths — `orchestrator.reports_dir` when the GUI set one (C-C-16),
         # else the working directory as before.
@@ -1283,11 +1272,16 @@ class ReportGenerator:
             try:
                 os.makedirs(out_dir, exist_ok=True)
             except OSError as exc:
-                print(f"⚠️ Reports directory {out_dir} unusable ({exc}) — "
-                      f"writing to the working directory instead.")
+                print(self.messages.get("output.dir_unusable", path=out_dir,
+                                        error=exc))
                 out_dir = "."
         md_path = os.path.join(out_dir, f"strategic_briefing_run_{run_id}.md")
         excel_path = os.path.join(out_dir, f"audit_results_run_{run_id}.xlsx")
+
+        # Last, after every section has asked for its words: how many it could
+        # not find. The markers are already in the body; this is the count, so
+        # the reader does not have to hunt for them (P2).
+        report.extend(self.shortfall_lines())
 
         report_content = "\n".join(report)
         with open(md_path, "w") as f:

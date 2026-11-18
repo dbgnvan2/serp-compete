@@ -1,0 +1,365 @@
+{
+ "_comment": "Every sentence the strategic briefing prints. Moved out of Python source in review chunk Y17: Tool 1 has ten editorial text files and Tool 2 had none, so the report's caveats — what a figure does not mean, which population it was measured over, why a cell is blank rather than zero — were literals nobody could reword without opening Python. The EEAT heuristic caveat existed in three wordings, one of them already in shared_config.json and read by nothing; the handoff's page-relative ranks were warned about in four separately worded places. Read by Serp-compete/src/briefing_messages.py. A missing or malformed FILE raises, because a briefing rendered without its hedges states every figure as fact; a missing KEY prints [message missing: <key>] in the report and is counted, so a half-finished edit is visible rather than silent. Text in {braces} is filled in by the code — leave the names alone, reword everything around them. Keys ending .one / .many are a singular/plural pair chosen by a count.",
+ "messages": {
+  "_comment": "What the report says about its own missing messages.",
+  "shortfall": "> ⚠️ **{count} report message(s) could not be found** in `briefing_messages.json` and are shown as `[message missing: ...]` above: {keys}."
+ },
+ "gsc_comparability": {
+  "_comment": "The line stating which Google Search Console pull a section used, so a figure from this tool is not read beside one from serp-discover as though both described the same traffic. `country` and `device` each have one key per state; `pull_line` composes them. An unrecognised device is its own state, not `absent`: it pulls every device exactly as `all` does, but it is a typo rather than a decision, and printing the two the same way hides the misconfiguration.",
+  "country": {
+   "absent": "No country filter, so this is global traffic and is NOT comparable with the DataForSEO SERP snapshot, which requests `{snap_country}`. ",
+   "matches": "The country filter matches the DataForSEO SERP snapshot, which also requests `{snap_country}`, so the two are comparable. ",
+   "differs": "The DataForSEO SERP snapshot requests `{snap_country}`, so these clicks and those ranks are NOT the same market and are NOT comparable. "
+  },
+  "device": {
+   "unrecognised": "`gsc_settings.device` is `{raw_device}`, which GSC does not accept, so NO device filter was applied — these are all-device clicks by misconfiguration, not by choice, and are NOT comparable with the `{snap_device}` SERP snapshot. ",
+   "absent": "No device filter, so these are desktop and mobile clicks averaged together, while the SERP snapshot is `{snap_device}` only. ",
+   "matches": "The device filter matches the `{snap_device}` SERP snapshot. ",
+   "differs": "The SERP snapshot requests `{snap_device}`, so a {device}-only CTR is NOT comparable with the ranks beside it. "
+  },
+  "country_phrase": {
+   "present": "country `{country}`",
+   "absent": "no country filter"
+  },
+  "device_phrase": {
+   "present": "{device} only",
+   "absent": "every device"
+  },
+  "pull_line": "_Pull: last {days} days, {country_phrase}, {device_phrase}, query × page. {country_line}{device_line}serp-discover pulls GSC on its own window, country and device, which it states in its own report; figures from the two reports are comparable only where both state the same pull._",
+  "unset": "unset",
+  "client_mismatch": "> ⚠️ **Client mismatch:** {mismatch}."
+ },
+ "capped": {
+  "_comment": "The \"showing N of M\" note under a display-capped table. The caps are display-only (shared_config `reporting.*`) and every Excel sheet carries the full frame; a LIMIT in the SQL used to truncate both identically and say nothing.",
+  "complete": "_{total} {label}._",
+  "truncated": "_Showing the first {cap} of {total} {label} — the full set is in the Excel workbook._",
+  "labels": {
+   "_comment": "What each capped table counts, read into {label} above.",
+   "scored_pages": "scored page(s)",
+   "qualifying_pages": "qualifying page(s)",
+   "vacuums": "vacuum(s)",
+   "profiled_pages": "profiled page(s)"
+  }
+ },
+ "extractability": {
+  "citation_check": {
+   "_comment": "Do the Strong-tier pages actually get cited? The serp-discover AI-visibility export is the one thing in this system that records real citations, and the extractability section never looked at it. A Strong tier with no citation is the honest counter-evidence to a structural heuristic.",
+   "no_export": "_No AI-visibility export was consumed this run, so no page here can be checked against a real citation._",
+   "no_strong_tier": "_No Strong-tier pages this run, so there is nothing to check against the citation data._",
+   "result": "_Checked against the AI-visibility export: of the Strong-tier domains, {confirmed} of {total} were actually cited by an engine{confirmed_clause}{unconfirmed_clause}. A Strong tier with no citation is evidence against the heuristic, not against the page._",
+   "confirmed_clause": " ({names})",
+   "unconfirmed_clause": "; not cited: {names}"
+  },
+  "_comment2": "C-M-14: the section used to be headed \"Why Competitors Get Cited\" and told the owner these structures are WHY rivals get cited, while nothing here checks whether any page is cited by anything.",
+  "intro": "Structural features associated with being quoted by AI answer engines (FAQ schema, question-shaped headings, credentialed authorship, freshness). **Nothing in this section measures citations** — it reads page structure and nothing else. Treat it as a build checklist, not as an explanation of why a rival is cited.",
+  "row": "- **{url}** — _{tier}_: {why_cited}",
+  "footnote": "\n_Heuristic structural proxies for AI citability, not measured citations. Answer-first placement and FAQ-answers-in-HTML are not yet measured._",
+  "why_cited_unreadable": "Page could not be fully retrieved; extractability not assessed.",
+  "why_cited_none": "No strong extractability signals detected — this page carries little structural advantage for AI citation, so a well-structured systemic alternative can compete on citability.",
+  "why_cited_signals": "{tier} extractability signals: {joined}. Structures of this kind are believed to help an answer engine quote a passage; whether this page is actually cited is not measured here.",
+  "_comment3": "C-M-14: `why_cited_signals` used to assert causation — \"These structures make the page easy for AI answer engines to quote\" — under a section header reading \"Why Competitors Get Cited\", while nothing here checks whether the page is cited by anything.",
+  "profile_caveat": "Heuristic structural proxy for AI citability, not a measured citation.",
+  "_comment4": "`profile_caveat` is stored on every GeoProfile row and `eeat.row_caveat` on every EEAT score row, so each is reader-facing text persisted per page rather than rendered once. They were dataclass-field defaults in geo_profiler.py and eeat_scorer.py. Changing either changes rows written from now on; rows already in the database keep the wording they were written with, which is what a stored value means."
+ },
+ "headings": {
+  "_comment": "The report's own headings, in render order. Here and not in Python because three of them were duplicated literals — \"Identified 'Traffic Magnets'\" appeared three times and the feasibility heading twice, so the magnet section could be renamed in one place and keep its old name in the other two. The Excel SHEET names and column headers are deliberately NOT here: those are a format contract that consumers and tests read by name.",
+  "title": "# Serp-comp Strategic Briefing (Run ID: {run_id})",
+  "client": "**Client:** {client_domain}",
+  "date": "**Date:** {timestamp}",
+  "handoff": "**Handoff:** {handoff}",
+  "handoff_not_recorded": "not recorded for this run",
+  "executive_summary": "\n## Executive Summary",
+  "gsc_section": "\n## 📈 Internal GSC Performance Gaps",
+  "gsc_target_gaps": "\n### High Impression / Low CTR Gaps",
+  "gsc_low_hanging": "\n### Low-Hanging Fruit (Page 2 Targets)",
+  "gsc_mismatches": "\n### Clinical Mismatches",
+  "token_usage": "\n## 💰 AI Token Usage",
+  "volatility": "\n## 📉 Volatility Alerts",
+  "fragile_magnets": "\n## 🚩 Expert Alerts: Fragile Magnets (authority drift)",
+  "missing_data": "\n### ⚠️ Missing Data Alert",
+  "competitor_summary": "\n## Competitor Ranking Summary",
+  "eeat": "\n## EEAT Competitive Analysis (Heuristic)",
+  "clusters": "\n## Internal Linking Cluster Analysis",
+  "magnets": "\n## Identified 'Traffic Magnets'",
+  "vacuums": "\n### ⚡ Strategic Targets: Systemic Vacuums",
+  "extractability": "\n## Extractability signals (structural, unvalidated)",
+  "serp_overlap": "\n## SERP Overlap & Differentiation Gap",
+  "action_queue_exclusive": "\n### ⚔️ Action queue — exclusive-competitor (rivals rank, you're absent)",
+  "action_queue_commodity": "\n### 🔁 Action queue — shared-commodity (differentiate or deprioritize)",
+  "feasibility": "\n### 🎯 Competitor Feasibility (your DA vs. each competitor)",
+  "positioning": "\n## Barbell Positioning Diagnostic",
+  "sov": "\n## Competitive AI Share-of-Voice",
+  "sov_engine": "\n### {engine}",
+  "brand_demand": "\n## Branded-Demand Benchmark",
+  "risk_radar": "\n## Reputation-Risk Radar",
+  "risk_own_site": "\n### ⚠️ Own-site warnings",
+  "risk_competitors": "\n### 🔎 Competitor risk signals (opportunity intel)",
+  "youtube": "\n## YouTube Presence",
+  "reframes": "\n## 🎯 Automated Bowen Reframes",
+  "reframe_entry": "\n### Reframe: {keyword}",
+  "reframe_url": "**Target URL:** {url}",
+  "reframe_paa": "**User Anxieties (PAA):** {paa}",
+  "reframe_separator": "\n---"
+ },
+ "executive_summary": {
+  "intro": "This report identifies strategic openings where competitors rely on the 'Medical Model' and provides automated Bowen-based reframes."
+ },
+ "run_coverage": {
+  "_comment": "What the console used to keep to itself: how many handoff domains were audited, which were skipped and why, and what was measured. In the artefact rather than only in a console line somebody read once (P2) — the report is what is still here weeks later.",
+  "line": "\n**Run coverage:** audited {domains_audited} of {domains_in_handoff} handoff domain(s); Page Authority measured for {pa_measured} of {pa_total} audited URL(s).",
+  "skipped": "**Skipped domains:** {domains}.",
+  "skipped_item": "{domain} — {reason}",
+  "db_cleanup": "> ⚠️ **Database cleanup:** {db_cleanup}.",
+  "pa_unmeasured": "> ⚠️ **Page Authority was unmeasured** for {domains}. The `avg PA > 50` high-authority filter could not be applied to them, and their authority figures are NULL (unknown), not 0.",
+  "enrichment_unavailable": "> ℹ️ **Keyword enrichment was unavailable** for {items}. Those domains were audited on their handoff targets only.",
+  "enrichment_item": "{domain} ({reason})",
+  "blocked": "> 🛑 **Blocked by the 429 circuit breaker** (remaining pages not audited): {domains}.",
+  "cached": "> ⚡ **Served at least one page from the 7-day semantic cache:** {domains}. Their scores are as fresh as that cached scrape, not as this run.",
+  "incomplete_tiers": "> ℹ️ **Tier counts incomplete** for {domains} (pages cached before the counts were persisted), so their `market_position` classification is withheld this run.",
+  "universe": "**Keyword universe:** {handoff} handoff target(s); {kept} enrichment keyword(s) kept, {dropped_brand} dropped as the competitor's own brand and {dropped_irrelevant} as off-topic.",
+  "unrecorded": "\n_Run coverage was not recorded for this run — how many handoff domains were audited, skipped or unmeasured is unknown here, not zero._"
+ },
+ "rank_semantics": {
+  "_comment": "ONE fact: serp-discover stores SerpAPI's per-page `position` verbatim and concatenates paginated pages without an offset, so the handoff's ranks restart at 1 on every SERP page and a \"rank 2\" may be the second result of page 3. Before chunk Y17 that one fact was warned about in four separately worded places — here, the magnet filter, the SERP-overlap cells and the positioning axis — each with its own citation of the same finding, so rewording it meant finding all four. They are not duplicates, so nothing would have found them for you. `shared_config.json` `handoff.absolute_rank_versions` is what retires these warnings.",
+  "finding_citation": "review finding H1 / D-C-01, open on the serp-discover side",
+  "undetermined": "> ⚠️ **The handoff's rank convention could not be determined** ({error}), so whether the `rank` column holds an absolute SERP position or serp-discover's per-page one is unknown for this run. Treat it as page-relative until checked — that is what every shipped handoff version carries.",
+  "page_relative": "> ⚠️ **Handoff ranks are page-relative.** This handoff is schema v{version}, which carries serp-discover's per-page SERP `position` rather than an absolute one ({citation}). Several targets can therefore share a rank, and a rank of 2 may be the second result of page 3. Read the `rank` column below as \"where on its SERP page\", not as a market position; `handoff.absolute_rank_versions` in `shared_config.json` is what retires this warning.",
+  "version_unknown": "?"
+ },
+ "gsc_section": {
+  "intro": "Analysis of our own site's performance in Google Search Console.",
+  "target_gaps_intro": "These internal keywords are being seen but not clicked. Reframe the Meta Titles with systemic depth.",
+  "low_hanging_intro": "Internal pages ranking in positions 11-20. A systemic boost could push them to Page 1.",
+  "mismatches_intro": "Detected instances where our Systems-heavy pages are being found via Medical Model queries."
+ },
+ "token_usage": {
+  "prompt": "- **Prompt Tokens:** {count}",
+  "completion": "- **Completion Tokens:** {count}",
+  "total": "- **Total Tokens:** {count}"
+ },
+ "volatility": {
+  "_comment": "C-M-20: the sign convention was never stated, and in SERP positions a bigger number is worse — the opposite of most metrics.",
+  "sign_convention": "_`shift` is the change in the domain's average position since the previous run: **positive = moved DOWN** (worse), negative = moved up. Averaged over the keywords both runs measured._"
+ },
+ "fragile_magnets": {
+  "_comment": "ONE authority-drift detector. There used to be two, under two headings, for the same event. The threshold clause is omitted when no alert carried a threshold, so the sentence does not claim a number it does not have.",
+  "intro": "Competitor pages whose Moz Page Authority fell measurably between this run and the previous run that saw the same page{threshold_clause}. _A page whose authority was not measured in both runs is absent from this list — unknown, not unchanged._",
+  "threshold_clause": ", by at least {threshold:g} point(s) (`risk_signals.pa_drop_min`, editorial and uncalibrated)",
+  "rank_unchanged": "rank unchanged",
+  "rank_drift": "rank drift {rank_drift}",
+  "rank_not_measured": "rank not measured in both runs",
+  "row": "- **{domain}** ({keyword}): Page Authority drift {da_drift:g}, {rank_note}. **Strategic Advice:** {advice}",
+  "other_row": "- **{type}**: {domain} ({keyword})"
+ },
+ "systemic_depth": {
+  "_comment": "What a domain's `systemic_depth` cell reads. The KEYS are the states the code decides between; the VALUES are the words. `Surface-Level` is also a value stored in the database and compared against in SQL and in the magnet filter, so its value here must stay in step with `semantic.py` — a test asserts it. The same shape as Tool 1's `feasibility_messages.yml` statuses.",
+  "not_recorded": "Not recorded",
+  "bowen": "Bowen (Tier 3 present)",
+  "systems": "Systems (Tier 2 only)",
+  "surface": "Surface-Level",
+  "trace": "Trace (1-2 Tier 2 terms)",
+  "none": "None detected"
+ },
+ "competitor_summary": {
+  "missing_data": "No ranking data found for: {domains}",
+  "column_caveat": "_`sampled_keywords` is the number of DISTINCT keywords this run audited for the domain — its handoff targets plus any enrichment keywords that passed the relevance filter — not the keywords it ranks for in total. `pages_audited` is how many of its pages were scored (capped by `technical.max_audit_pages_per_domain`). `avg_pos` averages whatever each keyword's source measured: the handoff rank for a handoff keyword, DataForSEO's `rank_group` for an enrichment one. `systemic_depth` reads the Tier-2/Tier-3 counts; `Not recorded` means a cached page predates those counts._",
+  "keyword_provenance": "\n**Keyword provenance:** {counts}. `handoff` keywords are what Serp-Discover measured ranking; `ranked_keywords` are DataForSEO enrichment keywords kept only when they are in the handoff set or carry a clinical term, and never when they contain the competitor's own brand token.",
+  "provenance_item": "{source}: {count}"
+ },
+ "eeat": {
+  "_comment": "The EEAT section. `caveat` is the chunk's headline case: the same claim existed in THREE wordings — a rendered `_Note: These scores are heuristic proxies...` line in reporting.py, a docstring in eeat_scorer.py, and `eeat_client_messaging.caveat` in shared_config.json, which is the right kind of place for it and which no module read. The config wording is the one kept, because it is the owner's and it says more; the rendered literal is gone and the `eeat_client_messaging` block was removed from shared_config.json so there is one home. `positioning` and `confidence_levels` came from that same block and are still rendered by nothing — kept verbatim so the owner's words are not lost, and recorded as an open editorial decision rather than deleted by a refactor.",
+  "intro": "Experience, Expertise, Authoritativeness, and Trustworthiness heuristic scores.",
+  "no_composite": "> ⚠️ **No EEAT composite could be computed for any page.** The signals below were read, but the scores were not: check that `eeat_weights` is present in `shared_config.json` — without it there is nothing to weight the signals with, and the scorer returns unknown for every dimension. This is not a finding about the competitors.",
+  "score_caveat": "_Each score is a weighted sum of BOOLEAN signals, so it moves in steps, not continuously — trustworthiness, for example, can only be 0, 0.3, 0.4, 0.6, 0.7 or 1.0, and 0.4 of it is simply whether the URL is https. `score_confidence` is now **signal coverage** (the share of weighted signals that could be read at all), and it is capped below `high` whenever one of the four composites could not be computed — it used to read `high` for every page that loaded. Authoritativeness uses the domain's Moz Domain Authority; it was being given the individual URL's Page Authority._",
+  "caveat": "\n_These scores are heuristic structural signals based on SEO industry conventions, not Google's proprietary EEAT model. Use as competitive analysis framework, not authoritative SEO measurement._",
+  "positioning": "EEAT scores help identify competitive strengths/weaknesses in page structure, author credentials, authority signals, and trust indicators. They inform strategy but should not be presented as definitive SEO authority.",
+  "confidence_levels": {
+   "_comment": "Moved verbatim from `shared_config.eeat_client_messaging.confidence_levels`. Rendered by nothing today.",
+   "high": "0.8-1.0: Comprehensive signals detected. Scores are reliable.",
+   "medium": "0.5-0.8: Moderate signal coverage. Scores are indicative.",
+   "low": "0.0-0.5: Limited signals. Scores are exploratory only."
+  },
+  "row_caveat": "Heuristic proxy. Not Google's actual EEAT model."
+ },
+ "clusters": {
+  "intro": "Detection of hub pages and linking patterns within competitor sites.",
+  "sample_caveat": "\n_Note: Analysis based on N≤3 scraped pages per domain. Full site structure not visible._"
+ },
+ "icons": {
+  "_comment": "What an unknown value reads as in a rendered markdown table. An em dash, not an empty cell: a blank is indistinguishable from a rendering fault, and the briefing's whole convention is that absence is stated. `reporting.UNKNOWN_CELL` reads this; a second bare \"—\" literal in the cluster table used to bypass the constant entirely.",
+  "unknown_cell": "—",
+  "you": "⭐ {value} (you)"
+ },
+ "magnets": {
+  "_comment": "The report's primary action list. Three states, all stated: pages qualified, none qualified, nothing could be scored — a reader seeing no heading cannot tell the last two apart (P2). The heading used to be three separate literals, one per state, so renaming the section renamed it in one state only.",
+  "filter_note": "_Filter: handoff rank ≤ {max_pos}, medical_score ≥ {floor} (`technical.vacuum_min_medical`, editorial and uncalibrated), and the keyword is in the handoff set or carries a clinical term and not the competitor's own brand token. `est_traffic` is DataForSEO's estimated monthly visits for that keyword×position, 0 when it was not measured. `medical_score` is a COUNT of Tier-1 terms and `medical_per_1000` the same count per 1000 scored words (`words` is the window it was counted over) — the count alone meant different things in a short page and a long one._",
+  "rank_filter_inoperative": "\n\n> ⚠️ **The `rank ≤ {max_pos}` criterion is not in force.** This handoff's ranks restart at 1 on every SERP page (schema v{version}; {citation}), so a result at true position 25 carries a rank of 5 and passes. On the reference run's rank distribution the filter admits **every** result, including true position 29. Read the list below as \"handoff pages that clear the medical floor and the relevance test\" — NOT as \"competitor pages that rank well\". It is longer than the definition implies, and some of these pages are on page 2 or 3 of the SERP. The Systemic Vacuums and the gpt-4o reframe targets below share this filter and inherit the same qualification.",
+  "count_line": "{n} of {audited} audited page(s) meet the magnet definition. {capped_note}",
+  "none_qualified": "None of the {audited} audited page(s) met the magnet definition this run.",
+  "nothing_scored": "**No page could be scored this run**, so there is nothing to qualify or to rule out. This is not a finding that competitors have no Traffic Magnets — see the run coverage in the Executive Summary for which domains were blocked, skipped or unmeasured.",
+  "vacuums_intro": "These competitors rank on a handed-over keyword using medical language and show no real systemic framing. They are our **primary targets** for content reframing.",
+  "vacuum_row": "- **{domain}** ({keyword} — {source}, rank {rank}): Medical Score {medical_score}, Systems Score {systems_score}{label_clause}",
+  "vacuum_label_clause": " [{label}]"
+ },
+ "serp_overlap": {
+  "_comment": "The top-N test is ASYMMETRIC while the handoff's ranks are page-relative, and this section's `exclusive_competitor` cell is described as the top action queue — so the distortion has to be stated here. `comp_top` filters competitor positions on `p <= top_n`, where a handoff-sourced position restarts at 1 on every SERP page; `self_present` filters the client's GSC position, which is absolute. The competitor column is itself a MIX: handoff rows carry the page-relative rank, enrichment rows carry DataForSEO's absolute `rank_group` (C-C-17).",
+  "intro": "Where you and tracked competitors collide on shared SERPs (AI-absorption risk) vs. where you're uniquely present (defensible). Cells: `shared_commodity` / `shared_defensible` / `exclusive_self` / `exclusive_competitor` / `absent`. _'Commodity' is a local overlap-density proxy — a strategic framing, not a measured index._",
+  "asymmetric_warning": "\n> ⚠️ **The top-{top_n} test is asymmetric, so the cells are skewed against you.** Competitor positions come from the handoff, whose ranks restart at 1 on every SERP page ({citation}); your own position comes from Search Console and is absolute. A rival therefore counts as \"in the top {top_n}\" at any true position, while you count only if you genuinely are. Rivals at true positions 14, 22 and 27 with you at 12 is reported as `exclusive_competitor` — \"your clearest content gaps\" — for a keyword where nobody is in the top {top_n} and you are the closest. `exclusive_competitor` and `shared_commodity` are therefore overstated and `exclusive_self` understated. The competitor column also mixes scales: handoff keywords are page-relative, enrichment keywords are absolute.",
+  "self_unknown_warning": "\n> ⚠️ **Client GSC positions were unavailable this run** — self-presence is UNKNOWN for these keywords (shown as `self_unknown`); exclusive-competitor / exclusive-self classifications are withheld to avoid a false 'you're absent'.",
+  "cell_distribution": "\n**Cell distribution:** {counts}",
+  "best_rival_etv": "**Best-rival ETV by cell** (summed DataForSEO estimated monthly visits of the best-ranking competitor per keyword — not search volume, not your traffic): {values}",
+  "action_queue_truncated": "  _(top {shown} of {total})_",
+  "exclusive_row": "- **{keyword}** ({n} rivals in top-N){gap_clause}",
+  "exclusive_row_gap_clause": " — **every tracked rival ranks**",
+  "commodity_row": "- **{keyword}** (you + {n} rivals; commoditized SERP)",
+  "footnote": "\n_{vacuum_clause}Competitor positions are SERP-measured; self_position is first-party GSC (see estimation_basis in the Excel sheet)._",
+  "footnote_vacuum_clause": "Folds in the Systemic Vacuum list above (not duplicated). ",
+  "_framework_caption_comment": "Moved verbatim from `shared_config.serp_overlap.framework_caption`, which no module read. It overlaps the rendered `intro` above without duplicating it, so it is kept rather than deleted and whether the report should render it is an editorial decision for the owner.",
+  "framework_caption": "SERP overlap is a strategic framing of shared vs. defensible ground, not a measured commodity index. 'Commodity' here is a local overlap-density proxy (how many tracked rivals share the SERP); upgrade to the serp-discover D4 commodity export when it exists.",
+  "_action_queue_row_cap_comment": "The row cap itself is NOT here: it is a threshold, not wording, and its two siblings `reporting.markdown_row_cap` and `reporting.magnet_markdown_row_cap` are in shared_config.json. It lived here briefly in chunk Y17 so the prose that quotes it could not drift from the slice; `action_queue_truncated` interpolates it instead, which gives the same coupling without a threshold in a file of sentences (cold review of Y17, M2)."
+ },
+ "feasibility": {
+  "_comment": "Silence here used to be indistinguishable from \"no competitor was scorable\". The commonest cause is an unmeasured client DA: `feasibility_by_competitor` withholds every verdict rather than computing them all from a default of 0. The `+ {threshold}` in the intro interpolates `technical.feasibility_threshold` from `shared_config.json`, the key `analysis.check_feasibility` actually reads — externalising the sentence without the number is the drift this file exists to stop (C-M-18 / C-C-14).",
+  "not_computed": "_Not computed this run. Feasibility needs **your** Domain Authority and each competitor's; if `client.da` is absent from `shared_config.json` (decision 6 makes it an override to a live provider lookup) every verdict is withheld rather than computed from a default of 0, which would have read \"not feasible — Hyper-Local Pivot\" for every rival. This is not a finding that no competitor is beatable._",
+  "intro": "Whether a systemic counter-page can realistically compete, from the Domain Authority gap (feasible when client DA + {threshold} ≥ competitor DA)."
+ },
+ "positioning": {
+  "_comment": "The authority axis is INFLATED while the handoff's ranks are page-relative, and by enough to move a domain across `positioning.authority_threshold` (50). `top10_count` is `MIN(position) <= 10` over the handoff keywords, and that position restarts at 1 on every SERP page, so every handoff keyword counts as a top-10 ranking. The quadrant is the verdict this section exists to give, so the warning cannot live in the coverage block.",
+  "intro": "Each domain on an **authority** (Moz DA + top-10 ranking count, the same formula for you and competitors) vs. **focus** (medical/systems tier-identity concentration) 2×2. _Barbell framing: winners are large-and-authoritative (`authoritative`) or small-and-niche (`niche_owner`); the undifferentiated `middle` is the danger zone. `emerging` / `insufficient_data` = too little signal to place, never silently `middle`. Rivals with avg PA > 50 are filtered upstream, so an empty `authoritative` quadrant does not mean none exist._",
+  "authority_inflated_warning": "\n> ⚠️ **The authority axis is overstated, and the quadrants with it.** `top10_count` counts handoff keywords whose rank is ≤ 10, and this handoff's ranks restart at 1 on every SERP page ({citation}) — so *every* handoff keyword counts as a top-10 ranking. A domain with ten or more of them saturates the component whatever its real positions: at Moz DA 30 with no genuine top-10 ranking at all, authority reads **51** instead of 30, which crosses `positioning.authority_threshold` ({threshold}). Treat `authority_score` and `quadrant` below as upper bounds, and `top10_count` as \"handoff keywords\", not \"top-10 rankings\".",
+  "quadrant_distribution": "\n**Quadrant distribution:** {counts}",
+  "focus_floor_footnote": "\n_`tier_tokens` is the unweighted Tier-1 + Tier-2/3 term count the focus figure was computed from; below {floor} (`positioning.min_focus_tokens`) focus is withheld and the domain reads `insufficient_data` rather than being placed on a handful of generic tokens. `top10_count` is over the handoff's keywords — the same universe for you and for competitors._",
+  "danger_zone": "\n⚠️ **Danger zone (undifferentiated middle):** {domains}.",
+  "_framework_caption_comment": "Moved verbatim from `shared_config.positioning.framework_caption`, which no module read. THREE sections carried a `framework_caption` that nothing rendered — `serp_overlap`, `positioning` and `sov` — the same dead-editorial-string case as `eeat_client_messaging` and found the same way. It says more than the rendered `intro` above (it carries the 2026-11-15 fix that stopped the client being authoritative by construction) and it is not a duplicate of it, so it is kept here rather than deleted by a refactor, and whether the report should render it instead of `intro` is an editorial decision for the owner.",
+  "framework_caption": "The barbell is a strategic framing — winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses — not a measured law. Authority = Moz DOMAIN Authority + how many of the handoff's keywords the domain ranks top-10 for, the same formula and the same keyword universe for you and competitors (fixed 2026-11-15: the competitor figure used to be the average PAGE authority of its sampled URLs and the client's top-10 count came from every GSC query it ranked for, so the client was authoritative by construction). Focus is tier-identity concentration (medical vs. systems language) over unweighted term counts, withheld as insufficient_data below positioning.min_focus_tokens. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist."
+ },
+ "sov": {
+  "_comment": "`measured` is three-valued. False = the export says this engine answered nothing. None = the export carried no brand-mention rows for it, which could be \"asked, nothing matched\" or \"never ran\" — the two are indistinguishable from the file, so they get separate wording rather than being collapsed. Each of the two sentences carries TWO grammatical-number switches, so the whole sentence has a `.one` / `.many` form rather than a Python conditional inside an f-string.",
+  "intro": "When the AI engines answer category questions, whose brand and sources come back. Consumed from serp-discover's AI-visibility probes (not re-probed here). _Rolling snapshots — LLM answers vary._",
+  "not_measured": {
+   "one": "\n_Not measured this run: {engines} — the export carried no answered questions for this engine, so it is excluded from the shares below rather than shown at 0%. Absence here is not evidence that the engine does not name these brands._",
+   "many": "\n_Not measured this run: {engines} — the export carried no answered questions for these engines, so they are excluded from the shares below rather than shown at 0%. Absence here is not evidence that the engine does not name these brands._"
+  },
+  "coverage_unknown": {
+   "one": "\n_Coverage unknown: {engines} — the export listed this engine but carried no brand mentions for it, which from the export alone could mean the questions were asked and no tracked brand came back, or that the engine did not run. Not counted either way._",
+   "many": "\n_Coverage unknown: {engines} — the export listed these engines but carried no brand mentions for them, which from the export alone could mean the questions were asked and no tracked brand came back, or that the engine did not run. Not counted either way._"
+  },
+  "mention_share_intro": "**Mention share** (share of all brand mentions this engine made) **and presence** (the share of answers the brand was named in): {values}",
+  "mention_share_value": "{entity}{you_clause} {share:.0f}%{presence_clause}",
+  "mention_share_you_clause": " (you)",
+  "mention_share_presence_clause": " / named in {presence:.0f}% of answers",
+  "other_brands": "**Other brands (not you, not a tracked competitor):** {share:.0f}% of mentions{names_clause}. A tracked rival that is mentioned but never cited used to land here and be filtered out of the line above.",
+  "other_brands_names_clause": " — {names}",
+  "cited_gap": "⚔️ **Cited but you're not:** {entities}",
+  "_framework_caption_comment": "Moved verbatim from `shared_config.sov.framework_caption`, which no module read — the third of the three dead captions. Same editorial decision as the other two.",
+  "framework_caption": "AI Share-of-Voice is CONSUMED from serp-discover's AI-visibility probes (not re-probed here). Values are rolling snapshots — LLM answers vary between runs and model versions."
+ },
+ "brand_demand": {
+  "_comment": "C-C-11: the unmeasured caveat used to be all-or-nothing, because a per-brand provider failure was stored as 0 volume and a 0.00% share. Each unmeasured brand is now NULL and says so.",
+  "intro": "Brand-search demand, you vs competitors, estimated from public search volume for each practice's **display brand** (e.g. \"Lavender Counselling\", not the bare stem \"lavender\"). _Competitor figures are volume-estimated (not click-measured); the exact query strings are in the `queries` column of the Branded Demand Excel sheet — see `estimation_basis`._",
+  "unavailable": "\n> ⚠️ **{n} of {total} brand(s) could not be measured this run** — the search-volume source did not answer for them (likely a DataForSEO outage). Their volume is unknown, not zero, and they are excluded from the share denominator.",
+  "ambiguous": "\n> ⚠️ **{n} brand name(s) are ambiguous** — the bare stem's search volume swamps the practice name's (`branded_demand.ambiguous_brand_ratio`), so the demand cannot be attributed to the practice. Their share and growth are withheld and they are excluded from the share denominator."
+ },
+ "risk_radar": {
+  "_comment": "C-C-06 / C-M-07: say why a cliff may be absent. The series is per RUN (not per calendar day), normalised by how many keywords were measured, and withheld entirely below `risk_signals.cliff_min_sample` — so \"no visibility cliff\" must not be readable as \"we looked and the visibility held\". The four sentences that used to live in `risk_radar.py` are in this section too, because a reader meets them here.",
+  "intro": "Patterns Google is known to penalize — visibility cliffs, off-topic commercial subfolders (site-reputation abuse), ranking volatility, and paid-link/PBN footprints in inbound anchor text. _**Pattern detections, not confirmed Google penalties.**_",
+  "cliff_floor": "\n_`visibility_cliff` is computed per RUN from every ranked keyword of that run, as the share in the top 10, and only for domains with at least {floor} measured keywords in two or more runs (`risk_signals.cliff_min_sample`). Below that the signal is withheld, not reported as stable._",
+  "none_detected": "_No risk signals detected in this run._",
+  "own_row": "- **{signal_type}** ({severity}) on {domain}: {evidence}",
+  "anchor_evidence_row": "- **{domain}** anchor-text evidence: {evidence}",
+  "reach_unmeasured": "Anchor text matched a paid-link/PBN pattern, but its reach could not be measured, so there is nothing here about scale — treat this as a prompt to look, not as a finding. Anchors are written by other sites.",
+  "received_not_bought": "Inbound anchors show a paid-link/PBN footprint. Anchors are written by other sites, so this indicates links RECEIVED, not links necessarily bought — a domain can be targeted by a scheme it had no part in. Pattern detection, not a confirmed penalty.",
+  "anchor_spam_caveat": "_`anchor_text_spam` reflects links **received**, not links bought: anchors are written by other sites, so a domain can be targeted by a scheme it had no part in._",
+  "anchor_unrecorded": "_Anchor-text coverage was not recorded for this run. The absence of a coverage note here is not evidence that every domain was readable._",
+  "anchor_unavailable": "_Anchor-text data could not be retrieved for this run{reason_clause}, so no anchor-text signals could be computed. This is not evidence of a clean link profile for any competitor._",
+  "anchor_unavailable_reason_clause": " ({reason})",
+  "anchor_partial": "_Anchor-text coverage: {with_anchors} of {total} domain(s) had readable anchor data ({causes}). Absence of an anchor signal below is not evidence of a clean link profile for the domains that could not be read._",
+  "anchor_cause_errored": "errored",
+  "anchor_cause_skipped": "skipped",
+  "anchor_cause_unknown": "unrecognised status",
+  "anchor_errored_ages": "_Of the errored domains, {parts}._",
+  "anchor_errored_cached": "{n} came from Tool 1's cache rather than this run — one older outage being re-served, not a fresh one",
+  "anchor_errored_age_unknown": "{n} carried no collection date, so its age is unknown",
+  "console_coverage": "Anchor coverage: {with_anchors} of {total} domain(s) had anchor data{breakdown_clause}.",
+  "console_coverage_breakdown_clause": " ({breakdown})",
+  "console_errored_ages": "Of the errored domains: {cached} re-served from Tool 1's cache (an older outage, not this run's), {unknown_age} with no collection date."
+ },
+ "youtube": {
+  "intro": "Which of your competitors run a YouTube channel, and how active — from the official YouTube **Data API** (a sanctioned metadata check, **not** scraping). _`confirmed` = the domain appears in the channel's About or the handle equals the domain stem; `candidate` = a name-only match **awaiting your confirmation** (see `TEST_RUN_CHECKLIST.md`); `none_found` = **none matched by a name search of the top 3 results** — not a measured 'no channel'; `error` = couldn't check this run (retryable). `channel?` reads `?` for both, because neither is evidence that the practice has no channel._",
+  "candidates": "\n> ℹ️ **{n} candidate channel(s)** matched by name only — confirm identity before treating as the competitor's channel, then seed `youtube_presence.channel_map` so future runs cost 1 quota unit instead of ~100.",
+  "errors": "\n> ⚠️ **{n} check(s) errored** this run (quota/network) — retryable, not recorded as 'no channel'."
+ },
+ "reframes": {
+  "intro": "_AI-drafted scaffolds for the Systemic Vacuums above. Each carries its own provenance line; People-Also-Ask context appears only on the legacy `market_analysis` path, because the Tool 1 handoff carries no PAA field._",
+  "no_medical_vocabulary": "No medical vocabulary detected on this page (medical score 0) — reframe not applicable. Nothing was sent to the model.",
+  "provenance": "_Generated by {model} from the keyword, URL and score above — no page content was supplied._",
+  "api_error": "Error generating reframe: {error}",
+  "no_api_key": "OPENAI_API_KEY missing.",
+  "api_error_console": "OpenAI API Error: {error}",
+  "_prompt_comment": "Not report output. These are the words sent to the model, kept here because they are editorial by the same test — the owner is the person who would reword a Bowen instruction — and because a prompt that drifts from the report's own vocabulary is the drift this file exists to stop. Tool 1 keeps prompts in prompt files; this section is their equivalent and is explicitly separate from the rendered sections above.",
+  "prompt": {
+   "instruction_override": "You are a Bowen Family Systems expert. You are strictly forbidden from using diagnostic labels like 'Attachment Styles' or 'Toxic.' You must instead describe behavior as a reciprocal process of distance and pursuit to help the client see the system rather than the individual label. Use Bowen Natural Systems terminology exclusively.",
+   "paa_context": "\n**Anxiety Loop Evidence (User Questions):**\n- {questions}\n",
+   "body": "\n{instruction_override}\n\nA competitor page ({competitor_url}) is winning on the keyword '{keyword}' using a \"Medical Model\" approach (Medical Score: {medical_score}).\n\nYour task is to draft a \"Pattern-First\" content reframe blueprint (approx 500 words).\n\n### Instructions:\n1. **Identify the Anxiety Loop:** How does the medical model reinforce chronic anxiety? Use the following PAA questions to demonstrate the user's 'Label-Seeking' behavior:\n{paa_context}\nExplain how these questions represent an 'Anxiety Loop' where the user seeks a diagnostic label to lower the intensity of the relationship process.\n\n2. **The Systemic Reframe:** Shift the focus from individual pathology to the relationship system. Focus specifically on: {remapped_focus}.\nExample: If the user is asking 'Am I avoidant?' (Anxiety Loop), shift this to 'How is distance being used to regulate anxiety in the relationship?' (Systemic Reframe).\n\n3. **Bowen Concepts:** Apply concepts like Differentiation of Self, Triangles, and the Multigenerational Emotional Process.\n\n4. **Differentiation Strategy:** Why is a Bowen approach more effective for long-term functioning than individual 'tips and tools'?\n\nFormat as a professional Strategic Briefing.\n"
+  },
+  "prompt_unavailable": "No reframe was generated: `briefing_messages.json` carries no usable `{key}`, and a prompt with a `[message missing: ...]` marker in it would have been sent to the model and its answer written here as a reframe."
+ },
+ "output": {
+  "dir_unusable": "⚠️ Reports directory {path} unusable ({error}) — writing to the working directory instead."
+ },
+ "db_cleanup": {
+  "_comment": "Tool 1 keeps the same sentence in `serp_vocab.yml` under `db_cleanup`. Until this file Tool 2 had no editorial text file at all, so the wording was Python constants in `db_connect.py` and the two had to be changed together; `db_connect.py`'s own comment said so. Which consequence the sentence may claim is a fact about what failed, not a choice: a failed `close` comes after the commit, so the writes are durable; a failed `roll back` means a block raised and its transaction was abandoned, which is not \"the figures stand\" (the cold review of chunk Y13, P6).",
+  "warning": "{failures} database cleanup step(s) failed during this run ({detail}). {consequence} A cleanup that keeps failing usually means the database file or its directory has become unwritable, and each failed close holds a file handle open until the process exits",
+  "consequence_committed": "The run's own writes were committed and its figures stand.",
+  "consequence_rolled_back": "At least one of them was a failed rollback, which means a block raised and abandoned its transaction: what that step was writing is incomplete, and the earlier steps' committed figures stand.",
+  "detail_item": "{count} x {what}",
+  "bad_lock_timeout": "shared_config.json {section}.{key} is {raw!r}, which is not a positive number of seconds; using the documented default {default}."
+ },
+ "gsc_reports": {
+  "_comment": "The two standalone markdown reports `GSCManager` writes — gsc_strike_list.md and gsc_strategic_gap.md — as opposed to the `gsc_section` keys above, which are the GSC part of the strategic briefing. These were still Python literals after chunk Y17 moved the briefing's: the cold review found that two of them (`strike_intro`, `low_hanging_intro`) are near-identical rewordings of keys that had already moved, so 'one claim, several wordings' spanned two files instead of two places in one (M8). The empty-table sentences are the point: an empty strike list and a failed pull print the same thing, and only the sentence says so.",
+  "strike_title": "# GSC Intelligence: The Reality Check (Strike List)",
+  "generated_on": "Generated on: {date}",
+  "strike_heading": "\n## 🎯 Striking Distance Opportunities (Positions 11-25)",
+  "strike_intro": "These keywords are almost winning. Moving them to Page 1 could cause a massive traffic spike.",
+  "strike_table_header": "\n| Query | Current Position | Impressions | Associated URL | Clinical Pivot | Systemic Title recommendation |",
+  "strike_table_rule": "| :--- | :--- | :--- | :--- | :--- | :--- |",
+  "strike_empty_row": "| No data | - | - | - | - | - |",
+  "strike_empty": "\n**No rows.** Zero queries came back in positions 11-25 under the pull stated above — which is also what a failed pull and a site with no traffic on the filtered device print. Check the filters before reading this as nothing to do.",
+  "strike_empty_console": "No striking distance keywords found under the pull: {pull_note}",
+  "strike_written": "✅ GSC Strike List generated: {path}",
+  "gap_title": "# GSC Strategic Gap Report: The Reality Check",
+  "gap_target_heading": "\n## 1. High Impression / Low CTR Gaps (Tier 1 & 2)",
+  "gap_target_intro": "These keywords are being seen but not clicked. We need to reframe the Meta Titles with systemic depth.",
+  "gap_target_empty": "No significant gaps found under the pull stated above. That is not the same as none existing: a failed pull and a site with no traffic on the filtered device print this too.",
+  "gap_low_hanging_heading": "\n## 2. Low-Hanging Fruit (Page 2 Targets)",
+  "gap_low_hanging_intro": "These pages are ranking in positions 11-20. A small systemic boost could push them to Page 1.",
+  "gap_mismatch_heading": "\n## 3. Clinical Mismatches",
+  "gap_mismatch_intro": "Detected instances where a Systems-heavy page is being found via Medical Model queries.",
+  "gap_mismatch_empty": "No clinical mismatches detected.",
+  "gap_written": "✅ GSC Strategic Gap report generated: {path}"
+ },
+ "mining_report": {
+  "_comment": "Every sentence of `competitor_keyword_gaps.md`, the standalone report `competitor_mining.main` writes. Here for the same reason as `gsc_reports`: the filter list is the report's own account of what it did and did not apply, and the two warnings on it — the already-targeted list that was absent, and the domains the provider did not answer for — are the hedges that stop a reader taking the table as a complete set of gaps. They were Python literals in the one module the briefing's own prose guard did not cover.",
+  "title": "# Competitor Keyword Gap Analysis (Module I - Refined)",
+  "generated_on": "Generated on: {timestamp}",
+  "gap_summary_heading": "\n## Gap Summary",
+  "mined": "Mined {domains} domain(s).",
+  "filters_heading": "**Filters Applied:**",
+  "filter_depth": "- Depth: {per_domain} keywords per domain (`competitor_mining.keywords_per_domain`)",
+  "filter_numbers": "- Excluded: Keywords with numbers (addresses)",
+  "filter_brand": "- Excluded: the competitor's own brand token, on word boundaries",
+  "filter_volume": "- Volume: minimum search volume of {min_volume} (`competitor_mining.min_search_volume`, editorial and uncalibrated)",
+  "_filter_targeted_comment": "Stated, not implied: this filter used to be listed as applied while the file it needs was absent and every keyword passed.",
+  "filter_targeted_applied": "- Already-targeted keywords excluded, from `{filename}` ({count} loaded)",
+  "filter_targeted_missing": "- ⚠️ **NOT applied:** the already-targeted list (`{filename}`) was not found, so keywords already on the plan are listed below as gaps",
+  "unmeasured": "- ⚠️ **Unmeasured:** {items}. Those domains contributed no keywords because the provider did not answer — not because they have no gaps.",
+  "unmeasured_item": "{domain} ({reason})",
+  "table_header": "\n| Competitor Domain | Hidden Traffic Driver | Bowen Systemic Reframe | Est. Volume |",
+  "table_rule": "| :--- | :--- | :--- | :--- |",
+  "row": "| {domain} | {keyword} | **{reframe}** | {volume} |",
+  "reframe_placeholder": "Systemic Pattern Analysis: '{keyword}'",
+  "empty_no_domains": "_No domain could be mined this run — see the filters above._",
+  "empty_no_keywords": "_No competitor keyword passed the filters this run._",
+  "written": "✅ Refined Gap analysis report generated: {path}"
+ }
+}

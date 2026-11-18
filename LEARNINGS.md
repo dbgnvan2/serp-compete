@@ -969,3 +969,54 @@ Newest first. Format:
 - **Rule:** a standalone script that is *also* imported must use package-qualified imports (`from src.x`); a
   `try/except ImportError` guard around a feature can hide an entire disabled capability — grep the call
   *site* (P21) **and** assert the import in a test, don't trust that the class merely exists.
+
+**Every sentence the strategic briefing printed was a Python literal, and one claim carried four wordings.**
+- **Root cause (rule #9 / P32):** this repo had no editorial text file while the sibling tool had ten, so the
+  caveats, the comparability warnings and the "why there is no number here" lines could only be reworded in
+  Python. With no one home for a sentence, the same claim was written more than once: the EEAT heuristic caveat
+  existed in four wordings — rendered in `reporting.py`, a docstring in `eeat_scorer.py`, a dataclass default
+  stored on every score row, and `shared_config.eeat_client_messaging.caveat`, which no module read — and the
+  handoff's page-relative rank convention was warned about in four separately worded places, each citing the
+  same finding. They are not literal duplicates, so no de-duplication tool finds them.
+- **What would have caught it:** the two-way key-coverage guard added with the fix
+  (`tests/test_y17_the_briefing_prose_gets_a_file.py`): every key the code asks for exists in the file, and
+  every key in the file is asked for. The dead `eeat_client_messaging` block and three unread
+  `framework_caption` entries are what an unasked-for key looks like; the guard found four more
+  (`positioning.client_marker`, `risk_radar.own_heading`, `.competitor_heading`, `.anchor_coverage`) that the
+  migration itself had duplicated.
+- **Fix:** `briefing_messages.json` at the repo root with `src/briefing_messages.py` reading it once per render
+  and held. A missing or malformed FILE raises — a briefing without its caveats states every figure as fact —
+  while a missing KEY prints `[message missing: <key>]` and the render ends with how many it could not find
+  (P2). Workbook sheet names and column headers stayed in Python: they are a format contract read by name.
+- **Rule:** a reader-facing sentence has one home, and that home is a config file. A *source-text* guard over
+  the wiring is not a guard: this chunk's mutation gate walked straight through `source.index("...")` checks by
+  putting the call inside a comment and by hardcoding a number inside a closure, so the note and the shortfall
+  count were extracted into methods a test can call (P19/P27/P30). A fourth instance turned up in the cold
+  review's own fixes: a guard in `test_handoff_contract.py` asserted over `generate_strike_report`'s source
+  text, so it went red the moment the words left Python and would have gone green had the report stopped
+  printing them.
+- **What the cold review added, and what each says:**
+  - the duplication went from four wordings to **three**, not to one: the long rendered caveat, the short one
+    stored on every score row, and the module docstring. Three sections also still carry a `framework_caption`
+    restating their own rendered `intro`. Rewriting the report's editorial content is the owner's call, so both
+    are recorded as decisions and guarded against growing a further home — which is how the original defect was
+    built, one reasonable addition at a time;
+  - **a prompt is not a sentence the reader sees.** A missing-key marker rendered into an LLM prompt would be
+    sent, paid for, and the answer written into the briefing as a reframe, with nothing in the report saying a
+    hedge had gone missing. `Messages.prompt` returns `None` instead and the caller does not make the call
+    (P14);
+  - **a count that only covers one consumer is not the count the doc promises.** Six modules build a throwaway
+    `Messages`, and their markers landed in the briefing while the report's own count read zero. The ledger is
+    process-level now and reset by the entry point, like `db_connect._CLEANUP_FAILURES`;
+  - **the migration has to reach every artefact, not just the one named in the plan.** Three standalone
+    markdown reports (`gsc_strike_list.md`, `gsc_strategic_gap.md`, `competitor_keyword_gaps.md`) kept every
+    sentence in Python, two of them near-identical rewordings of keys that had moved — so the defect came to
+    span two files instead of two places in one. The prose guard's module list is what let that through: it
+    named six modules by hand (P29);
+  - **a row count is not a sentence.** The action-queue cap went into `shared_config.json`, not the messages
+    file, and degrades with a logged warning rather than printing an empty queue;
+  - **a hand-editable file gets the typo its format allows.** An unbalanced brace raises `ValueError` from
+    `str.format`; it is caught beside the missing placeholder now;
+  - **a config file that saves back differently is a whole-file diff.** `config_io` writes with
+    `ensure_ascii=False`, and one `\u2014` escape in a comment added to `shared_config.json` broke the
+    byte-for-byte round trip the GUI performs on any settings change.

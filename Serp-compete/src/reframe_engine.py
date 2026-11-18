@@ -34,21 +34,33 @@ DEFAULT_CLINICAL_PIVOTS = {
 # medical score of 0 there is no medical model to reframe — stating that is the
 # honest output, and it is what the vacuum gate in database.identify_strategic_openings
 # now prevents from arising on the run path in the first place.
-NO_MEDICAL_VOCABULARY_NOTE = (
-    "No medical vocabulary detected on this page (medical score 0) — reframe not "
-    "applicable. Nothing was sent to the model."
-)
+def _messages(messages=None):
+    """The words, from `briefing_messages.json` (chunk Y17).
+
+    The notes below are rendered into the briefing; the prompt blocks are what
+    is sent to the model. Both are editorial — the owner is the person who
+    would reword a Bowen instruction — and the file keeps them apart under
+    `reframes.prompt`.
+    """
+    from src.briefing_messages import Messages
+    return messages or Messages()
+
+
 
 
 class ReframeEngine:
-    def __init__(self, config: Dict[str, Any] = None):
-        """Initialize ReframeEngine with optional config (loads from shared_config.json).
+    def __init__(self, config: Dict[str, Any] = None, messages=None):
+        """Initialize ReframeEngine with optional config and messages.
 
         Args:
-            config: Optional dict with clinical_pivots and eeat_client_messaging
+            config: Optional dict with clinical_pivots
+            messages: the render's already-loaded `Messages` (P25); with none
+                the file is read here, ONCE, so a per-reframe call does not
+                re-read it.
         """
         if config is None:
             config = {}
+        self._words = _messages(messages)
 
         self.api_key = os.getenv("OPENAI_API_KEY")
         # Initialize client with api_key
@@ -56,8 +68,20 @@ class ReframeEngine:
         self.model = "gpt-4o"
         # Load pivot_map from config or use defaults
         self.pivot_map = config.get("clinical_pivots", DEFAULT_CLINICAL_PIVOTS)
-        # Load client messaging template
-        self.client_messaging = config.get("eeat_client_messaging", {})
+        # `eeat_client_messaging` was read into `self.client_messaging` here and
+        # never used by anything. Its words are now `eeat.*` in
+        # `briefing_messages.json` and the block is gone from shared_config.json
+        # (chunk Y17), so the dead attribute goes with it.
+
+    def _no_prompt(self, key: str) -> Dict[str, Any]:
+        """What a missing prompt block returns: no call, no reframe, a reason.
+
+        `generated: False` is the same honest status as "no API key" and "no
+        medical vocabulary", so every caller already handles it.
+        """
+        return {"reframe": self._words.get("reframes.prompt_unavailable",
+                                           key=key),
+                "usage": {}, "generated": False}
 
     def clinical_pivot(self, text: str) -> str:
         """
@@ -85,48 +109,54 @@ class ReframeEngine:
         page text is never fetched for it.
         """
         if (medical_score or 0) <= 0:
-            return {"reframe": NO_MEDICAL_VOCABULARY_NOTE, "usage": {},
+            return {"reframe": self._words.get(
+                        "reframes.no_medical_vocabulary"), "usage": {},
                     "generated": False}
 
         if not self.client:
-            return {"reframe": "OPENAI_API_KEY missing.", "usage": {}, "generated": False}
+            return {"reframe": self._words.get("reframes.no_api_key"),
+                    "usage": {}, "generated": False}
+
+        # (The prompt blocks are read below and `_no_prompt` is what a missing
+        # one returns: the same shape as the two returns above, so a caller
+        # that checks `generated` already handles it.)
 
         # Apply clinical pivot to keyword
         remapped_focus = self.clinical_pivot(keyword)
         
-        # Spec 3: Strict Prompt Injection
-        instruction_override = (
-            "You are a Bowen Family Systems expert. You are strictly forbidden from using diagnostic "
-            "labels like 'Attachment Styles' or 'Toxic.' You must instead describe behavior as a "
-            "reciprocal process of distance and pursuit to help the client see the system rather than "
-            "the individual label. Use Bowen Natural Systems terminology exclusively."
-        )
+        # Spec 3: Strict Prompt Injection.
+        #
+        # Read with `prompt()`, not `get()`: `get`'s missing-key policy is to
+        # render a visible marker, which is right for a sentence the reader
+        # sees and wrong for a prompt. A marker in the prompt would be sent to
+        # the model, paid for, and its answer written into the briefing as a
+        # reframe — and nothing in the report would say a hedge went missing,
+        # because the prompt is not rendered. Worse for
+        # `instruction_override`: the body would still render and the model
+        # would be asked the full task with the Bowen and
+        # anti-diagnostic-label guard replaced by a marker (found by the cold
+        # review of chunk Y17).
+        instruction_override = self._words.prompt(
+            "reframes.prompt.instruction_override")
+        if instruction_override is None:
+            return self._no_prompt("reframes.prompt.instruction_override")
 
         paa_context = ""
         if paa_questions:
-            paa_context = f"\n**Anxiety Loop Evidence (User Questions):**\n- " + "\n- ".join(paa_questions[:5]) + "\n"
+            paa_context = self._words.prompt(
+                "reframes.prompt.paa_context",
+                questions="\n- ".join(paa_questions[:5]))
+            if paa_context is None:
+                return self._no_prompt("reframes.prompt.paa_context")
 
-        prompt = f"""
-{instruction_override}
-
-A competitor page ({competitor_url}) is winning on the keyword '{keyword}' using a "Medical Model" approach (Medical Score: {medical_score}).
-
-Your task is to draft a "Pattern-First" content reframe blueprint (approx 500 words).
-
-### Instructions:
-1. **Identify the Anxiety Loop:** How does the medical model reinforce chronic anxiety? Use the following PAA questions to demonstrate the user's 'Label-Seeking' behavior:
-{paa_context}
-Explain how these questions represent an 'Anxiety Loop' where the user seeks a diagnostic label to lower the intensity of the relationship process.
-
-2. **The Systemic Reframe:** Shift the focus from individual pathology to the relationship system. Focus specifically on: {remapped_focus}.
-Example: If the user is asking 'Am I avoidant?' (Anxiety Loop), shift this to 'How is distance being used to regulate anxiety in the relationship?' (Systemic Reframe).
-
-3. **Bowen Concepts:** Apply concepts like Differentiation of Self, Triangles, and the Multigenerational Emotional Process.
-
-4. **Differentiation Strategy:** Why is a Bowen approach more effective for long-term functioning than individual 'tips and tools'?
-
-Format as a professional Strategic Briefing.
-"""
+        prompt = self._words.prompt(
+            "reframes.prompt.body",
+            instruction_override=instruction_override,
+            competitor_url=competitor_url, keyword=keyword,
+            medical_score=medical_score, paa_context=paa_context,
+            remapped_focus=remapped_focus)
+        if prompt is None:
+            return self._no_prompt("reframes.prompt.body")
         
         try:
             response = self.client.chat.completions.create(
@@ -146,11 +176,10 @@ Format as a professional Strategic Briefing.
                 "generated": True
             }
         except Exception as e:
-            print(f"OpenAI API Error: {e}")
-            return {"reframe": f"Error generating reframe: {e}", "usage": {},
-                    "generated": False}
+            print(self._words.get("reframes.api_error_console", error=e))
+            return {"reframe": self._words.get("reframes.api_error", error=e),
+                    "usage": {}, "generated": False}
 
     def provenance_marker(self) -> str:
         """The one-line marker appended to every generated reframe (C-M-15)."""
-        return (f"_Generated by {self.model} from the keyword, URL and score above — "
-                f"no page content was supplied._")
+        return self._words.get("reframes.provenance", model=self.model)

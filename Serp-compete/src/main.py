@@ -8,6 +8,7 @@ import jsonschema
 from src.api_clients import (DataForSEOClient, MozClient, domain_authority_map,
                               page_authority_map)
 from src.semantic import SemanticAuditor
+from src import briefing_messages
 from src.geo_profiler import GeoProfiler
 from src.eeat_scorer import EEATScorer
 from src.cluster_detector import ClusterDetector
@@ -403,8 +404,11 @@ def run_audit(handoff_path: str = None):
     chunk Y13).
     """
     # A tally left by an earlier run in this process would be reported as
-    # this run's (P6, review chunk Y13).
+    # this run's (P6, review chunk Y13). The same applies to the report
+    # messages this process could not find (chunk Y17): the GUI runs twice in
+    # one process, and the second briefing must count its own holes.
     db_connect.reset_cleanup_failures()
+    briefing_messages.reset_misses()
     try:
         return _run_audit(handoff_path)
     finally:

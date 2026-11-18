@@ -7,6 +7,12 @@ from page-level signals extracted during scraping.
 IMPORTANT CAVEAT: These are heuristic proxies based on SEO industry conventions,
 NOT Google's actual EEAT model. Google does not publish its exact EEAT criteria.
 Use these scores as competitive structural signals, not as authoritative SEO measurements.
+
+That caveat is for whoever reads this module. The two the READER sees are in
+`briefing_messages.json` (chunk Y17): `eeat.caveat`, rendered under the report
+section, and `eeat.row_caveat`, stored on every score row. Before that chunk
+there were four wordings of this one claim, including an unread copy in
+`shared_config.json`; reword the two message keys and this docstring together.
 """
 
 import json
@@ -19,6 +25,20 @@ from urllib.parse import urlparse
 from src.semantic import ScrapedPage
 
 
+
+def _messages(messages=None):
+    """The words, from `briefing_messages.json` (chunk Y17).
+
+    Imported inside the function rather than at module scope so this module
+    does not pull the messages file in at import time — a test that patches
+    `builtins.open` around an unrelated call otherwise receives the read (the
+    reason `GSCManager` holds its own instance).
+    """
+    if messages is not None:
+        return messages
+    from src.briefing_messages import Messages
+    return Messages()
+
 @dataclass
 class EEATScore:
     """Per-page EEAT signal record."""
@@ -30,7 +50,13 @@ class EEATScore:
     trustworthiness_signals: Dict[str, Any]
     scores: Dict[str, Optional[float]]  # experience, expertise, authoritativeness, trustworthiness
     score_confidence: Literal["high", "medium", "low"]
-    caveat: str = "Heuristic proxy. Not Google's actual EEAT model."
+    #: The THIRD wording of the EEAT heuristic caveat, and the one chunk Y17's
+    #: plan missed: it counted the rendered sentence, the module docstring and
+    #: the unread `shared_config.eeat_client_messaging.caveat`, not this
+    #: dataclass default stored on every score row. `eeat.row_caveat` in
+    #: `briefing_messages.json`.
+    caveat: str = field(
+        default_factory=lambda: _messages().get("eeat.row_caveat"))
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""

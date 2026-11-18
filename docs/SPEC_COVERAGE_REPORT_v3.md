@@ -321,7 +321,7 @@ grow companions.
 | handoff | 140–145 | Version management + schema location | ✅ New |
 | orchestrator | 146–152 | Streamlit theme, timeout, logging | ✅ New |
 | step_dag | 153–180 | DAG step definitions with dependencies | ✅ New |
-| eeat_client_messaging | 181–189 | Client-facing EEAT positioning + caveat | ✅ New |
+| eeat_client_messaging | — | Client-facing EEAT positioning + caveat | ⚠️ Removed in review chunk Y17 — nothing read it; the words are in `briefing_messages.json` under `eeat` |
 
 **Implementation:** shared_config.json (updated with 5 new sections)  
 **Backwards Compat:** All sections have .get() defaults in code  

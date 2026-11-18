@@ -186,24 +186,26 @@ def _normalised(text: Any) -> str:
     return " " + " ".join(re.findall(r"[a-z0-9]+", str(text).lower())) + " "
 
 
-_REACH_UNMEASURED = (
-    "Anchor text matched a paid-link/PBN pattern, but its reach could not be "
-    "measured, so there is nothing here about scale — treat this as a prompt "
-    "to look, not as a finding. Anchors are written by other sites."
-)
+#: The words below come from `briefing_messages.json` under `risk_radar`
+#: (chunk Y17). They are rendered into the briefing's Reputation-Risk section,
+#: so the owner is the person who would reword them, and until that file
+#: existed this repo had no editorial text file to put them in.
+def _messages(messages=None):
+    """The messages of this render. With none, reads the file now (P25).
 
-_RECEIVED_NOT_BOUGHT = (
-    "Inbound anchors show a paid-link/PBN footprint. Anchors are written by "
-    "other sites, so this indicates links RECEIVED, not links necessarily "
-    "bought — a domain can be targeted by a scheme it had no part in. "
-    "Pattern detection, not a confirmed penalty."
-)
+    Imported inside the function so a module that only detects signals does
+    not pull the messages file in at import time, and named `_messages`
+    because `_words` is already taken by the token helper above.
+    """
+    from src.briefing_messages import Messages
+    return messages or Messages()
 
 
 def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
                        config: Optional[Dict[str, Any]] = None,
                        sample_truncated: bool = False,
-                       collected_at: Optional[str] = None) -> Optional[Dict[str, Any]]:
+                       collected_at: Optional[str] = None,
+                       messages=None) -> Optional[Dict[str, Any]]:
     """Flag inbound anchor text carrying a paid-link / PBN footprint (SC-8.4).
 
     Purpose: surface link-scheme patterns in the anchor distribution Tool 1
@@ -284,7 +286,8 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
                     "sample_anchors": [],
                     "sample_truncated": bool(sample_truncated),
                     "collected_at": collected_at,
-                    "interpretation": _REACH_UNMEASURED,
+                    "interpretation": _messages(messages).get(
+                        "risk_radar.reach_unmeasured"),
                 },
             }
         return None
@@ -329,15 +332,10 @@ def detect_anchor_spam(anchor_texts: List[Dict[str, Any]],
             # reading as a fresh observation (P6).
             "collected_at": collected_at,
             "sample_anchors": matched[:5],
-            "interpretation": _RECEIVED_NOT_BOUGHT,
+            "interpretation": _messages(messages).get(
+                "risk_radar.received_not_bought"),
         },
     }
-
-
-ANCHOR_SPAM_CAVEAT = (
-    "_`anchor_text_spam` reflects links **received**, not links bought: anchors are "
-    "written by other sites, so a domain can be targeted by a scheme it had no part in._"
-)
 
 
 def anchor_data_unreadable(coverage) -> int:
@@ -367,7 +365,7 @@ _COVERAGE_NOT_A_FAILURE_COUNT = ("total", "with_anchors", "errored_cached",
                                  "errored_age_unknown")
 
 
-def anchor_coverage_lines(coverage) -> List[str]:
+def anchor_coverage_lines(coverage, messages=None) -> List[str]:
     """The console lines reporting how the anchor fetch went.
 
     Purpose: the same figures as the report's caveat, in the run's output.
@@ -383,6 +381,7 @@ def anchor_coverage_lines(coverage) -> List[str]:
     coverage = coverage or {}
     if not coverage:
         return []
+    m = _messages(messages)
     breakdown = ", ".join(
         f"{value} {key}" for key, value in coverage.items()
         if key not in _COVERAGE_NOT_A_FAILURE_COUNT and value
@@ -392,21 +391,22 @@ def anchor_coverage_lines(coverage) -> List[str]:
     lines = [
         # "No anchor risks" must never be able to mean "every anchor fetch
         # failed" — say how many domains were actually readable (P1/P2).
-        f"Anchor coverage: {coverage.get('with_anchors', 0)} of "
-        f"{coverage.get('total', 0)} domain(s) had anchor data"
-        + (f" ({breakdown})" if breakdown else "") + "."
+        m.get("risk_radar.console_coverage",
+              with_anchors=coverage.get("with_anchors", 0),
+              total=coverage.get("total", 0),
+              breakdown_clause=(
+                  m.get("risk_radar.console_coverage_breakdown_clause",
+                        breakdown=breakdown) if breakdown else ""))
     ]
     cached = coverage.get("errored_cached", 0) or 0
     unknown_age = coverage.get("errored_age_unknown", 0) or 0
     if cached or unknown_age:
-        lines.append(
-            f"Of the errored domains: {cached} re-served from Tool 1's cache "
-            f"(an older outage, not this run's), {unknown_age} with no "
-            f"collection date.")
+        lines.append(m.get("risk_radar.console_errored_ages", cached=cached,
+                           unknown_age=unknown_age))
     return lines
 
 
-def anchor_caveat_lines(signal_types, coverage=None):
+def anchor_caveat_lines(signal_types, coverage=None, messages=None):
     """Return the anchor-text caveat lines a risk section must carry.
 
     Purpose: keep the disclaimer and the coverage note decidable — and
@@ -424,38 +424,39 @@ def anchor_caveat_lines(signal_types, coverage=None):
       about an unreadable domain is indistinguishable from a clean verdict, and
       the console note does not reach the artifact anyone reads (P25).
     """
+    m = _messages(messages)
     lines = []
     if "anchor_text_spam" in set(signal_types or ()):
-        lines.append(ANCHOR_SPAM_CAVEAT)
+        lines.append(m.get("risk_radar.anchor_spam_caveat"))
     coverage = coverage or {}
     if coverage.get("unrecorded"):
         # An absent coverage row means the run predates the table, NOT that
         # everything was readable. Rendering nothing would make an old report
         # indistinguishable from a genuinely clean one (P6).
-        lines.append(
-            "_Anchor-text coverage was not recorded for this run. The absence of a "
-            "coverage note here is not evidence that every domain was readable._")
+        lines.append(m.get("risk_radar.anchor_unrecorded"))
         return lines
     if coverage.get("fetch_status") == "unavailable":
         # A total failure of the anchor path must not render identically to
         # a clean run. Without this the console note is the only trace (P25).
-        lines.append(
-            "_Anchor-text data could not be retrieved for this run"
-            + (f" ({coverage['reason']})" if coverage.get("reason") else "")
-            + ", so no anchor-text signals could be computed. This is not "
-              "evidence of a clean link profile for any competitor._")
+        lines.append(m.get(
+            "risk_radar.anchor_unavailable",
+            reason_clause=(
+                m.get("risk_radar.anchor_unavailable_reason_clause",
+                      reason=coverage["reason"])
+                if coverage.get("reason") else "")))
         return lines
     if anchor_data_unreadable(coverage):
         causes = ", ".join(
-            f"{coverage.get(bucket, 0)} {label}"
-            for bucket, label in (("errored", "errored"), ("skipped", "skipped"),
-                                  ("unknown", "unrecognised status"))
+            f"{coverage.get(bucket, 0)} {m.get(key)}"
+            for bucket, key in (
+                ("errored", "risk_radar.anchor_cause_errored"),
+                ("skipped", "risk_radar.anchor_cause_skipped"),
+                ("unknown", "risk_radar.anchor_cause_unknown"))
             if coverage.get(bucket, 0))
-        lines.append(
-            f"_Anchor-text coverage: {coverage.get('with_anchors', 0)} of "
-            f"{coverage.get('total', 0)} domain(s) had readable anchor data "
-            f"({causes}). Absence of an anchor signal below is not evidence of a clean "
-            f"link profile for the domains that could not be read._")
+        lines.append(m.get(
+            "risk_radar.anchor_partial",
+            with_anchors=coverage.get("with_anchors", 0),
+            total=coverage.get("total", 0), causes=causes))
         # Chunk X (D-C-10 downstream): Tool 1 caches a competitor's Moz block
         # for up to 30 days and can cache it with the failure in it, so the
         # same error is re-served every run. Counting those as this run's
@@ -465,12 +466,12 @@ def anchor_caveat_lines(signal_types, coverage=None):
         if cached or unknown_age:
             parts = []
             if cached:
-                parts.append(f"{cached} came from Tool 1's cache rather than this "
-                             f"run — one older outage being re-served, not a fresh one")
+                parts.append(m.get("risk_radar.anchor_errored_cached", n=cached))
             if unknown_age:
-                parts.append(f"{unknown_age} carried no collection date, so its age "
-                             f"is unknown")
-            lines.append("_Of the errored domains, " + "; ".join(parts) + "._")
+                parts.append(m.get("risk_radar.anchor_errored_age_unknown",
+                                   n=unknown_age))
+            lines.append(m.get("risk_radar.anchor_errored_ages",
+                               parts="; ".join(parts)))
     return lines
 
 

@@ -48,6 +48,20 @@ DEFAULT_MODERATE_TIER_MIN = 1
 NOT_MEASURED = ["answer_first_placement", "faq_answers_in_raw_html"]
 
 
+
+def _messages(messages=None):
+    """The words, from `briefing_messages.json` (chunk Y17).
+
+    Imported inside the function rather than at module scope so this module
+    does not pull the messages file in at import time — a test that patches
+    `builtins.open` around an unrelated call otherwise receives the read (the
+    reason `GSCManager` holds its own instance).
+    """
+    if messages is not None:
+        return messages
+    from src.briefing_messages import Messages
+    return Messages()
+
 @dataclass
 class GeoProfile:
     """Per-page GEO / extractability signal record."""
@@ -58,9 +72,12 @@ class GeoProfile:
     present_signals: List[str]
     why_cited: str
     not_measured: List[str] = field(default_factory=lambda: list(NOT_MEASURED))
-    caveat: str = (
-        "Heuristic structural proxy for AI citability, not a measured citation."
-    )
+    #: Stored on the row, so it is read when the row is BUILT, not when the
+    #: report renders. `extractability.profile_caveat` in
+    #: `briefing_messages.json` (chunk Y17).
+    caveat: str = field(
+        default_factory=lambda: _messages().get(
+            "extractability.profile_caveat"))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -104,7 +121,8 @@ class GeoProfiler:
                 extractability_tier="Unknown",
                 signals=self._empty_signals(),
                 present_signals=[],
-                why_cited="Page could not be fully retrieved; extractability not assessed.",
+                why_cited=self._messages().get(
+                    "extractability.why_cited_unreadable"),
             )
 
         metadata = getattr(page, "metadata", {}) or {}
@@ -300,24 +318,27 @@ class GeoProfiler:
         text = text.removeprefix("by ").strip(" -–—:")
         return text in self._GENERIC_BYLINES or not text
 
+    def _messages(self):
+        """The words, read once per profiler and held: this runs per page.
+
+        `why_cited` is rendered verbatim into the briefing's extractability
+        section, so the owner is the person who would reword it.
+        """
+        if getattr(self, "_messages_cache", None) is None:
+            self._messages_cache = _messages()
+        return self._messages_cache
+
     def _why_cited(self, present: List[str], tier: str) -> str:
+        m = self._messages()
         if not present:
-            return (
-                "No strong extractability signals detected — this page carries "
-                "little structural advantage for AI citation, so a well-structured "
-                "systemic alternative can compete on citability."
-            )
-        joined = "; ".join(present)
+            return m.get("extractability.why_cited_none")
         # C-M-14: this sentence used to assert causation — "These structures make the
         # page easy for AI answer engines to quote" — under a section header reading
         # "Why Competitors Get Cited", while nothing here checks whether the page is
         # cited by anything. It states what was found and what it is believed to
         # support.
-        return (
-            f"{tier} extractability signals: {joined}. Structures of this kind are "
-            f"believed to help an answer engine quote a passage; whether this page is "
-            f"actually cited is not measured here."
-        )
+        return m.get("extractability.why_cited_signals", tier=tier,
+                     joined="; ".join(present))
 
     def _empty_signals(self) -> Dict[str, Any]:
         return {

@@ -135,7 +135,10 @@ It produces a **Medical Score** and a weighted **Systems Score** (Tier 3 counts 
 than Tier 2), then assigns a **Systemic Label** of **Standard** or **Surface-Level**.
 A page is **Surface-Level** when it leans heavily on medical language *for its length*
 and has no deep Bowen (Tier 3) content at all. (Exact weights/thresholds live in
-`shared_config.json` — editable without code changes. They are read **once
+`shared_config.json` — editable without code changes. (The *words* of every
+sentence this report prints are editable too, in `briefing_messages.json`;
+see the README. Thresholds are in `shared_config.json`, wording in
+`briefing_messages.json`, and neither is in Python.) They are read **once
 per run, when the analyser is built**, not when the code is loaded, so editing
 the file and running again in the same GUI session uses the new numbers. One
 read per run rather than one per page is deliberate: the weights and the

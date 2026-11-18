@@ -565,7 +565,9 @@ class TestGscPullIsStated(unittest.TestCase):
         from src.reporting import ReportGenerator
 
         source = inspect.getsource(ReportGenerator.generate_summary)
-        self.assertIn("gsc_pull_note(self.config)", source)
+        # Chunk Y17: the section hands the note its already-loaded messages,
+        # so the words come from one read rather than one per section.
+        self.assertIn("gsc_pull_note(self.config, m)", source)
 
     def test_the_window_country_and_device_are_printed(self):
         markdown = self._markdown({"date_range_days": 90, "country": "can"})
@@ -725,11 +727,18 @@ class TestGscPullIsStated(unittest.TestCase):
     def _manager(self):
         from src.gsc_performance import GSCManager
 
+        from src.briefing_messages import Messages
+
         manager = GSCManager.__new__(GSCManager)
         manager.config = {
             "auth": {"gsc_property_url": "https://livingsystems.ca/"},
             "gsc_settings": {"date_range_days": 90, "country": "can"},
         }
+        # What `__init__` holds (chunk Y17). Read here rather than inside
+        # `_pull_note` for the reason the real manager does: these tests patch
+        # `open` to capture the write, and a read inside the write window gets
+        # the mock.
+        manager.messages = Messages()
         return manager
 
     def test_the_strike_list_states_the_pull(self):
@@ -753,13 +762,19 @@ class TestGscPullIsStated(unittest.TestCase):
 
     def test_an_empty_gsc_report_does_not_read_as_nothing_to_do(self):
         """Zero rows is also what a failed pull prints, so the empty state
-        names the filters rather than standing alone (P1)."""
-        import inspect
+        names the filters rather than standing alone (P1).
 
-        from src.gsc_performance import GSCManager
+        Read from the RENDERED markdown, not from the method's source: the
+        sentence moved into `briefing_messages.json` in chunk Y17, and a
+        source-text assertion would have gone green the moment the words left
+        Python while the report still printed nothing (P19/P27)."""
+        import pandas as pd
 
-        source = inspect.getsource(GSCManager.generate_strike_report)
-        self.assertIn("also what a failed pull", source)
+        manager = self._manager()
+        text = self._written(
+            lambda: manager.generate_strike_report(pd.DataFrame()))
+        self.assertIn("also what a failed pull", text)
+        self.assertIn("Check the filters", text)
 
     def test_the_report_path_does_not_import_the_gsc_dependencies(self):
         """`GSC_DEVICES` at module scope pulled google-auth, googleapiclient,
@@ -877,7 +892,7 @@ class TestTheHandoffsClientIsCheckedAgainstThisRepos(unittest.TestCase):
         from src.reporting import ReportGenerator
 
         source = inspect.getsource(ReportGenerator.generate_summary)
-        self.assertIn("client_mismatch_line(run_coverage)", source)
+        self.assertIn("client_mismatch_line(run_coverage, m)", source)
 
     def test_the_check_runs_before_the_no_targets_abort(self):
         """A handoff for the wrong client is a likely reason for there to be

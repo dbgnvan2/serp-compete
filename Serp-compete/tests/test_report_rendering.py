@@ -26,7 +26,8 @@ import unittest
 
 import pandas as pd
 
-from src.reporting import UNKNOWN_CELL, md_table
+from src.briefing_messages import Messages
+from src.reporting import md_table, unknown_cell
 
 
 class TestMissingValuesAreStatedNotPrintedAsNan(unittest.TestCase):
@@ -35,13 +36,13 @@ class TestMissingValuesAreStatedNotPrintedAsNan(unittest.TestCase):
         df = pd.DataFrame([{"domain": "blocked.ca", "pages_audited": float("nan")}])
         rendered = md_table(df, index=False)
         self.assertNotIn("nan", rendered)
-        self.assertIn(UNKNOWN_CELL, rendered)
+        self.assertIn(unknown_cell(), rendered)
 
     def test_a_none_renders_as_the_unknown_marker(self):
         df = pd.DataFrame([{"domain": "x.ca", "focus_score": None}])
         rendered = md_table(df, index=False)
         self.assertNotIn("None", rendered)
-        self.assertIn(UNKNOWN_CELL, rendered)
+        self.assertIn(unknown_cell(), rendered)
 
     def test_real_values_are_untouched(self):
         df = pd.DataFrame([{"domain": "x.ca", "authority_score": 35,
@@ -56,7 +57,7 @@ class TestMissingValuesAreStatedNotPrintedAsNan(unittest.TestCase):
         df = pd.DataFrame([{"domain": "x.ca", "t2_count": 0, "t3_count": float("nan")}])
         rendered = md_table(df, index=False)
         self.assertRegex(rendered, r"\|\s*0\s*\|")
-        self.assertIn(UNKNOWN_CELL, rendered)
+        self.assertIn(unknown_cell(), rendered)
 
     def test_a_mixed_column_renders_both(self):
         df = pd.DataFrame([{"domain": "a.ca", "pages_audited": 2},
@@ -64,7 +65,7 @@ class TestMissingValuesAreStatedNotPrintedAsNan(unittest.TestCase):
         rendered = md_table(df, index=False)
         self.assertNotIn("nan", rendered)
         self.assertIn("2", rendered)
-        self.assertIn(UNKNOWN_CELL, rendered)
+        self.assertIn(unknown_cell(), rendered)
 
     def test_an_empty_frame_does_not_raise(self):
         self.assertIsInstance(md_table(pd.DataFrame(), index=False), str)
@@ -119,7 +120,7 @@ class TestWholeNumbersStayWholeNumbers(unittest.TestCase):
         rendered = md_table(df, index=False)
         self.assertIn("| 2 ", rendered)
         self.assertNotIn("2.0", rendered)
-        self.assertIn(UNKNOWN_CELL, rendered)
+        self.assertIn(unknown_cell(), rendered)
 
     def test_a_genuinely_fractional_column_keeps_its_decimals(self):
         df = pd.DataFrame([{"domain": "a.ca", "medical_per_1000": 12.4},
@@ -132,7 +133,7 @@ class TestWholeNumbersStayWholeNumbers(unittest.TestCase):
                            {"domain": "b.ca", "words": None}])
         rendered = md_table(df, index=False)
         self.assertNotIn("nan", rendered)
-        self.assertIn(UNKNOWN_CELL, rendered)
+        self.assertIn(unknown_cell(), rendered)
 
     def test_a_negative_whole_number_is_preserved(self):
         """Drift columns are signed, and int() truncates toward zero."""
@@ -226,13 +227,13 @@ class TestTheEeatDashesAreDashesNotNan(unittest.TestCase):
 
     def test_a_mixed_column_renders_the_unknown_marker(self):
         series = pd.Series([0.55, float("nan")])
-        rendered = series.apply(lambda x: f"{x:.1f}" if pd.notna(x) else UNKNOWN_CELL)
-        self.assertEqual(list(rendered), ["0.6", UNKNOWN_CELL])
+        rendered = series.apply(lambda x: f"{x:.1f}" if pd.notna(x) else unknown_cell())
+        self.assertEqual(list(rendered), ["0.6", unknown_cell()])
 
     def test_the_old_logic_is_what_produced_nan(self):
         """Kept as the evidence: `is not None` passes NaN straight through."""
         series = pd.Series([0.55, float("nan")])
-        old = series.apply(lambda x: f"{x:.1f}" if x is not None else UNKNOWN_CELL)
+        old = series.apply(lambda x: f"{x:.1f}" if x is not None else unknown_cell())
         self.assertEqual(list(old), ["0.6", "nan"])
 
     def test_the_deep_render_shows_real_eeat_scores(self):
@@ -364,8 +365,8 @@ class TestTheExcelWorkbookIsNotTheMarkdown(unittest.TestCase):
         for sheet, frame in self.frames.items():
             as_text = frame.astype(str)
             self.assertFalse(
-                (as_text == UNKNOWN_CELL).any().any(),
-                f"the '{UNKNOWN_CELL}' display marker reached the {sheet} sheet")
+                (as_text == unknown_cell()).any().any(),
+                f"the '{unknown_cell()}' display marker reached the {sheet} sheet")
 
     def test_the_markdown_still_shows_the_dash(self):
         """The fix must not have removed the marker from the report."""

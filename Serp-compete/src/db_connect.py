@@ -60,35 +60,70 @@ def lock_timeout_from_config(config) -> float:
         if not 0 < seconds < float("inf"):
             raise ValueError("not a positive number")
     except (TypeError, ValueError):
-        logger.warning(
-            "shared_config.json %s.%s is %r, which is not a positive number "
-            "of seconds; using the documented default %s.",
-            section_name, key, raw, DEFAULT_LOCK_TIMEOUT_SECONDS)
+        logger.warning("%s", _words(
+            "db_cleanup.bad_lock_timeout",
+            FALLBACK_BAD_LOCK_TIMEOUT, section=section_name, key=key,
+            raw=raw, default=DEFAULT_LOCK_TIMEOUT_SECONDS))
         return DEFAULT_LOCK_TIMEOUT_SECONDS
     return seconds
 
 
-#: The words for the tally below. Tool 1 keeps the same sentence in
-#: `serp_vocab.yml` under `db_cleanup`, because that repo has a vocabulary
-#: file; this one has no editorial text file at all, so the wording is here
-#: and the two have to be changed together.
-CLEANUP_WARNING = (
-    "{failures} database cleanup step(s) failed during this run ({detail}). "
-    "{consequence} A cleanup that keeps failing usually means the database "
-    "file or its directory has become unwritable, and each failed close holds "
-    "a file handle open until the process exits")
-#: Which consequence the sentence may claim. A failed `close` comes after the
-#: commit, so the writes are durable; a failed `roll back` means a block
-#: raised and its transaction was abandoned, which is not "the figures stand".
-#: The first version said the figures stood in both cases (the cold review of
-#: this chunk, P6 — a claim has to be checked against what happened).
-CLEANUP_CONSEQUENCE_COMMITTED = (
-    "The run's own writes were committed and its figures stand.")
-CLEANUP_CONSEQUENCE_ROLLED_BACK = (
-    "At least one of them was a failed rollback, which means a block raised "
-    "and abandoned its transaction: what that step was writing is incomplete, "
-    "and the earlier steps' committed figures stand.")
-CLEANUP_DETAIL_ITEM = "{count} x {what}"
+#: Said when `briefing_messages.json` itself cannot be read. These are the ONLY
+#: two sentences in this repo with a Python fallback, and the reason is the
+#: place they are said from, not the sentence: one is inside the `except` of a
+#: misconfigured lock timeout and the other runs from an `atexit` hook. The
+#: loader raises on an unreadable file, deliberately — a briefing without its
+#: caveats states every figure as fact — but raising HERE turns a warning about
+#: a bad config value into a failure of the database path, and raising from
+#: `atexit` is swallowed as "Error in atexit._run_exitfuncs", which loses the
+#: chunk-Y13 guarantee that a cleanup failure is always reported, exactly when
+#: something else is already broken (cold review of Y17, M4).
+FALLBACK_BAD_LOCK_TIMEOUT = (
+    "{section}.{key} is {raw}, which is not a number of seconds; waiting "
+    "{default} for another writer's lock. (briefing_messages.json could not "
+    "be read, so this is the built-in wording.)")
+
+FALLBACK_CLEANUP_WARNING = (
+    "{failures} database cleanup step(s) failed ({detail}). "
+    "(briefing_messages.json could not be read, so this is the built-in "
+    "wording; the figures this run wrote are unaffected by the cleanup.)")
+
+
+def _words(key, fallback, /, *, messages=None, **fields):
+    """A message, or *fallback* when the messages file cannot be read.
+
+    Only for the two call sites above. Everywhere else an unreadable file
+    stops the render, which is the point of the loader's contract.
+
+    *key* and *fallback* are positional-only and *messages* keyword-only for
+    the reason `Messages.get` is: `db_cleanup.bad_lock_timeout` carries a
+    `{key}` placeholder, and any ordinary parameter of that name collides with
+    it ("got multiple values for argument 'key'"). Found twice now, once in
+    each class of helper.
+    """
+    try:
+        from src.briefing_messages import Messages, MessagesUnavailable
+    except ImportError:          # pragma: no cover - defensive
+        return fallback.format(**fields)
+    try:
+        return (messages or Messages()).get(key, **fields)
+    except MessagesUnavailable:
+        logger.warning("briefing_messages.json could not be read, so the "
+                       "built-in wording is used for %r.", key)
+        return fallback.format(**fields)
+
+
+#: The words for the tally below live in `briefing_messages.json` under
+#: `db_cleanup` (chunk Y17). Tool 1 keeps the same sentence in `serp_vocab.yml`
+#: under `db_cleanup`; until Y17 this repo had no editorial text file at all,
+#: so the wording was four constants here and the two repos had to be changed
+#: together with nothing but a comment saying so.
+#:
+#: WHICH consequence the sentence may claim stays in Python, because it is a
+#: fact about what failed rather than a choice of words: a failed `close` comes
+#: after the commit, so the writes are durable, while a failed `roll back`
+#: means a block raised and its transaction was abandoned, which is not "the
+#: figures stand" (the cold review of chunk Y13, P6).
 #: The step name `_safely` records for a rollback, so the consequence can be
 #: chosen by what actually failed rather than by a string literal repeated in
 #: two places (P32).
@@ -127,20 +162,30 @@ def reset_cleanup_failures() -> None:
     _REPORTED = False
 
 
-def cleanup_failure_warning():
-    """The reader-facing sentence for this process's tally, or None."""
+def cleanup_failure_warning(messages=None):
+    """The reader-facing sentence for this process's tally, or None.
+
+    *messages* is the render's already-loaded `Messages` (P25). With none it
+    reads the file now — this is called from an `atexit` hook and from
+    callers that have no report in hand.
+    """
     if not _CLEANUP_FAILURES:
         return None
     # Steps, not paths: "3 x close" is the actionable fact.
     by_step: dict = {}
     for (what, _db_path), count in _CLEANUP_FAILURES.items():
         by_step[what] = by_step.get(what, 0) + count
-    detail = ", ".join(CLEANUP_DETAIL_ITEM.format(count=count, what=what)
-                       for what, count in sorted(by_step.items()))
-    consequence = (CLEANUP_CONSEQUENCE_ROLLED_BACK if ROLL_BACK in by_step
-                   else CLEANUP_CONSEQUENCE_COMMITTED)
-    return CLEANUP_WARNING.format(failures=cleanup_failure_count(),
-                                  detail=detail, consequence=consequence)
+    detail = ", ".join(
+        _words("db_cleanup.detail_item", "{count} x {what}",
+               messages=messages, count=count, what=what)
+        for what, count in sorted(by_step.items()))
+    consequence = _words("db_cleanup.consequence_rolled_back"
+                         if ROLL_BACK in by_step
+                         else "db_cleanup.consequence_committed",
+                         "", messages=messages)
+    return _words("db_cleanup.warning", FALLBACK_CLEANUP_WARNING,
+                  messages=messages, failures=cleanup_failure_count(),
+                  detail=detail, consequence=consequence)
 
 
 def report_cleanup_failures(printer=None) -> str | None:

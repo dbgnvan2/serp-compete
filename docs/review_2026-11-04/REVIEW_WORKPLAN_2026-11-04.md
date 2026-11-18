@@ -946,6 +946,85 @@ editorial, in Tool 1's `serp_vocab.yml` under `db_cleanup`; Tool 2 has no
 vocabulary file at all, which is recorded as an adjacent issue
 (`docs/review_2026-11-04/PLAN_Y13_a_cleanup_failure_is_a_number.md`).
 
+**Chunk Y14 — one cache for both keyword signals.** Carried as an adjacent
+issue by Y11's cold review. `_KeywordSignalClient` exists so the fetch, quota
+and "404 is not an error" rules cannot drift between the two per-keyword Moz
+signals; the cache was left outside it, and `MozKeywordClient` and
+`MozIntentClient` each carried their own `_init_cache_table`, `_cache_lookup`
+and `_cache_store`. Three rules were therefore written twice: a row past its
+TTL (or carrying no timestamp) is ignored, a cached failure is never served,
+and a measured absence is served. What actually differs between the signals is
+the table name, the payload columns, and the two conversions between a row and
+a block — so the base class now owns the cache, built from
+`CACHE_TABLE_NAME` + `CACHE_PAYLOAD_COLUMNS`, and each subclass supplies only
+`_block_from_cache` and `_payload_for_cache`. The duplication had already
+drifted in one visible way: both Moz caches chunked their `IN (...)` at a bare
+literal `500` while `gsc_client` named the same SQLite fact
+`CACHE_LOOKUP_CHUNK` and explained it; the name now lives in `db_connect` and
+all three read it. No behaviour change — the existing Moz suites are the
+regression evidence, and the new guards assert each rule against **both**
+clients through one test. Its cold review found the chunk's own rule had
+stopped at two of five caches — `moz_client`, `dataforseo_client` and
+`moz_competitor` still carried the literal — so all five now read the named
+constant and the guard walks every production module instead of two files by
+name. Four more findings were fixed with guards: an existing table now gains a
+declared payload column rather than failing every write, the two cache hooks
+exchange a mapping keyed by column name so the column order carries no
+meaning, a cached row the signal cannot read is counted, and an incomplete
+subclass spec names the class and the attribute instead of raising an SQL
+syntax error
+(`docs/review_2026-11-04/PLAN_Y14_one_cache_for_both_signals.md`).
+
+**Chunk Y15 — every editorial file has an editor.** Carried as an adjacent
+issue by the cold reviews of chunks Y1–Y6. `CLAUDE.md` says editorial content
+belongs in a YAML or JSON file rather than in Python, and the review chunks
+moved a great deal of it out; the Configuration Manager is how a non-developer
+reaches those files, and it was never extended. It registered nine tabs while
+the repo held nineteen editable editorial files, so ten — the feasibility,
+Search Console and AI-visibility wording, the SERP vocabulary, the glossary,
+the play routing table, the engine profiles, the report directives, the brief
+validation rules and the schema recommendations — were reachable only by
+opening the file in a text editor. The rule was followed and the consequence it
+exists for was not delivered for them.
+
+Each of the ten now has a source tab: it shows the file's own text, parses it
+before the write so a syntax error is reported with its line instead of
+breaking the next run, runs the file's validator if it has one, joins Save All
+and Discard under the same all-or-nothing rule, and writes the text verbatim so
+a comment the user adds survives. They are source rather than forms because
+these files nest arbitrarily — `engine_profiles.yml` and
+`report_writing_directives.yml` are three and four levels deep with prose
+leaves — and a widget tree over arbitrary nesting is more GUI surface than the
+editorial benefit justifies; a form for a given file stays available as a later
+per-file upgrade, which is what the nine bespoke tabs are.
+
+The part that stops the fault recurring is the guard, not the ten tabs: the
+files are declared in one table in `config_tab_models`, every exclusion is
+named with its reason, and a standing test walks the repo's editorial YAML and
+JSON and fails the build when a file has neither. The old test asserted the tab
+count equalled nine, which is exactly what went stale. Building it found one
+real bug by driving a real tab: `BaseConfigTab.validate` returns early for a
+file with no validator, so reading the remembered parse error there read
+whenever the text was last parsed, and a broken edit to `glossary.yml` saved
+successfully (P16).
+
+The chunk's cold review returned seven findings, four of them high, and all
+seven are fixed with a guard each. The two that mattered most were not in the
+new code's logic but in where and what it wrote: the tab joined the file name
+onto the **current directory** while nine of the ten readers anchor on the
+module's own, so a GUI started from elsewhere showed a blank tab, reported no
+error, and saved a new file nothing reads; and it checked **syntax only**, so
+deleting `rules:` from `play_routing.yml` saved cleanly and killed the next run,
+and deleting `numeric_claims:` from `brief_validation_rules.yml` turned every
+numeric check off with nothing saying so. A file's own loader is now run where
+it can tell a usable table from valid YAML that is not one. Also fixed: a
+syntax repair typed into a source tab was discarded with no prompt and its red
+warning was squeezed to one pixel; every save appended a blank line, because a
+Tk text widget carries an implicit final newline; a non-OSError lost the
+partial-save report; and the temp file was a fixed name, left behind on failure.
+Final mutation gate 18/18 caught, none vacuous
+(`docs/review_2026-11-04/PLAN_Y15_every_editorial_file_has_an_editor.md`).
+
 **Chunk Y16 — one reader for the shared config.** Carried as an adjacent issue
 by the cold reviews of chunks Y11, Y13, Y14 and Y15. `shared_config.json` is
 the editorial config both tools share — scoring weights, penalty thresholds,
@@ -1000,6 +1079,82 @@ of the chunk's own tests were testing nothing. Mutation gate 33 mutations, 33 ca
 import-time guards run in a subprocess, because a test that imports the module
 in-process would pass either way
 (`docs/review_2026-11-04/PLAN_Y16_one_reader_for_the_shared_config.md`, in
+serp-compete).
+
+**Chunk Y17 — the briefing's prose gets a file.** Carried as an adjacent issue
+by the cold reviews of Y13 and Y15, and named in Tool 1's `CLAUDE.md` for over a
+month. Tool 1 has ten editorial text files; Tool 2 had none, so every sentence
+the strategic briefing renders — the caveats, the comparability warnings, the
+"why there is no number here" lines, the headings — was a Python literal, which
+the rule both repos are built on says it should not be. Three consequences were
+already in the code, and they are what made it a defect rather than a
+preference: the EEAT heuristic caveat existed in **four** wordings, one of them
+`shared_config.eeat_client_messaging.caveat` which no module read and one a
+dataclass default stored on every score row; the handoff's page-relative rank
+convention was warned about in **four** separately worded places, each citing
+the same finding, so rewording the fact meant finding all four and no
+de-duplication tool finds them because they are not duplicates; and
+`UNKNOWN_CELL = "—"` had a bare duplicate of itself in the cluster table.
+`briefing_messages.json` at the repo root now holds every one of them, about
+240 values sectioned by the report section that renders it, read by
+`src/briefing_messages.py` once per render and held outside every per-section
+handler. JSON rather than YAML because PyYAML is not in this repo's
+`requirements.txt` and is not importable in its venv, and a text file is not a
+reason to pin a new runtime dependency on the render path. Its own loader
+rather than `shared_config.json`'s, because Y16 deliberately made that one
+*raise* on a key it cannot read, and a messages file needs the opposite rule
+for a missing key: a missing or malformed FILE raises — a briefing without its
+caveats states every figure in it as fact — while a missing KEY prints
+`[message missing: <key>]` where the sentence would be and the report ends with
+how many it could not find (P2). Workbook sheet names and column headers stayed
+in Python: they are a format contract other tools and tests read by name. Scope
+was every sentence the briefing renders, not the three modules first guessed,
+because leaving `risk_radar`'s and `db_connect`'s wording in Python while
+`reporting.py`'s moved is the half-migrated state the rule itself forbids.
+The build corrected the plan on eight points, all recorded in it: the EEAT
+caveat's fourth wording; three dead `framework_caption` keys in
+`shared_config.json` rather than one dead block; the feasibility sentence
+interpolating the *existing* `technical.feasibility_threshold` rather than a
+new key for the same number; four keys the migration had itself duplicated,
+found by the two-way key-coverage guard before any commit; and the ~25 test
+files that pin rendered wording, left alone on the judgement that a test
+asserting what the report *says* is the contract with the reader, while one
+asserting `Messages().get(...)` on both sides asserts only that the renderer
+rendered the file. The chunk's own mutation gate found two of its guards
+vacuous — a `report.extend(...)` moved inside a comment still satisfied
+`source.index(...)`, and the action-queue truncation note was a closure over
+the render's cap, so hardcoding its number was invisible — and a third that
+passed while the call site held the literal beside the reader; all three became
+consequence tests on extracted methods (P19/P27/P30). It also found a real
+defect in the loader: `get` short-circuited on `if not fields`, so a caller
+that passed no arguments at all printed a literal `{domain}` into the briefing
+and nothing counted it. The cold `learning-qa` pass then found nine
+medium-or-higher findings, all fixed with guards: a missing prompt block would
+have been sent to the model as a marker, paid for and its answer written in as
+a reframe, so prompts now have a reader of their own that returns `None` and
+the caller does not call (P14); the shortfall count covered only the report's
+own keys while six other modules build a throwaway `Messages`, so the ledger is
+process-level and reset by the entry point; the action-queue row cap was a
+number in a file of sentences and moved to `shared_config.json`, degrading with
+a logged warning rather than printing an empty queue; a stray brace in a
+hand-editable file aborted the render; `db_connect` asked the messages file
+from inside an `except` and an `atexit` hook, where it may be the broken thing,
+and degrades to two named fallbacks instead; the file was parsed ten-plus times
+per run and the parse is cached on `(path, mtime, size)`; an
+`icons.unknown_cell` of `""` would have satisfied every assertion while the
+cells rendered blank; and the migration had stopped at the briefing while three
+standalone markdown reports kept every sentence in Python, two of them near-
+identical rewordings of keys that *had* moved, so the defect had come to span
+two files. The last also indicted the prose guard, which named six modules by
+hand (P29). Two claims are still worded more than once on purpose — the EEAT
+caveat's long and stored-row forms, and three `framework_caption` keys that
+restate their own `intro` — recorded as editorial decisions for the owner and
+guarded against gaining a further home, because that is how the original defect
+was built. Mutation gate re-run at **49 mutations, 49 caught, none vacuous**
+(three were vacuous on the first run: the prompt policy, the brace catch and
+the fallback degradation each had a fix and no consequence test); compete core
+967 passed, compete root 162 passed, Tool 1 unchanged at 2325
+(`docs/review_2026-11-04/PLAN_Y17_the_briefing_prose_gets_a_file.md`, in
 serp-compete).
 
 ## 7. What was checked and found sound (so it is not re-reviewed)

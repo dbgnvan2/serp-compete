@@ -66,8 +66,12 @@ DEFAULT_REFRAMES: Dict[str, str] = {
         "Tracing the Reciprocity in Relationship Anxiety",
 }
 
-#: The reframe used for a query with no entry of its own.
-GENERIC_REFRAME = "Observing the Relationship Process"
+#: Fallback only — `shared_config.json` → `strike_mapper.generic_reframe` is
+#: the editorial home (chunk Y17). It sits beside `strike_mapper.reframes`,
+#: which has been in config since the earlier migration, rather than in
+#: `briefing_messages.json`: it is a member of that vocabulary, not a sentence
+#: the briefing renders.
+DEFAULT_GENERIC_REFRAME = "Observing the Relationship Process"
 
 #: Marks headings this tool wrote, so a second run can recognise its own work
 #: instead of duplicating it, and so a reader can tell them from hand-written
@@ -97,6 +101,14 @@ def reframes() -> Dict[str, str]:
     if isinstance(configured, dict) and configured:
         return {str(k).lower(): str(v) for k, v in configured.items()}
     return dict(DEFAULT_REFRAMES)
+
+
+def generic_reframe() -> str:
+    """The reframe used for a query with no entry of its own, config first."""
+    configured = _config().get("generic_reframe")
+    if isinstance(configured, str) and configured.strip():
+        return configured
+    return DEFAULT_GENERIC_REFRAME
 
 
 def get_top_gsc_keywords(path: Optional[str] = None,
@@ -142,9 +154,12 @@ def headings_for(queries: List[str],
                  vocabulary: Optional[Dict[str, str]] = None) -> List[str]:
     """The markdown headings for these queries, each carrying its provenance."""
     vocabulary = reframes() if vocabulary is None else vocabulary
+    # Read once, like `reframes()` above: it is one config read either way and
+    # inside the loop it was one per query (cold review of chunk Y17, L5).
+    fallback = generic_reframe()
     out = []
     for query in queries:
-        reframe = vocabulary.get(query.lower(), GENERIC_REFRAME)
+        reframe = vocabulary.get(query.lower(), fallback)
         out.append(f"## {query.title()}: {reframe} {PROVENANCE_MARKER}")
     return out
 

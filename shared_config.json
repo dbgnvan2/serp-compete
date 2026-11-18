@@ -286,8 +286,10 @@
   },
   "serp_overlap": {
     "top_n": 10,
+    "_action_queue_row_cap_comment": "How many rows each action queue prints in the markdown. Display-only, like reporting.markdown_row_cap: every Excel sheet carries the full frame. The sentence that says `(top N of M)` interpolates this number, so the prose cannot claim one cap while the slice takes another (chunk Y17).",
+    "_action_queue_row_cap_source": "editorial, uncalibrated, 2026-11-18 — 15 is what the briefing printed before the number had a key.",
+    "action_queue_row_cap": 15,
     "commodity_high_overlap": 3,
-    "framework_caption": "SERP overlap is a strategic framing of shared vs. defensible ground, not a measured commodity index. 'Commodity' here is a local overlap-density proxy (how many tracked rivals share the SERP); upgrade to the serp-discover D4 commodity export when it exists.",
     "_source": "editorial, uncalibrated, 2026-05 — top_n is the 'in the battle' depth for both sides of the matrix; commodity_high_overlap is how many tracked rivals sharing a SERP reads as commoditised. A local overlap proxy, not a measured index (C-M-11)."
   },
   "positioning": {
@@ -299,15 +301,13 @@
     },
     "top10_saturation": 10,
     "min_signal_rankings": 2,
-    "framework_caption": "The barbell is a strategic framing — winners are large-and-authoritative or small-and-niche; the undifferentiated middle loses — not a measured law. Authority = Moz DOMAIN Authority + how many of the handoff's keywords the domain ranks top-10 for, the same formula and the same keyword universe for you and competitors (fixed 2026-11-15: the competitor figure used to be the average PAGE authority of its sampled URLs and the client's top-10 count came from every GSC query it ranked for, so the client was authoritative by construction). Focus is tier-identity concentration (medical vs. systems language) over unweighted term counts, withheld as insufficient_data below positioning.min_focus_tokens. Note: rivals with average PA > 50 are filtered upstream, so an empty 'authoritative' quadrant does not mean none exist.",
     "_min_focus_tokens_comment": "C-M-10: the smallest tier-token total (Tier-1 hits + Tier-2/3 hits across the domain's audited pages) a focus figure may be computed from; below it the domain is `insufficient_data` rather than placed. With technical.max_audit_pages_per_domain at 3, focus was decided by a handful of generic tokens — {medical 3, systems 0} gave focus 100 and `niche_owner`, and one occurrence of 'relationship' moved a domain across the quadrant boundary. 12 is 20 (the review's suggested floor) scaled by the same 0.39 vocabulary shrink as technical.vacuum_min_medical; see that key's basis note.",
     "_min_focus_tokens_source": "editorial, uncalibrated, 2026-11-15",
     "min_focus_tokens": 12,
-    "_source": "editorial, uncalibrated, 2026-05 — authority_threshold / focus_threshold are the 2x2 boundaries, top10_saturation the count at which the ranking component saturates, min_signal_rankings the floor below which a low-authority domain reads `emerging`. The barbell is a strategic framing, not a measured law (positioning.framework_caption)."
+    "_source": "editorial, uncalibrated, 2026-05 — authority_threshold / focus_threshold are the 2x2 boundaries, top10_saturation the count at which the ranking component saturates, min_signal_rankings the floor below which a low-authority domain reads `emerging`. The barbell is a strategic framing, not a measured law (briefing_messages.json positioning.framework_caption, moved there in review chunk Y17)."
   },
   "sov": {
-    "export_path": null,
-    "framework_caption": "AI Share-of-Voice is CONSUMED from serp-discover's AI-visibility probes (not re-probed here). Values are rolling snapshots — LLM answers vary between runs and model versions."
+    "export_path": null
   },
   "youtube_presence": {
     "_comment": "SC-7-YT Phase 1 — YouTube Presence Check. Per competitor (and the client), the official YouTube Data API answers has-channel + subscribers/last-upload/activity/match-confidence. api_key_env is an ENV POINTER only — the key itself is read from env/.env, NEVER stored here or in code (the client_secret_* gitignore discipline). channel_map is seeded by owner-confirmed Phase-1 hits: {\"example.com\": [\"@examplecounselling\"]}.",
@@ -434,6 +434,7 @@
   "strike_mapper": {
     "_max_keywords_source": "editorial, uncalibrated, 2026-04 (moved to config 2026-11-16)",
     "max_keywords": 5,
+    "generic_reframe": "Observing the Relationship Process",
     "reframes": {
       "couples counselling north vancouver": "Observing the Reciprocal Pursuit-Distance Cycle",
       "relationship therapy north vancouver": "From Individual Pathology to Systemic Process",
@@ -483,15 +484,6 @@
     "enabled": true,
     "streamlit_theme": "light",
     "show_advanced_options": false
-  },
-  "eeat_client_messaging": {
-    "caveat": "These scores are heuristic structural signals based on SEO industry conventions, not Google's proprietary EEAT model. Use as competitive analysis framework, not authoritative SEO measurement.",
-    "positioning": "EEAT scores help identify competitive strengths/weaknesses in page structure, author credentials, authority signals, and trust indicators. They inform strategy but should not be presented as definitive SEO authority.",
-    "confidence_levels": {
-      "high": "0.8-1.0: Comprehensive signals detected. Scores are reliable.",
-      "medium": "0.5-0.8: Moderate signal coverage. Scores are indicative.",
-      "low": "0.0-0.5: Limited signals. Scores are exploratory only."
-    }
   },
   "_removed_2026_11_15": "C-C-14 / C-M-18: keys deleted on 2026-11-15 because nothing read them and their presence implied the owner could tune something: technical.moderate_feasibility_max_gap, technical.score_normaliser, technical.penalty_thresholds.pseudo_systems_threshold, step_dag, orchestrator.step_timeout_seconds, orchestrator.log_level. handoff.minimum_version, handoff.legacy_fallback_enabled. `step_dag.*` configured src/step_dag.py, which is imported only by its own test and is not on the run path. Editing any of these changed nothing; the live thresholds they appeared to control are technical.feasibility_threshold, technical.high_authority_max_pa, technical.penalty_thresholds.* and risk_signals.volatility_min_shift, each of which now has a reader and a _source note."
 }

@@ -67,6 +67,13 @@ class GSCManager:
         # The one reader (review chunk Y16). `_load_json` stays for the
         # clinical dictionary, which is a different file.
         self.config = config_io.load_config(SHARED_CONFIG_PATH)
+        # The words these reports print, read ONCE when the manager is built
+        # (chunk Y17). Not inside `_pull_note`: that runs while the caller is
+        # writing the report, and a caller that has patched `open` to capture
+        # the write would be handing this read its mock — the same defect
+        # chunk Y16 fixed by moving the config read out of `scrape_content`.
+        from src.briefing_messages import Messages
+        self.messages = Messages()
         self.clinical_dict = self._load_json(CLINICAL_DICT_PATH)
         self.creds = self._authenticate()
         self.service = build('searchconsole', 'v1', credentials=self.creds)
@@ -345,31 +352,29 @@ class GSCManager:
         """
         from src.reporting import gsc_pull_note
 
-        return gsc_pull_note(self.config)
+        return gsc_pull_note(self.config, self.messages)
 
     def generate_strike_report(self, striking_df):
         """
         Spec 6: Generate gsc_strike_list.md
         """
+        m = self.messages
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
         report = [
-            "# GSC Intelligence: The Reality Check (Strike List)",
-            f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d')}",
+            m.get("gsc_reports.strike_title"),
+            m.get("gsc_reports.generated_on", date=today),
             self._pull_note(),
-            "\n## 🎯 Striking Distance Opportunities (Positions 11-25)",
-            "These keywords are almost winning. Moving them to Page 1 could cause a massive traffic spike.",
-            "\n| Query | Current Position | Impressions | Associated URL | Clinical Pivot | Systemic Title recommendation |",
-            "| :--- | :--- | :--- | :--- | :--- | :--- |"
+            m.get("gsc_reports.strike_heading"),
+            m.get("gsc_reports.strike_intro"),
+            m.get("gsc_reports.strike_table_header"),
+            m.get("gsc_reports.strike_table_rule"),
         ]
 
         if striking_df.empty:
-            report.append("| No data | - | - | - | - | - |")
-            report.append(
-                "\n**No rows.** Zero queries came back in positions 11-25 under "
-                "the pull stated above — which is also what a failed pull and a "
-                "site with no traffic on the filtered device print. Check the "
-                "filters before reading this as nothing to do.")
-            print("No striking distance keywords found under the pull: "
-                  + self._pull_note())
+            report.append(m.get("gsc_reports.strike_empty_row"))
+            report.append(m.get("gsc_reports.strike_empty"))
+            print(m.get("gsc_reports.strike_empty_console",
+                        pull_note=self._pull_note()))
         else:
             # Limit to top 20 for the report
             for _, row in striking_df.head(20).iterrows():
@@ -382,7 +387,7 @@ class GSCManager:
         output_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "gsc_strike_list.md"))
         with open(output_path, 'w') as f:
             f.write("\n".join(report))
-        print(f"✅ GSC Strike List generated: {output_path}")
+        print(m.get("gsc_reports.strike_written", path=output_path))
 
     def analyze_gaps(self):
         site_url = self.config.get("auth", {}).get("gsc_property_url")
@@ -503,38 +508,37 @@ class GSCManager:
         return target_gaps, low_hanging, mismatches
 
     def generate_report(self, target_gaps, low_hanging, mismatches):
+        m = self.messages
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
         report = [
-            "# GSC Strategic Gap Report: The Reality Check",
-            f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d')}",
+            m.get("gsc_reports.gap_title"),
+            m.get("gsc_reports.generated_on", date=today),
             self._pull_note(),
-            "\n## 1. High Impression / Low CTR Gaps (Tier 1 & 2)",
-            "These keywords are being seen but not clicked. We need to reframe the Meta Titles with systemic depth."
+            m.get("gsc_reports.gap_target_heading"),
+            m.get("gsc_reports.gap_target_intro"),
         ]
-        
+
         if not target_gaps.empty:
             report.append(target_gaps[['query', 'impressions', 'ctr', 'tier']].to_markdown(index=False))
         else:
-            report.append(
-                "No significant gaps found under the pull stated above. That "
-                "is not the same as none existing: a failed pull and a site "
-                "with no traffic on the filtered device print this too.")
+            report.append(m.get("gsc_reports.gap_target_empty"))
 
-        report.append("\n## 2. Low-Hanging Fruit (Page 2 Targets)")
-        report.append("These pages are ranking in positions 11-20. A small systemic boost could push them to Page 1.")
+        report.append(m.get("gsc_reports.gap_low_hanging_heading"))
+        report.append(m.get("gsc_reports.gap_low_hanging_intro"))
         if not low_hanging.empty:
             report.append(low_hanging[['query', 'page', 'position', 'impressions']].to_markdown(index=False))
 
-        report.append("\n## 3. Clinical Mismatches")
-        report.append("Detected instances where a Systems-heavy page is being found via Medical Model queries.")
+        report.append(m.get("gsc_reports.gap_mismatch_heading"))
+        report.append(m.get("gsc_reports.gap_mismatch_intro"))
         if mismatches:
             report.append(pd.DataFrame(mismatches).to_markdown(index=False))
         else:
-            report.append("No clinical mismatches detected.")
+            report.append(m.get("gsc_reports.gap_mismatch_empty"))
 
         output_path = "gsc_strategic_gap.md"
         with open(output_path, 'w') as f:
             f.write("\n".join(report))
-        print(f"✅ GSC Strategic Gap report generated: {output_path}")
+        print(m.get("gsc_reports.gap_written", path=output_path))
 
 if __name__ == "__main__":
     gsc = GSCManager()

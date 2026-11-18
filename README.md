@@ -60,7 +60,7 @@ Each audit generates:
 ✅ **Bowen Reframes** — OpenAI (`gpt-4o`) generates content outlines for reframing opportunities  
 ✅ **Strategic Briefing** — Executive summary + traffic magnets + reframing targets  
 ✅ **Web GUI** — Streamlit interface with previous reports browser  
-✅ **Configurable** — All settings in `shared_config.json`
+✅ **Configurable** — All settings in `shared_config.json`, and every sentence the briefing prints in `briefing_messages.json`
 
 ## Testing
 
@@ -93,6 +93,10 @@ validate the full feature set described in this README.
 - **[FEATURE_GUIDE.md](docs/FEATURE_GUIDE.md)** — What each section measures, and §9 for the
   limitations and the provenance of every threshold that drives a verdict
 - **[shared_config.json](shared_config.json)** — All configuration options (fully commented)
+- **[briefing_messages.json](briefing_messages.json)** — Every sentence the
+  strategic briefing prints: the caveats, the comparability warnings, the "why there
+  is no number here" lines, the section headings. Reword them here, without opening
+  Python (review chunk Y17)
 
 ## Architecture
 
@@ -154,6 +158,53 @@ that failure and scored every competitor with an empty clinical vocabulary
 while reporting the result as a measurement. The single exception is the
 database lock wait, which is not an editorial threshold and is logged when it
 falls back.
+
+### The words the briefing prints
+
+Every sentence the strategic briefing renders is in
+**`briefing_messages.json`** at the repo root, read by
+`src/briefing_messages.py`. Reword any of them there and run again; no Python
+changes. The file is sectioned by the report section that renders it, in render
+order, and each section carries a `_comment` saying what it is for. Text in
+`{braces}` is filled in by the code — leave the names alone and reword
+everything around them; a key ending `.one` / `.many` is a singular/plural pair
+the code picks by a count.
+
+Two rules, because the two failures are not alike:
+
+- **A missing or malformed file stops the render.** The opposite of a
+  configuration default: a briefing rendered without its caveats states every
+  figure in it as fact.
+- **A missing key prints `[message missing: <key>]` where the sentence would
+  be, and the report ends with how many it could not find.** An edit left
+  half-finished is visible in the output rather than a sentence that quietly
+  vanished.
+
+The file also holds the words of the three standalone markdown reports the
+tool writes beside the briefing — `gsc_strike_list.md`,
+`gsc_strategic_gap.md` and `competitor_keyword_gaps.md`, under `gsc_reports`
+and `mining_report`. Their filter lists and "no rows" lines are the same kind
+of hedge.
+
+Before review chunk Y17 these were Python literals, and three consequences
+were already in the code: the EEAT heuristic caveat existed in four wordings
+(one of them in `shared_config.json`, read by nothing), the handoff's
+page-relative rank convention was warned about in four separately worded
+places, and the "unknown" table cell had a bare duplicate of itself. Workbook
+sheet names and column headers are deliberately **not** in this file: those are
+a format contract other tools and tests read by name. Nor are numbers: the
+action-queue row cap is `shared_config.json`
+`serp_overlap.action_queue_row_cap`, and the sentence that reports it
+interpolates that value, so the prose cannot claim one cap while the slice
+takes another.
+
+Two claims are still worded more than once on purpose, and both are guarded
+against gaining a further home: the EEAT heuristic caveat has a long rendered
+form and a short one stored on every score row, and three sections carry a
+`framework_caption` that restates their own `intro` at greater length and is
+rendered by nothing. Rewording the report's editorial content is the owner's
+call, so the migration moved both wordings in verbatim rather than choosing
+between them.
 
 Settings:
 - `client.domain` — Your domain (for comparison)

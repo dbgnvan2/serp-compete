@@ -183,15 +183,23 @@ class TestTheTallyBecomesASentence(_TallyIsolation):
         self.assertNotIn("writes were committed and its figures stand", text)
 
     def test_the_sentence_has_the_placeholders_it_needs(self):
-        """Tool 1 keeps these words in `serp_vocab.yml`; this repo has no
-        vocabulary file, so the sentence is a constant here and the two have
-        to be changed together by hand. This test cannot see the other repo —
-        it checks the shape this one needs (the cold review of this chunk
-        corrected a name that claimed more)."""
-        self.assertIn("{failures}", db_connect.CLEANUP_WARNING)
-        self.assertIn("{detail}", db_connect.CLEANUP_WARNING)
-        self.assertIn("{count}", db_connect.CLEANUP_DETAIL_ITEM)
-        self.assertIn("{what}", db_connect.CLEANUP_DETAIL_ITEM)
+        """Tool 1 keeps these words in `serp_vocab.yml` under `db_cleanup`;
+        chunk Y17 gave this repo `briefing_messages.json`, which holds the same
+        section, so the sentence is no longer a Python constant here. This test
+        cannot see the other repo — it checks the shape this one needs,
+        asserted on the PLACEHOLDERS rather than the prose, so rewording the
+        sentence in the file does not break it."""
+        from src.briefing_messages import Messages
+
+        warning = Messages().raw("db_cleanup.warning")
+        self.assertIsNotNone(warning, "db_cleanup.warning is missing")
+        self.assertIn("{failures}", warning)
+        self.assertIn("{detail}", warning)
+        self.assertIn("{consequence}", warning)
+        item = Messages().raw("db_cleanup.detail_item")
+        self.assertIsNotNone(item, "db_cleanup.detail_item is missing")
+        self.assertIn("{count}", item)
+        self.assertIn("{what}", item)
 
 
 class TestTheTallyReachesTheBriefing:

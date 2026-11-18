@@ -40,10 +40,12 @@ try:  # importable as a submodule: `from src.competitor_mining import derive_bra
     from src.api_clients import DataForSEOClient
     from src.reframe_engine import ReframeEngine
     from src.brand_utils import derive_brand_name
+    from src.briefing_messages import Messages
 except ImportError:  # run standalone: `python3 src/competitor_mining.py` (src/ is on sys.path)
     from api_clients import DataForSEOClient
     from reframe_engine import ReframeEngine
     from brand_utils import derive_brand_name
+    from briefing_messages import Messages
 
 # Paths
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -192,6 +194,10 @@ def _is_brand_keyword(keyword: str, brand: str) -> bool:
 def main(client=None, engine=None, keywords_csv: str = None,
          workbook: str = None, output_md: str = None):
     print("🚀 Starting Refined Competitor Keyword Mining (Module I)...")
+    # Read before any provider call: an absent or unparseable messages file
+    # stops the run here rather than after a paid DataForSEO pass, and the two
+    # filter warnings this report carries are the reason it must not degrade.
+    messages = Messages()
     per_domain = keywords_per_domain()
     min_volume = min_search_volume()
     keywords_csv = keywords_csv or _configured_path(
@@ -281,7 +287,8 @@ def main(client=None, engine=None, keywords_csv: str = None,
             
             # Better reframe placeholder logic if clinical_pivot returns original kw
             if reframe == kw:
-                reframe = f"Systemic Pattern Analysis: '{kw.title()}'"
+                reframe = messages.get("mining_report.reframe_placeholder",
+                                       keyword=kw.title())
             
             all_new_opportunities.append({
                 "domain": domain,
@@ -296,55 +303,62 @@ def main(client=None, engine=None, keywords_csv: str = None,
                  f"(unmeasured, not small)." if unmeasured_volume else ""))
 
     # 3. Output to Markdown
+    #
+    # Every sentence below comes from `briefing_messages.json`
+    # (`mining_report.*`). The filter list is this report's own account of what
+    # it applied, and the two warnings on it are the hedges that stop a reader
+    # taking the table as a complete set of gaps — editorial, and the owner is
+    # who would reword them (review chunk Y17, cold review M8).
     report = [
-        "# Competitor Keyword Gap Analysis (Module I - Refined)",
-        f"Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}",
-        "\n## Gap Summary",
-        f"Mined {len(top_domains)} domain(s).",
-        "**Filters Applied:**",
-        f"- Depth: {per_domain} keywords per domain "
-        f"(`competitor_mining.keywords_per_domain`)",
-        "- Excluded: Keywords with numbers (addresses)",
-        "- Excluded: the competitor's own brand token, on word boundaries",
-        f"- Volume: minimum search volume of {min_volume} "
-        f"(`competitor_mining.min_search_volume`, editorial and uncalibrated)",
-        # Stated, not implied: this filter used to be listed as applied while
-        # the file it needs was absent and every keyword passed.
-        (f"- Already-targeted keywords excluded, from "
-         f"`{os.path.basename(keywords_csv)}` ({len(existing_keywords)} loaded)"
+        messages.get("mining_report.title"),
+        messages.get("mining_report.generated_on",
+                     timestamp=pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')),
+        messages.get("mining_report.gap_summary_heading"),
+        messages.get("mining_report.mined", domains=len(top_domains)),
+        messages.get("mining_report.filters_heading"),
+        messages.get("mining_report.filter_depth", per_domain=per_domain),
+        messages.get("mining_report.filter_numbers"),
+        messages.get("mining_report.filter_brand"),
+        messages.get("mining_report.filter_volume", min_volume=min_volume),
+        (messages.get("mining_report.filter_targeted_applied",
+                      filename=os.path.basename(keywords_csv),
+                      count=len(existing_keywords))
          if csv_found else
-         f"- ⚠️ **NOT applied:** the already-targeted list "
-         f"(`{os.path.basename(keywords_csv)}`) was not found, so keywords "
-         f"already on the plan are listed below as gaps"),
+         messages.get("mining_report.filter_targeted_missing",
+                      filename=os.path.basename(keywords_csv))),
     ]
     if failed_domains:
-        report.append(
-            "- ⚠️ **Unmeasured:** " + "; ".join(
-                f"{domain} ({reason})" for domain, reason in failed_domains)
-            + ". Those domains contributed no keywords because the provider did "
-              "not answer — not because they have no gaps.")
+        report.append(messages.get(
+            "mining_report.unmeasured",
+            items="; ".join(
+                messages.get("mining_report.unmeasured_item",
+                             domain=domain, reason=reason)
+                for domain, reason in failed_domains)))
     report += [
-        "\n| Competitor Domain | Hidden Traffic Driver | Bowen Systemic Reframe | Est. Volume |",
-        "| :--- | :--- | :--- | :--- |"
+        messages.get("mining_report.table_header"),
+        messages.get("mining_report.table_rule"),
     ]
 
     # Sort opportunities by volume descending
     all_new_opportunities.sort(key=lambda x: x['etv'], reverse=True)
 
     for opt in all_new_opportunities:
-        report.append(f"| {opt['domain']} | {opt['keyword']} | **{opt['reframe']}** | {opt['etv']} |")
+        report.append(messages.get("mining_report.row",
+                                   domain=opt['domain'],
+                                   keyword=opt['keyword'],
+                                   reframe=opt['reframe'],
+                                   volume=opt['etv']))
 
     if not all_new_opportunities:
         report.append("")
         report.append(
-            "_No domain could be mined this run — see the filters above._"
-            if not top_domains else
-            "_No competitor keyword passed the filters this run._")
+            messages.get("mining_report.empty_no_domains") if not top_domains
+            else messages.get("mining_report.empty_no_keywords"))
 
     with open(output_md, "w", encoding="utf-8") as f:
         f.write("\n".join(report))
 
-    print(f"✅ Refined Gap analysis report generated: {output_md}")
+    print(messages.get("mining_report.written", path=output_md))
     return "\n".join(report)
 
 if __name__ == "__main__":

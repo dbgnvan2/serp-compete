@@ -179,7 +179,10 @@ class TestTheVocabularyLivesInConfig(unittest.TestCase):
 
     def test_an_unmapped_query_gets_the_generic_reframe(self):
         heading = strike_mapper.headings_for(["something nobody mapped"])[0]
-        self.assertIn(strike_mapper.GENERIC_REFRAME, heading)
+        # By the reader, not the constant: chunk Y17 made
+        # `strike_mapper.generic_reframe` a config key beside its siblings
+        # in `strike_mapper.reframes`, so the Python name is the fallback.
+        self.assertIn(strike_mapper.generic_reframe(), heading)
 
     def test_the_vocabulary_lookup_is_case_insensitive(self):
         heading = strike_mapper.headings_for(

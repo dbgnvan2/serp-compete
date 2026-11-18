@@ -351,6 +351,44 @@ Automated content outlines that reframe competitor content using Bowen Family Sy
 
 ## Configuration
 
+### Rewording the briefing
+
+Every sentence the briefing prints — the caveats, the comparability warnings,
+the "why there is no number here" lines, the section headings — is in
+`briefing_messages.json` at the repo root. Change the words there and run
+again; nothing in Python needs touching. Each section carries a `_comment`
+saying what it covers. Text in `{braces}` is filled in by the code, so leave
+those names alone and reword around them.
+
+If a key is missing the report prints `[message missing: <key>]` where the
+sentence would have been and ends with how many it could not find, so a
+half-finished edit shows up in the output rather than removing a caveat
+silently. If the whole file is missing or will not parse, the run stops: a
+briefing rendered without its caveats would state every figure in it as fact.
+
+The same file holds the words of the three standalone markdown reports written
+beside the briefing — `gsc_strike_list.md`, `gsc_strategic_gap.md` and
+`competitor_keyword_gaps.md` — under `gsc_reports` and `mining_report`. The
+filter list on the gap report is that report's own account of what it did and
+did not apply, so those sentences matter in the same way the briefing's
+caveats do.
+
+Excel sheet names and column headers are deliberately not in that file. Other
+tools and tests read them by name, so they are a contract rather than wording.
+Numbers are not in it either: the "showing the first N of M" note on each
+action queue interpolates `serp_overlap.action_queue_row_cap` from
+`shared_config.json`, so changing the cap changes the sentence with it. Set it
+to something that is not a row count and the run prints the built-in 15 and
+says so in the log, rather than printing an empty queue that reads as "no
+keywords qualify".
+
+Two claims are deliberately worded twice. The EEAT heuristic caveat has a long
+rendered form and a short one stored on every score row, and three sections
+carry a `framework_caption` that restates their own `intro` at greater length
+and is currently rendered by nothing. Both wordings of each were moved into the
+file as they were, because choosing between them is an editorial decision for
+you rather than a migration's to make.
+
 All behavior is controlled via `shared_config.json`. Two things worth knowing
 before you edit it (both changed in review chunk Y16):
 
@@ -515,16 +553,16 @@ list would have rejected every file — and `minimum_version` /
 `legacy_fallback_enabled` were removed, because nothing read them and the ordered
 fallback (handoff → `market_analysis` → `manual_targets`) is unconditional.
 
-### **eeat_client_messaging**
-```json
-"eeat_client_messaging": {
-  "caveat": "These are heuristic proxies, not Google's actual EEAT",
-  "confidence_levels": {
-    "high": "0.8-1.0: Reliable signals"
-  }
-}
-```
-Client-facing language for explaining EEAT scores.
+### **eeat_client_messaging** — removed in review chunk Y17
+
+This block held the client-facing language for explaining EEAT scores, and no
+module read it: the sentence the report actually printed was a Python literal,
+in a third wording. The words now live in `briefing_messages.json` under
+`eeat` — `caveat` is the one rendered under the report section, `row_caveat`
+the one stored on every score row, and `positioning` and `confidence_levels`
+moved across verbatim and are still rendered by nothing. Whether the report
+should print those last two is an editorial decision; they are kept rather
+than deleted so the decision stays open.
 
 ---
 
