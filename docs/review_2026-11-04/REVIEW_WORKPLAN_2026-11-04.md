@@ -1325,3 +1325,123 @@ cross-check). `config_manager.py` carries an unprovenanced "max 3 for free
 tier" claim about SerpAPI page limits. `norm_text`'s nan arm covers
 `float`/`numpy.float64` but not `pd.NaT` or `pd.NA`; neither can reach a key
 column today.
+
+---
+
+## 9. Correctness fixes after the live run (2026-11-19)
+
+Recorded at three sentences per finding — the defect, the consequence, the fix
+(`~/.claude/standards/effort-budget.md` §9a).
+
+### C1 — `gsc_client._fetch_all_rows` treated a short page as end-of-data
+
+The loop ended when a page carried fewer than `ROW_LIMIT` rows, and GSC can
+serve a short page part-way through a set under sampling. Every query after
+that page was recorded as having no impressions and cached for the TTL, which
+is the D-C-02 fault — a fetch that did not finish reported as a measured
+absence — in miniature, described by this function's own docstring and then
+contradicted by its loop. The loop now ends only on an EMPTY page, a short
+page logs at INFO and continues, and `MAX_PAGES = 200` bounds an API that
+never empties by returning the rows with `complete=False` rather than looping
+forever. Cost: one extra request per fetch, the empty page that confirms the
+end. Mutation-checked: restoring the short-page exit fails 6 tests.
+
+### C2 — step 1.2 compared keys only, while calling itself validation
+
+`validate_xlsx_vs_json.py` compared row counts and key tuples:
+`normalize_text_cols` was computed into a record that was then discarded and
+`required_cols` was never read at all. A workbook whose `Title`, `Snippet`,
+`Word_Count` or `Content_Type` disagreed with the JSON passed the gate the
+pipeline labels "Data Validation", so the one check that exists to prove the
+two deliverables say the same thing could only see a row appear or disappear
+(P33 — complete along one axis, presented as a full cross-check). The rows
+both files hold are now compared field by field over each sheet's declared
+columns through `values_agree`, which tolerates what the Excel round trip
+genuinely changes (an integer stored as a float, a number against its own
+decimal spelling, line endings, blank against empty string) and nothing else;
+`columns_not_compared` names, per sheet, every column the files carry that no
+spec declares, so what the gate does not check is stated rather than inferred
+from silence (P2).
+
+Checked against the real 2026-11-18 run outputs: exit 0, no mismatch — the
+gate does not cry on a genuine workbook.
+
+### Backlog (found sideways, one line each — rule 11)
+
+- The Overview sheet writes the string `"null"` for an unmeasured
+  `Primary_Intent` and carried `Intent_Confidence: "low"` where the JSON held
+  `null`, for one row of the 2026-11-18 run (`serp_audit.py:2042`).
+- `values_agree` cannot yet compare a list/dict column against the `str()` the
+  workbook stores for it, which is what blocks widening the comparison from
+  each sheet's declared columns to every column both files carry.
+- `config_manager.py` carries an unprovenanced "max 3 for free tier" claim
+  about SerpAPI page limits.
+- `norm_text`'s nan arm covers `float`/`numpy.float64` but not `pd.NaT` or
+  `pd.NA`; neither can reach a key column today.
+
+### C3 — the report never said why nothing could be classified
+
+The 2026-11-18 run recommended no page for any of ten keywords: 15 of 221
+ranked results were classified, so no keyword had a SERP intent verdict, every
+action read `❓ Intent unknown` and every play read "Deprioritise". The cause
+was on every row — 125 `Not The Ranked Page` (a Google redirect that resolved
+only to the competitor's site root), 58 `Not Fetched`, 14 `Blocked (403)`, 9
+`No URL` — and in no sentence anywhere: §0 said only that feasibility was
+missing, and each keyword's section said "0 of 10 URLs could be classified"
+without saying what stopped them, so ten absences of evidence read as ten
+judgements about the keywords (P2). §0 now carries one line counting the
+classified results and naming each cause with its own count, built from the
+rows' own `Fetch_Status` words rather than a cause inferred at render time;
+a run where nothing was classified says "none of M" rather than "0 of M",
+because no keyword can have a verdict at all on such a run. Words in
+`serp_vocab.yml` `classification_coverage`; `docs/USER_MANUAL.md` says what
+each cause means and what to change.
+
+Verified by regenerating the 2026-11-18 report from its own JSON: the line
+reads "15 of 221" and names all four causes.
+
+### C4 — the config editor could not edit config.yml's editorial lists
+
+`ConfigSettingsTab` rendered a widget per field of each top-level MAPPING, so
+a top-level value that is not a mapping printed as a read-only label and a
+field whose loaded value was `None` or an empty mapping got no widget at all
+— `get_edited_data`'s own docstring recorded them as "kept exactly as
+loaded". `known_brands` is a top-level list, so the competitor-brand
+gazetteer that CLAUDE.md names as editorial and that the Y.7 brand pass and
+Y.8 citation attribution both read could only be changed by hand-editing the
+file, as could any blank `thresholds_provenance` family — the very keys whose
+blankness the report asks the operator to fill in. Both now render as an
+editable YAML box (`SECTION_VALUE` for a whole section, the `yaml` field type
+for a field), an emptied box saves `null` rather than `[]` because "nothing
+recorded" and "there are none" are two different statements, broken YAML is
+reported and keeps the loaded value, and a field edit arriving for a
+non-mapping section is reported rather than raising a `TypeError` inside Save
+and losing every other tab's edits with it.
+
+Verified against the real `config.yml` in a live tkinter instance: the
+`known_brands` box round-trips the list, and opening the tab reports no
+unsaved changes — a round trip that reformatted would mark every open dirty.
+
+### Checked and left alone
+
+Two items carried on the correctness list turned out to be already handled;
+they are recorded here so the list does not grow a change that nothing needs.
+
+- **Top-competitor tie-break.** `probe_ai_visibility.py:1209` sorts the tied
+  brands, picks the first, logs how many tied on what count, and carries
+  `tied_top_competitors` into the sidecar, where `answer_sentiment` renders
+  it. The pick is deterministic across runs and the tie is stated, which is
+  what D-M-14 and its cold review asked for. No change.
+- **`_rank_keywords` sorting feasibility first.** The order is deliberate
+  (finding F7: "Not Measured" sits below the three verdicts but above a
+  keyword with no row, because last means "cannot be ranked on DA", not
+  "ranked worst"), and the one place the order becomes a recommendation —
+  `_get_best_opportunity_keyword` — requires a feasibility VERDICT and a
+  matching intent, and says which gate stopped the rest. No change.
+
+### Backlog (continued)
+
+- City aliases ("North Van", "NVan") have no home: `client_profiles.yml`
+  carries `primary_city` / `secondary_cities`, which only expand probe query
+  templates, so the aliases people actually type are never probed. A feature,
+  not a defect — nothing is wrong today.
