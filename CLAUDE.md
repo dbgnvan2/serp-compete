@@ -4,6 +4,18 @@ Competitive SEO intelligence tool (Tool 2) for Living Systems Counselling. Analy
 competitor rankings and identifies strategic content gaps using Bowen Family Systems framing.
 Companion to `serp-discover` (Tool 1).
 
+## Version number
+
+`Serp-compete/src/_version.py` holds `__version__` and is the only place the
+number is written. The briefing's header renders it through
+`briefing_messages.json`'s `headings.tool_version`. Bumping it means three
+things in one commit: edit `_version.py`, add the matching `## [x.y.z]`
+section to `CHANGELOG.md`, and tag `vx.y.z` in BOTH repos — Tool 1 carries
+the same number on purpose, because the two exchange a
+`competitor_handoff_*.json` and a review that changes one side of that
+contract changes both. `tests/test_version_is_stamped.py` fails the build
+when the changelog's newest entry and `_version.py` disagree.
+
 ## Global standards
 
 Read the relevant file from `~/.claude/standards/` before starting work:

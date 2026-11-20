@@ -5,6 +5,7 @@ import pandas as pd
 from src.database import DatabaseManager, load_shared_config, magnet_sql, magnet_thresholds
 import datetime
 
+from src._version import __version__
 from src.briefing_messages import Messages
 from src.serp_overlap import DEFAULT_TOP_N
 from src.risk_radar import anchor_caveat_lines, anchor_data_unreadable
@@ -363,6 +364,11 @@ class ReportGenerator:
             m.get("headings.handoff",
                   handoff=(os.path.basename(handoff_name) if handoff_name
                            else m.get("headings.handoff_not_recorded"))),
+            # The build, not only the run: figures on both sides of the
+            # handoff contract changed meaning in the 2026-11-04 review, so a
+            # briefing read beside a market report has to say which rules
+            # produced it. Version lives in `src/_version.py`.
+            m.get("headings.tool_version", version=__version__),
             m.get("headings.executive_summary"),
             m.get("executive_summary.intro"),
         ]
@@ -375,7 +381,15 @@ class ReportGenerator:
         # (cold review of chunk Y1).
         mismatch_line = client_mismatch_line(run_coverage, m)
         if mismatch_line:
-            report.insert(4, mismatch_line)
+            # Positioned by the heading it must precede, not by a literal
+            # index: the header grew a tool-version line in v1.5.0 and the
+            # `4` silently moved this warning below it instead.
+            _exec_heading = m.get("headings.executive_summary")
+            try:
+                _at = report.index(_exec_heading)
+            except ValueError:          # the heading's key is missing
+                _at = len(report)
+            report.insert(_at, mismatch_line)
 
         # Run coverage, in the artefact rather than only in the console (P2).
         if run_coverage:

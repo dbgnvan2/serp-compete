@@ -68,6 +68,7 @@
   "date": "**Date:** {timestamp}",
   "handoff": "**Handoff:** {handoff}",
   "handoff_not_recorded": "not recorded for this run",
+  "tool_version": "**Tool version:** v{version}",
   "executive_summary": "\n## Executive Summary",
   "gsc_section": "\n## 📈 Internal GSC Performance Gaps",
   "gsc_target_gaps": "\n### High Impression / Low CTR Gaps",

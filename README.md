@@ -1,5 +1,7 @@
 # Serp-Compete: Competitive SEO Intelligence Tool
 
+**v1.5.0** — see [CHANGELOG.md](CHANGELOG.md). The version is written in `Serp-compete/src/_version.py` and nowhere else; every strategic briefing's header carries it. `serp-discover` (Tool 1) carries the same number on purpose — the two exchange a handoff file.
+
 Market intelligence platform for [Living Systems Counselling](https://livingsystems.ca) — Bowen Family Systems therapy practice in North Vancouver, BC.
 
 **Serp-Compete** (Tool 2) analyzes how your competitors rank in search results and identifies strategic gaps where you can reframe content using **Bowen Family Systems Theory** instead of the traditional "Medical Model."
